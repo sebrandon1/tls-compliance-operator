@@ -1,0 +1,10 @@
+apiVersion: security.telco.openshift.io/v1alpha1
+kind: TLSComplianceReport
+metadata:
+  name: example-service-443-abc12345
+spec:
+  host: example-service.default.svc.cluster.local
+  port: 443
+  sourceKind: Service
+  sourceNamespace: default
+  sourceName: example-service

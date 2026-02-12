@@ -1,0 +1,267 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.0
+  name: tlscompliancereports.security.telco.openshift.io
+spec:
+  group: security.telco.openshift.io
+  names:
+    kind: TLSComplianceReport
+    listKind: TLSComplianceReportList
+    plural: tlscompliancereports
+    shortNames:
+    - tlscr
+    singular: tlscompliancereport
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.host
+      name: Host
+      type: string
+    - jsonPath: .spec.port
+      name: Port
+      type: integer
+    - jsonPath: .spec.sourceKind
+      name: Source
+      type: string
+    - jsonPath: .status.complianceStatus
+      name: Compliance
+      type: string
+    - jsonPath: .status.tlsVersions.tls13
+      name: TLS1.3
+      type: boolean
+    - jsonPath: .status.tlsVersions.tls12
+      name: TLS1.2
+      type: boolean
+    - jsonPath: .status.tlsVersions.tls10
+      name: TLS1.0
+      type: boolean
+    - jsonPath: .status.certificateInfo.daysUntilExpiry
+      name: CertExpiry
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: TLSComplianceReport is the Schema for the tlscompliancereports
+          API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: Spec defines the desired state of TLSComplianceReport
+            properties:
+              host:
+                description: Host is the hostname or IP being checked
+                minLength: 1
+                type: string
+              port:
+                description: Port is the port number being checked
+                format: int32
+                maximum: 65535
+                minimum: 1
+                type: integer
+              sourceKind:
+                description: SourceKind is the type of Kubernetes resource that exposed
+                  this endpoint
+                enum:
+                - Service
+                - Ingress
+                - Route
+                type: string
+              sourceName:
+                description: SourceName is the name of the source resource
+                type: string
+              sourceNamespace:
+                description: SourceNamespace is the namespace of the source resource
+                type: string
+            required:
+            - host
+            - port
+            - sourceKind
+            - sourceName
+            - sourceNamespace
+            type: object
+          status:
+            description: Status defines the observed state of TLSComplianceReport
+            properties:
+              certificateInfo:
+                description: CertificateInfo contains details about the TLS certificate
+                properties:
+                  daysUntilExpiry:
+                    description: DaysUntilExpiry is the number of days until the certificate
+                      expires
+                    type: integer
+                  dnsNames:
+                    description: DNSNames lists the DNS names in the certificate's
+                      SAN
+                    items:
+                      type: string
+                    type: array
+                  isExpired:
+                    description: IsExpired indicates if the certificate has expired
+                    type: boolean
+                  issuer:
+                    description: Issuer is the certificate issuer
+                    type: string
+                  notAfter:
+                    description: NotAfter is the end of the certificate's validity
+                      period
+                    format: date-time
+                    type: string
+                  notBefore:
+                    description: NotBefore is the start of the certificate's validity
+                      period
+                    format: date-time
+                    type: string
+                  subject:
+                    description: Subject is the certificate subject
+                    type: string
+                type: object
+              checkCount:
+                description: CheckCount is the number of TLS checks performed
+                format: int64
+                type: integer
+              cipherSuites:
+                additionalProperties:
+                  items:
+                    type: string
+                  type: array
+                description: CipherSuites maps TLS version to supported cipher suite
+                  names
+                type: object
+              complianceStatus:
+                default: Unknown
+                description: ComplianceStatus indicates the overall TLS compliance
+                  status
+                enum:
+                - Compliant
+                - NonCompliant
+                - Warning
+                - Error
+                - Pending
+                - Unknown
+                type: string
+              conditions:
+                description: Conditions represent the current state of the TLSComplianceReport
+                  resource
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              consecutiveErrors:
+                description: ConsecutiveErrors is the number of consecutive check
+                  errors
+                type: integer
+              firstSeenAt:
+                description: FirstSeenAt is when this endpoint was first discovered
+                format: date-time
+                type: string
+              lastCheckAt:
+                description: LastCheckAt is when the last TLS check was performed
+                format: date-time
+                type: string
+              lastError:
+                description: LastError is the last error message from a TLS check
+                type: string
+              lastSeenAt:
+                description: LastSeenAt is when this endpoint was last observed
+                format: date-time
+                type: string
+              tlsVersions:
+                description: TLSVersions indicates which TLS versions are supported
+                properties:
+                  tls10:
+                    description: TLS10 indicates if TLS 1.0 is supported
+                    type: boolean
+                  tls11:
+                    description: TLS11 indicates if TLS 1.1 is supported
+                    type: boolean
+                  tls12:
+                    description: TLS12 indicates if TLS 1.2 is supported
+                    type: boolean
+                  tls13:
+                    description: TLS13 indicates if TLS 1.3 is supported
+                    type: boolean
+                type: object
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

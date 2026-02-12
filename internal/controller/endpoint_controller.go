@@ -1,0 +1,689 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/tools/record"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/source"
+
+	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
+	"github.com/sebrandon1/tls-compliance-operator/internal/metrics"
+	"github.com/sebrandon1/tls-compliance-operator/pkg/endpoint"
+	"github.com/sebrandon1/tls-compliance-operator/pkg/tlscheck"
+)
+
+// Event reasons for Kubernetes events
+const (
+	EventReasonTLSNonCompliant     = "TLSNonCompliant"
+	EventReasonComplianceChanged   = "ComplianceChanged"
+	EventReasonCertificateExpiring = "CertificateExpiring"
+	EventReasonCertificateExpired  = "CertificateExpired"
+	EventReasonEndpointDiscovered  = "EndpointDiscovered"
+)
+
+// EndpointReconciler reconciles Service, Ingress, and Route resources
+type EndpointReconciler struct {
+	client.Client
+	Scheme            *runtime.Scheme
+	TLSChecker        tlscheck.Checker
+	Recorder          record.EventRecorder
+	ExcludeNamespaces []string
+	CertExpiryDays    int
+	RouteAPIAvailable bool
+}
+
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch
+// +kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch
+// +kubebuilder:rbac:groups=security.telco.openshift.io,resources=tlscompliancereports,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=security.telco.openshift.io,resources=tlscompliancereports/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=security.telco.openshift.io,resources=tlscompliancereports/finalizers,verbs=update
+
+// Reconcile handles Service events and creates/updates TLSComplianceReport CRs
+func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	// Check if namespace is excluded
+	if r.isExcludedNamespace(req.Namespace) {
+		return ctrl.Result{}, nil
+	}
+
+	// Try to fetch as Service first (primary watch)
+	var svc corev1.Service
+	if err := r.Get(ctx, req.NamespacedName, &svc); err != nil {
+		if apierrors.IsNotFound(err) {
+			metrics.RecordReconcile("success")
+			return ctrl.Result{}, nil
+		}
+		logger.Error(err, "unable to fetch Service")
+		metrics.RecordReconcile("error")
+		return ctrl.Result{}, err
+	}
+
+	// Extract endpoints from Service
+	endpoints := endpoint.ExtractFromService(&svc)
+	if len(endpoints) == 0 {
+		metrics.RecordReconcile("success")
+		return ctrl.Result{}, nil
+	}
+
+	// Process each endpoint
+	for _, ep := range endpoints {
+		if err := r.processEndpoint(ctx, ep); err != nil {
+			logger.Error(err, "failed to process endpoint", "host", ep.Host, "port", ep.Port)
+		}
+	}
+
+	metrics.RecordReconcile("success")
+	return ctrl.Result{}, nil
+}
+
+// ReconcileIngress handles Ingress events
+func (r *EndpointReconciler) ReconcileIngress(ctx context.Context, req ctrl.Request) {
+	logger := log.FromContext(ctx)
+
+	if r.isExcludedNamespace(req.Namespace) {
+		return
+	}
+
+	var ing networkingv1.Ingress
+	if err := r.Get(ctx, req.NamespacedName, &ing); err != nil {
+		if !apierrors.IsNotFound(err) {
+			logger.Error(err, "unable to fetch Ingress")
+		}
+		return
+	}
+
+	endpoints := endpoint.ExtractFromIngress(&ing)
+	for _, ep := range endpoints {
+		if err := r.processEndpoint(ctx, ep); err != nil {
+			logger.Error(err, "failed to process Ingress endpoint", "host", ep.Host)
+		}
+	}
+}
+
+// ReconcileRoute handles Route events
+func (r *EndpointReconciler) ReconcileRoute(ctx context.Context, req ctrl.Request) {
+	logger := log.FromContext(ctx)
+
+	if r.isExcludedNamespace(req.Namespace) {
+		return
+	}
+
+	// Fetch Route as unstructured
+	route := &unstructured.Unstructured{}
+	route.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "route.openshift.io",
+		Version: "v1",
+		Kind:    "Route",
+	})
+
+	if err := r.Get(ctx, req.NamespacedName, route); err != nil {
+		if !apierrors.IsNotFound(err) {
+			logger.Error(err, "unable to fetch Route")
+		}
+		return
+	}
+
+	endpoints := endpoint.ExtractFromRoute(route)
+	for _, ep := range endpoints {
+		if err := r.processEndpoint(ctx, ep); err != nil {
+			logger.Error(err, "failed to process Route endpoint", "host", ep.Host)
+		}
+	}
+}
+
+// processEndpoint creates or updates a TLSComplianceReport CR for an endpoint
+func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep endpoint.Endpoint) error {
+	logger := log.FromContext(ctx)
+	crName := endpoint.GenerateCRName(ep)
+	now := metav1.Now()
+
+	// Try to get existing CR
+	var existingCR securityv1alpha1.TLSComplianceReport
+	err := r.Get(ctx, client.ObjectKey{Name: crName}, &existingCR)
+
+	if apierrors.IsNotFound(err) {
+		// Create new CR
+		cr := &securityv1alpha1.TLSComplianceReport{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: crName,
+			},
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:            ep.Host,
+				Port:            ep.Port,
+				SourceKind:      securityv1alpha1.SourceKind(ep.SourceKind),
+				SourceNamespace: ep.SourceNamespace,
+				SourceName:      ep.SourceName,
+			},
+		}
+
+		if err := r.Create(ctx, cr); err != nil {
+			return fmt.Errorf("failed to create TLSComplianceReport: %w", err)
+		}
+
+		// Update status
+		cr.Status = securityv1alpha1.TLSComplianceReportStatus{
+			ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
+			FirstSeenAt:      &now,
+			LastSeenAt:       &now,
+			Conditions: []metav1.Condition{
+				{
+					Type:               "Available",
+					Status:             metav1.ConditionTrue,
+					LastTransitionTime: now,
+					Reason:             "EndpointDiscovered",
+					Message:            fmt.Sprintf("Endpoint %s:%d discovered from %s/%s", ep.Host, ep.Port, ep.SourceNamespace, ep.SourceName),
+				},
+			},
+		}
+
+		if err := r.Status().Update(ctx, cr); err != nil {
+			return fmt.Errorf("failed to update TLSComplianceReport status: %w", err)
+		}
+
+		logger.Info("created TLSComplianceReport", "name", crName, "host", ep.Host, "port", ep.Port)
+
+		if r.Recorder != nil {
+			r.Recorder.Event(cr, corev1.EventTypeNormal, EventReasonEndpointDiscovered,
+				fmt.Sprintf("Discovered TLS endpoint %s:%d from %s %s/%s", ep.Host, ep.Port, ep.SourceKind, ep.SourceNamespace, ep.SourceName))
+		}
+
+		// Launch async TLS check
+		go r.performTLSCheck(context.Background(), crName, ep.Host, int(ep.Port))
+
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("failed to get TLSComplianceReport: %w", err)
+	}
+
+	// Update LastSeenAt on existing CR
+	existingCR.Status.LastSeenAt = &now
+	if err := r.Status().Update(ctx, &existingCR); err != nil {
+		return fmt.Errorf("failed to update TLSComplianceReport LastSeenAt: %w", err)
+	}
+
+	return nil
+}
+
+// performTLSCheck runs the TLS check and updates the CR status
+func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host string, port int) {
+	logger := log.FromContext(ctx).WithValues("crName", crName)
+
+	if r.TLSChecker == nil {
+		return
+	}
+
+	// Perform TLS check
+	result, checkErr := r.TLSChecker.CheckEndpoint(ctx, host, port)
+
+	// Re-fetch the CR to avoid conflicts
+	var cr securityv1alpha1.TLSComplianceReport
+	if err := r.Get(ctx, client.ObjectKey{Name: crName}, &cr); err != nil {
+		logger.Error(err, "failed to get TLSComplianceReport for TLS check update")
+		return
+	}
+
+	now := metav1.Now()
+	cr.Status.LastCheckAt = &now
+	cr.Status.CheckCount++
+
+	portStr := fmt.Sprintf("%d", port)
+
+	if checkErr != nil {
+		cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusError
+		cr.Status.ConsecutiveErrors++
+		cr.Status.LastError = checkErr.Error()
+
+		if err := r.Status().Update(ctx, &cr); err != nil {
+			logger.Error(err, "failed to update TLSComplianceReport after check error")
+		}
+		return
+	}
+
+	// Reset error state on success
+	cr.Status.ConsecutiveErrors = 0
+	cr.Status.LastError = ""
+
+	// Store old status for change detection
+	oldComplianceStatus := cr.Status.ComplianceStatus
+
+	// Update TLS version support
+	cr.Status.TLSVersions = securityv1alpha1.TLSVersionSupport{
+		TLS10: result.SupportsTLS10,
+		TLS11: result.SupportsTLS11,
+		TLS12: result.SupportsTLS12,
+		TLS13: result.SupportsTLS13,
+	}
+
+	// Update cipher suites
+	cr.Status.CipherSuites = result.CipherSuites
+
+	// Update certificate info
+	if result.Certificate != nil {
+		notBefore := metav1.NewTime(result.Certificate.NotBefore)
+		notAfter := metav1.NewTime(result.Certificate.NotAfter)
+		cr.Status.CertificateInfo = &securityv1alpha1.CertificateInfo{
+			Issuer:          result.Certificate.Issuer,
+			Subject:         result.Certificate.Subject,
+			NotBefore:       &notBefore,
+			NotAfter:        &notAfter,
+			DNSNames:        result.Certificate.DNSNames,
+			IsExpired:       result.Certificate.IsExpired,
+			DaysUntilExpiry: &result.Certificate.DaysUntilExpiry,
+		}
+
+		// Record cert expiry metric
+		metrics.RecordCertExpiry(host, portStr, float64(result.Certificate.DaysUntilExpiry))
+	}
+
+	// Determine compliance status
+	cr.Status.ComplianceStatus = determineComplianceStatus(result)
+
+	// Record metrics
+	metrics.RecordCheckDuration(result.CheckDuration.Seconds())
+	metrics.RecordVersionSupport(host, portStr, "1.0", result.SupportsTLS10)
+	metrics.RecordVersionSupport(host, portStr, "1.1", result.SupportsTLS11)
+	metrics.RecordVersionSupport(host, portStr, "1.2", result.SupportsTLS12)
+	metrics.RecordVersionSupport(host, portStr, "1.3", result.SupportsTLS13)
+
+	// Update conditions
+	r.updateConditions(&cr, result)
+
+	if err := r.Status().Update(ctx, &cr); err != nil {
+		logger.Error(err, "failed to update TLSComplianceReport with check results")
+		return
+	}
+
+	// Emit events
+	r.emitComplianceEvents(&cr, oldComplianceStatus, result)
+}
+
+// determineComplianceStatus determines the compliance status from TLS check results
+func determineComplianceStatus(result *tlscheck.TLSCheckResult) securityv1alpha1.ComplianceStatus {
+	if result.SupportsTLS10 || result.SupportsTLS11 {
+		return securityv1alpha1.ComplianceStatusNonCompliant
+	}
+	if result.SupportsTLS13 {
+		return securityv1alpha1.ComplianceStatusCompliant
+	}
+	if result.SupportsTLS12 {
+		return securityv1alpha1.ComplianceStatusWarning
+	}
+	return securityv1alpha1.ComplianceStatusUnknown
+}
+
+// updateConditions sets Kubernetes conditions based on check results
+func (r *EndpointReconciler) updateConditions(cr *securityv1alpha1.TLSComplianceReport, result *tlscheck.TLSCheckResult) {
+	now := metav1.Now()
+
+	// TLS Compliant condition
+	complianceCondition := metav1.Condition{
+		Type:               "TLSCompliant",
+		LastTransitionTime: now,
+	}
+
+	switch determineComplianceStatus(result) {
+	case securityv1alpha1.ComplianceStatusCompliant:
+		complianceCondition.Status = metav1.ConditionTrue
+		complianceCondition.Reason = "Compliant"
+		complianceCondition.Message = "Endpoint supports TLS 1.3 and does not support legacy TLS versions"
+	case securityv1alpha1.ComplianceStatusNonCompliant:
+		complianceCondition.Status = metav1.ConditionFalse
+		complianceCondition.Reason = "NonCompliant"
+		versions := []string{}
+		if result.SupportsTLS10 {
+			versions = append(versions, "1.0")
+		}
+		if result.SupportsTLS11 {
+			versions = append(versions, "1.1")
+		}
+		complianceCondition.Message = fmt.Sprintf("Endpoint supports legacy TLS versions: %s", strings.Join(versions, ", "))
+	case securityv1alpha1.ComplianceStatusWarning:
+		complianceCondition.Status = metav1.ConditionFalse
+		complianceCondition.Reason = "Warning"
+		complianceCondition.Message = "Endpoint does not support TLS 1.3"
+	default:
+		complianceCondition.Status = metav1.ConditionUnknown
+		complianceCondition.Reason = "Unknown"
+		complianceCondition.Message = "TLS compliance status could not be determined"
+	}
+
+	setCondition(&cr.Status.Conditions, complianceCondition)
+
+	// Certificate Valid condition
+	if result.Certificate != nil {
+		certCondition := metav1.Condition{
+			Type:               "CertificateValid",
+			LastTransitionTime: now,
+		}
+
+		if result.Certificate.IsExpired {
+			certCondition.Status = metav1.ConditionFalse
+			certCondition.Reason = "Expired"
+			certCondition.Message = "TLS certificate has expired"
+		} else if result.Certificate.DaysUntilExpiry <= r.CertExpiryDays {
+			certCondition.Status = metav1.ConditionFalse
+			certCondition.Reason = "Expiring"
+			certCondition.Message = fmt.Sprintf("TLS certificate expires in %d days", result.Certificate.DaysUntilExpiry)
+		} else {
+			certCondition.Status = metav1.ConditionTrue
+			certCondition.Reason = "Valid"
+			certCondition.Message = fmt.Sprintf("TLS certificate is valid for %d more days", result.Certificate.DaysUntilExpiry)
+		}
+
+		setCondition(&cr.Status.Conditions, certCondition)
+	}
+}
+
+// setCondition sets or updates a condition in the condition list
+func setCondition(conditions *[]metav1.Condition, condition metav1.Condition) {
+	for i, existing := range *conditions {
+		if existing.Type == condition.Type {
+			(*conditions)[i] = condition
+			return
+		}
+	}
+	*conditions = append(*conditions, condition)
+}
+
+// emitComplianceEvents emits Kubernetes events for compliance changes
+func (r *EndpointReconciler) emitComplianceEvents(cr *securityv1alpha1.TLSComplianceReport, oldStatus securityv1alpha1.ComplianceStatus, result *tlscheck.TLSCheckResult) {
+	if r.Recorder == nil {
+		return
+	}
+
+	// Non-compliance detected
+	if cr.Status.ComplianceStatus == securityv1alpha1.ComplianceStatusNonCompliant {
+		versions := []string{}
+		if result.SupportsTLS10 {
+			versions = append(versions, "1.0")
+		}
+		if result.SupportsTLS11 {
+			versions = append(versions, "1.1")
+		}
+		r.Recorder.Event(cr, corev1.EventTypeWarning, EventReasonTLSNonCompliant,
+			fmt.Sprintf("Endpoint %s:%d supports legacy TLS versions: %s", cr.Spec.Host, cr.Spec.Port, strings.Join(versions, ", ")))
+	}
+
+	// Compliance status changed
+	if oldStatus != "" && oldStatus != cr.Status.ComplianceStatus &&
+		oldStatus != securityv1alpha1.ComplianceStatusPending {
+		r.Recorder.Event(cr, corev1.EventTypeWarning, EventReasonComplianceChanged,
+			fmt.Sprintf("Compliance status changed from %s to %s for %s:%d", oldStatus, cr.Status.ComplianceStatus, cr.Spec.Host, cr.Spec.Port))
+	}
+
+	// Certificate expiry warnings
+	if result.Certificate != nil {
+		if result.Certificate.IsExpired {
+			r.Recorder.Event(cr, corev1.EventTypeWarning, EventReasonCertificateExpired,
+				fmt.Sprintf("TLS certificate has expired for %s:%d", cr.Spec.Host, cr.Spec.Port))
+		} else if result.Certificate.DaysUntilExpiry <= r.CertExpiryDays {
+			r.Recorder.Event(cr, corev1.EventTypeWarning, EventReasonCertificateExpiring,
+				fmt.Sprintf("TLS certificate for %s:%d expires in %d days", cr.Spec.Host, cr.Spec.Port, result.Certificate.DaysUntilExpiry))
+		}
+	}
+}
+
+// SetupWithManager sets up the controller with the Manager
+func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	builder := ctrl.NewControllerManagedBy(mgr).
+		For(&corev1.Service{}).
+		Named("endpoint").
+		WithOptions(controller.Options{}).
+		Watches(&networkingv1.Ingress{}, handler.EnqueueRequestsFromMapFunc(
+			func(ctx context.Context, obj client.Object) []ctrl.Request {
+				ing, ok := obj.(*networkingv1.Ingress)
+				if !ok {
+					return nil
+				}
+				go r.ReconcileIngress(ctx, ctrl.Request{
+					NamespacedName: client.ObjectKeyFromObject(ing),
+				})
+				return nil
+			},
+		))
+
+	// Add Route watch if OpenShift Route API is available
+	if r.RouteAPIAvailable {
+		routeGVK := schema.GroupVersionKind{
+			Group:   "route.openshift.io",
+			Version: "v1",
+			Kind:    "Route",
+		}
+
+		routeObj := &unstructured.Unstructured{}
+		routeObj.SetGroupVersionKind(routeGVK)
+
+		builder = builder.WatchesRawSource(source.Kind(
+			mgr.GetCache(),
+			routeObj,
+			handler.TypedEnqueueRequestsFromMapFunc(func(ctx context.Context, obj *unstructured.Unstructured) []ctrl.Request {
+				go r.ReconcileRoute(ctx, ctrl.Request{
+					NamespacedName: client.ObjectKeyFromObject(obj),
+				})
+				return nil
+			}),
+		))
+	}
+
+	return builder.Complete(r)
+}
+
+// StartPeriodicScan starts a goroutine that periodically re-checks all endpoints
+func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval time.Duration) {
+	go func() {
+		logger := log.FromContext(ctx).WithName("periodic-scan")
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				logger.Info("starting periodic TLS scan")
+				start := time.Now()
+
+				if err := r.scanAllEndpoints(ctx); err != nil {
+					logger.Error(err, "failed to complete periodic scan")
+				}
+
+				duration := time.Since(start)
+				metrics.RecordScanCycleDuration(duration.Seconds())
+				logger.Info("periodic TLS scan completed", "duration", duration)
+			}
+		}
+	}()
+}
+
+// scanAllEndpoints re-checks all existing TLSComplianceReport CRs
+func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
+	logger := log.FromContext(ctx)
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := r.List(ctx, &crList); err != nil {
+		return fmt.Errorf("failed to list TLSComplianceReports: %w", err)
+	}
+
+	for i := range crList.Items {
+		cr := &crList.Items[i]
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		r.performTLSCheck(ctx, cr.Name, cr.Spec.Host, int(cr.Spec.Port))
+
+		// Small delay between checks to avoid overwhelming the system
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
+	// Update endpoint count metrics
+	r.updateEndpointMetrics(ctx)
+
+	logger.Info("scan completed", "endpoints", len(crList.Items))
+	return nil
+}
+
+// updateEndpointMetrics recounts endpoints by compliance status
+func (r *EndpointReconciler) updateEndpointMetrics(ctx context.Context) {
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := r.List(ctx, &crList); err != nil {
+		return
+	}
+
+	counts := map[string]float64{
+		string(securityv1alpha1.ComplianceStatusCompliant):    0,
+		string(securityv1alpha1.ComplianceStatusNonCompliant): 0,
+		string(securityv1alpha1.ComplianceStatusWarning):      0,
+		string(securityv1alpha1.ComplianceStatusError):        0,
+		string(securityv1alpha1.ComplianceStatusPending):      0,
+		string(securityv1alpha1.ComplianceStatusUnknown):      0,
+	}
+
+	for _, cr := range crList.Items {
+		status := string(cr.Status.ComplianceStatus)
+		if _, ok := counts[status]; ok {
+			counts[status]++
+		}
+	}
+
+	for status, count := range counts {
+		metrics.EndpointsTotal.WithLabelValues(status).Set(count)
+	}
+}
+
+// StartCleanupLoop starts a goroutine that removes CRs for deleted source resources
+func (r *EndpointReconciler) StartCleanupLoop(ctx context.Context, interval time.Duration) {
+	go func() {
+		logger := log.FromContext(ctx).WithName("cleanup")
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := r.cleanupOrphanedCRs(ctx); err != nil {
+					logger.Error(err, "failed to cleanup orphaned CRs")
+				}
+			}
+		}
+	}()
+}
+
+// cleanupOrphanedCRs removes TLSComplianceReport CRs whose source resources no longer exist
+func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
+	logger := log.FromContext(ctx)
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := r.List(ctx, &crList); err != nil {
+		return fmt.Errorf("failed to list TLSComplianceReports: %w", err)
+	}
+
+	for i := range crList.Items {
+		cr := &crList.Items[i]
+
+		exists, err := r.sourceResourceExists(ctx, cr.Spec)
+		if err != nil {
+			logger.Error(err, "error checking source resource", "name", cr.Name)
+			continue
+		}
+
+		if !exists {
+			logger.Info("deleting orphaned TLSComplianceReport", "name", cr.Name,
+				"sourceKind", cr.Spec.SourceKind, "sourceName", cr.Spec.SourceName)
+			if err := r.Delete(ctx, cr); err != nil && !apierrors.IsNotFound(err) {
+				logger.Error(err, "failed to delete orphaned TLSComplianceReport", "name", cr.Name)
+			}
+		}
+	}
+
+	return nil
+}
+
+// sourceResourceExists checks if the source resource for a CR still exists
+func (r *EndpointReconciler) sourceResourceExists(ctx context.Context, spec securityv1alpha1.TLSComplianceReportSpec) (bool, error) {
+	key := client.ObjectKey{
+		Namespace: spec.SourceNamespace,
+		Name:      spec.SourceName,
+	}
+
+	var err error
+	switch spec.SourceKind {
+	case securityv1alpha1.SourceKindService:
+		var svc corev1.Service
+		err = r.Get(ctx, key, &svc)
+	case securityv1alpha1.SourceKindIngress:
+		var ing networkingv1.Ingress
+		err = r.Get(ctx, key, &ing)
+	case securityv1alpha1.SourceKindRoute:
+		route := &unstructured.Unstructured{}
+		route.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "route.openshift.io",
+			Version: "v1",
+			Kind:    "Route",
+		})
+		err = r.Get(ctx, key, route)
+	default:
+		return false, fmt.Errorf("unknown source kind: %s", spec.SourceKind)
+	}
+
+	if err == nil {
+		return true, nil
+	}
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+// isExcludedNamespace checks if a namespace is in the exclusion list
+func (r *EndpointReconciler) isExcludedNamespace(namespace string) bool {
+	for _, ns := range r.ExcludeNamespaces {
+		if ns == namespace {
+			return true
+		}
+	}
+	return false
+}
