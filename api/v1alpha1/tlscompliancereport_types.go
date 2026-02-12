@@ -31,7 +31,7 @@ const (
 )
 
 // ComplianceStatus indicates the TLS compliance status of an endpoint
-// +kubebuilder:validation:Enum=Compliant;NonCompliant;Warning;Error;Pending;Unknown
+// +kubebuilder:validation:Enum=Compliant;NonCompliant;Warning;Unreachable;Pending;Unknown
 type ComplianceStatus string
 
 const (
@@ -41,8 +41,8 @@ const (
 	ComplianceStatusNonCompliant ComplianceStatus = "NonCompliant"
 	// ComplianceStatusWarning means TLS 1.3 not supported but no legacy TLS
 	ComplianceStatusWarning ComplianceStatus = "Warning"
-	// ComplianceStatusError means the endpoint could not be reached
-	ComplianceStatusError ComplianceStatus = "Error"
+	// ComplianceStatusUnreachable means the endpoint could not be reached
+	ComplianceStatusUnreachable ComplianceStatus = "Unreachable"
 	// ComplianceStatusPending means the check has not been performed yet
 	ComplianceStatusPending ComplianceStatus = "Pending"
 	// ComplianceStatusUnknown is the default status
@@ -167,7 +167,7 @@ type TLSComplianceReportStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Cluster,shortName=tlscr
+// +kubebuilder:resource:scope=Cluster,shortName=tlsreport
 // +kubebuilder:printcolumn:name="Host",type=string,JSONPath=`.spec.host`
 // +kubebuilder:printcolumn:name="Port",type=integer,JSONPath=`.spec.port`
 // +kubebuilder:printcolumn:name="Source",type=string,JSONPath=`.spec.sourceKind`

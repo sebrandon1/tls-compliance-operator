@@ -78,7 +78,7 @@ versions, cipher suites, and certificate details.
 | **Compliant** | TLS 1.3 supported AND no TLS 1.0/1.1 |
 | **NonCompliant** | TLS 1.0 or TLS 1.1 supported |
 | **Warning** | TLS 1.3 not supported but no legacy TLS |
-| **Error** | Could not connect to endpoint |
+| **Unreachable** | Could not connect to endpoint |
 | **Pending** | Not yet checked |
 
 ## Quick Start
@@ -109,7 +109,7 @@ Once deployed, the operator automatically discovers TLS endpoints and creates
 ### View All TLS Compliance Reports
 
 ```bash
-kubectl get tlscr
+kubectl get tlsreport
 
 # Example output:
 # NAME                                    HOST                                    PORT   SOURCE    COMPLIANCE     TLS1.3   TLS1.2   TLS1.0   CERT-EXPIRY   AGE
@@ -121,19 +121,19 @@ kubectl get tlscr
 ### View Detailed Report
 
 ```bash
-kubectl describe tlscr my-service-443-a1b2c3d4
+kubectl describe tlsreport my-service-443-a1b2c3d4
 ```
 
 ### Find Non-Compliant Endpoints
 
 ```bash
-kubectl get tlscr -o json | jq '.items[] | select(.status.complianceStatus == "NonCompliant") | .metadata.name'
+kubectl get tlsreport -o json | jq '.items[] | select(.status.complianceStatus == "NonCompliant") | .metadata.name'
 ```
 
 ### Find Endpoints with Expiring Certificates
 
 ```bash
-kubectl get tlscr -o json | jq '.items[] | select(.status.certificateInfo.daysUntilExpiry < 30) | {name: .metadata.name, host: .spec.host, days: .status.certificateInfo.daysUntilExpiry}'
+kubectl get tlsreport -o json | jq '.items[] | select(.status.certificateInfo.daysUntilExpiry < 30) | {name: .metadata.name, host: .spec.host, days: .status.certificateInfo.daysUntilExpiry}'
 ```
 
 ## Configuration

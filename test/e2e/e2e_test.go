@@ -144,7 +144,7 @@ var _ = Describe("Manager", Ordered, func() {
 
 			By("waiting for TLSComplianceReport to be created")
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "tlscr", "-o", "name")
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o", "name")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).NotTo(BeEmpty(), "expected at least one TLSComplianceReport")

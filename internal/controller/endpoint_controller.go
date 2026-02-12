@@ -263,7 +263,7 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	portStr := fmt.Sprintf("%d", port)
 
 	if checkErr != nil {
-		cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusError
+		cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusUnreachable
 		cr.Status.ConsecutiveErrors++
 		cr.Status.LastError = checkErr.Error()
 
@@ -575,7 +575,7 @@ func (r *EndpointReconciler) updateEndpointMetrics(ctx context.Context) {
 		string(securityv1alpha1.ComplianceStatusCompliant):    0,
 		string(securityv1alpha1.ComplianceStatusNonCompliant): 0,
 		string(securityv1alpha1.ComplianceStatusWarning):      0,
-		string(securityv1alpha1.ComplianceStatusError):        0,
+		string(securityv1alpha1.ComplianceStatusUnreachable):  0,
 		string(securityv1alpha1.ComplianceStatusPending):      0,
 		string(securityv1alpha1.ComplianceStatusUnknown):      0,
 	}
