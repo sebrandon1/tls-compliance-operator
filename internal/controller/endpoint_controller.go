@@ -151,7 +151,7 @@ func (r *EndpointReconciler) ReconcileRoute(ctx context.Context, req ctrl.Reques
 	})
 
 	if err := r.Get(ctx, req.NamespacedName, route); err != nil {
-		if !apierrors.IsNotFound(err) {
+		if !apierrors.IsNotFound(err) && ctx.Err() == nil {
 			logger.Error(err, "unable to fetch Route")
 		}
 		return
@@ -464,12 +464,12 @@ func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Named("endpoint").
 		WithOptions(controller.Options{}).
 		Watches(&networkingv1.Ingress{}, handler.EnqueueRequestsFromMapFunc(
-			func(ctx context.Context, obj client.Object) []ctrl.Request {
+			func(_ context.Context, obj client.Object) []ctrl.Request {
 				ing, ok := obj.(*networkingv1.Ingress)
 				if !ok {
 					return nil
 				}
-				go r.ReconcileIngress(ctx, ctrl.Request{
+				go r.ReconcileIngress(context.Background(), ctrl.Request{
 					NamespacedName: client.ObjectKeyFromObject(ing),
 				})
 				return nil
@@ -490,8 +490,8 @@ func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		builder = builder.WatchesRawSource(source.Kind(
 			mgr.GetCache(),
 			routeObj,
-			handler.TypedEnqueueRequestsFromMapFunc(func(ctx context.Context, obj *unstructured.Unstructured) []ctrl.Request {
-				go r.ReconcileRoute(ctx, ctrl.Request{
+			handler.TypedEnqueueRequestsFromMapFunc(func(_ context.Context, obj *unstructured.Unstructured) []ctrl.Request {
+				go r.ReconcileRoute(context.Background(), ctrl.Request{
 					NamespacedName: client.ObjectKeyFromObject(obj),
 				})
 				return nil

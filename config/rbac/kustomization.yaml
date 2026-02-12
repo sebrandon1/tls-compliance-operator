@@ -1,6 +1,8 @@
 resources:
 - role.yaml
 - role_binding.yaml
+- leader_election_role.yaml
+- leader_election_role_binding.yaml
 - service_account.yaml
 # The following RBAC configurations are used to protect the metrics endpoint with authn/authz.
 - metrics_auth_role.yaml
