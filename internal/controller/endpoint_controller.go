@@ -298,6 +298,9 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	// Update cipher suites
 	cr.Status.CipherSuites = result.CipherSuites
 
+	// Update negotiated curves
+	cr.Status.NegotiatedCurves = result.NegotiatedCurves
+
 	// Update certificate info
 	if result.Certificate != nil {
 		notBefore := metav1.NewTime(result.Certificate.NotBefore)

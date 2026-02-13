@@ -134,6 +134,11 @@ type TLSComplianceReportStatus struct {
 	// +optional
 	CipherSuites map[string][]string `json:"cipherSuites,omitempty"`
 
+	// NegotiatedCurves maps TLS version to the negotiated key exchange curve
+	// (e.g. X25519, P-256, X25519MLKEM768)
+	// +optional
+	NegotiatedCurves map[string]string `json:"negotiatedCurves,omitempty"`
+
 	// CertificateInfo contains details about the TLS certificate
 	// +optional
 	CertificateInfo *CertificateInfo `json:"certificateInfo,omitempty"`

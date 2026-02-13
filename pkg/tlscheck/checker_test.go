@@ -159,6 +159,9 @@ func TestTLSChecker_CheckEndpoint_TLS12And13(t *testing.T) {
 	if result.SupportsTLS11 {
 		t.Error("expected TLS 1.1 to not be supported")
 	}
+	if len(result.NegotiatedCurves) == 0 {
+		t.Error("expected negotiated curves to be populated")
+	}
 }
 
 func TestTLSChecker_CheckEndpoint_Unreachable(t *testing.T) {

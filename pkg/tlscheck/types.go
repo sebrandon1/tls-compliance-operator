@@ -46,6 +46,9 @@ type TLSCheckResult struct {
 	// Cipher suites per TLS version
 	CipherSuites map[string][]string
 
+	// NegotiatedCurves maps TLS version to the negotiated key exchange curve name
+	NegotiatedCurves map[string]string
+
 	// Certificate details (from the first successful connection)
 	Certificate *CertificateDetails
 

@@ -66,7 +66,8 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 
 	result := &TLSCheckResult{
-		CipherSuites: make(map[string][]string),
+		CipherSuites:     make(map[string][]string),
+		NegotiatedCurves: make(map[string]string),
 	}
 
 	anySuccess := false
@@ -79,13 +80,16 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 		default:
 		}
 
-		supported, cipherSuite, cert, err := c.tryTLSVersion(ctx, addr, host, vi.version)
+		supported, cipherSuite, curveName, cert, err := c.tryTLSVersion(ctx, addr, host, vi.version)
 		vi.field(result, supported)
 
 		if supported && err == nil {
 			anySuccess = true
 			if cipherSuite != "" {
 				result.CipherSuites[vi.name] = append(result.CipherSuites[vi.name], cipherSuite)
+			}
+			if curveName != "" {
+				result.NegotiatedCurves[vi.name] = curveName
 			}
 			if cert != nil && result.Certificate == nil {
 				result.Certificate = cert
@@ -141,7 +145,7 @@ func classifyFailure(errs []error) FailureReason {
 }
 
 // tryTLSVersion attempts to connect with a specific TLS version
-func (c *TLSChecker) tryTLSVersion(ctx context.Context, addr, serverName string, version uint16) (supported bool, cipherSuite string, cert *CertificateDetails, err error) {
+func (c *TLSChecker) tryTLSVersion(ctx context.Context, addr, serverName string, version uint16) (supported bool, cipherSuite string, curveName string, cert *CertificateDetails, err error) {
 	dialer := &net.Dialer{
 		Timeout: c.Timeout,
 	}
@@ -155,19 +159,25 @@ func (c *TLSChecker) tryTLSVersion(ctx context.Context, addr, serverName string,
 
 	conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
 	if err != nil {
-		return false, "", nil, err
+		return false, "", "", nil, err
 	}
 	defer conn.Close() //nolint:errcheck
 
 	state := conn.ConnectionState()
 	cipherSuiteName := tls.CipherSuiteName(state.CipherSuite)
 
+	// Get negotiated curve name (zero value means RSA key exchange, no curve)
+	var curve string
+	if state.CurveID != 0 {
+		curve = state.CurveID.String()
+	}
+
 	var certDetails *CertificateDetails
 	if len(state.PeerCertificates) > 0 {
 		certDetails = ParseCertificate(state.PeerCertificates[0])
 	}
 
-	return true, cipherSuiteName, certDetails, nil
+	return true, cipherSuiteName, curve, certDetails, nil
 }
 
 // RateLimitedChecker wraps a Checker with rate limiting

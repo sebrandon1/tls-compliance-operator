@@ -243,6 +243,13 @@ spec:
                 description: LastSeenAt is when this endpoint was last observed
                 format: date-time
                 type: string
+              negotiatedCurves:
+                additionalProperties:
+                  type: string
+                description: |-
+                  NegotiatedCurves maps TLS version to the negotiated key exchange curve
+                  (e.g. X25519, P-256, X25519MLKEM768)
+                type: object
               tlsVersions:
                 description: TLSVersions indicates which TLS versions are supported
                 properties:

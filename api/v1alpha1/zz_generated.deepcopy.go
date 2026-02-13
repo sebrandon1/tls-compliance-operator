@@ -152,6 +152,13 @@ func (in *TLSComplianceReportStatus) DeepCopyInto(out *TLSComplianceReportStatus
 			(*out)[key] = outVal
 		}
 	}
+	if in.NegotiatedCurves != nil {
+		in, out := &in.NegotiatedCurves, &out.NegotiatedCurves
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
 	if in.CertificateInfo != nil {
 		in, out := &in.CertificateInfo, &out.CertificateInfo
 		*out = new(CertificateInfo)
