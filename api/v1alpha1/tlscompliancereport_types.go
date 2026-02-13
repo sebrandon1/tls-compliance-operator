@@ -56,17 +56,13 @@ const (
 // TLSVersionSupport indicates which TLS versions an endpoint supports
 type TLSVersionSupport struct {
 	// TLS10 indicates if TLS 1.0 is supported
-	// +optional
-	TLS10 bool `json:"tls10,omitempty"`
+	TLS10 bool `json:"tls10"`
 	// TLS11 indicates if TLS 1.1 is supported
-	// +optional
-	TLS11 bool `json:"tls11,omitempty"`
+	TLS11 bool `json:"tls11"`
 	// TLS12 indicates if TLS 1.2 is supported
-	// +optional
-	TLS12 bool `json:"tls12,omitempty"`
+	TLS12 bool `json:"tls12"`
 	// TLS13 indicates if TLS 1.3 is supported
-	// +optional
-	TLS13 bool `json:"tls13,omitempty"`
+	TLS13 bool `json:"tls13"`
 }
 
 // CertificateInfo contains details about the TLS certificate

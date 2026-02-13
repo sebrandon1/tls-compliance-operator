@@ -273,6 +273,11 @@ spec:
                   tls13:
                     description: TLS13 indicates if TLS 1.3 is supported
                     type: boolean
+                required:
+                - tls10
+                - tls11
+                - tls12
+                - tls13
                 type: object
             type: object
         required:
