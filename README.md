@@ -31,6 +31,26 @@ versions, cipher suites, and certificate details.
 - **Kubernetes Events**: Emits events for non-compliance, status changes, and certificate warnings
 - **Rate Limiting**: Configurable rate limiting for TLS endpoint checks
 
+## Quick Start
+
+### Deploy from Source
+
+```bash
+# Build and push to your registry
+make docker-build docker-push IMG=quay.io/bapalm/tls-compliance-operator:latest
+
+# Install CRDs and deploy
+make install
+make deploy IMG=quay.io/bapalm/tls-compliance-operator:latest
+```
+
+### Or Generate Install Manifest
+
+```bash
+make build-installer IMG=quay.io/bapalm/tls-compliance-operator:latest
+kubectl apply -f dist/install.yaml
+```
+
 ## Architecture
 
 ```
@@ -81,26 +101,6 @@ versions, cipher suites, and certificate details.
 | **NoTLS** | Port is open but does not speak TLS |
 | **MutualTLSRequired** | Server requires a client certificate to complete handshake |
 | **Pending** | Not yet checked |
-
-## Quick Start
-
-### Deploy from Source
-
-```bash
-# Build and push to your registry
-make docker-build docker-push IMG=quay.io/bapalm/tls-compliance-operator:latest
-
-# Install CRDs and deploy
-make install
-make deploy IMG=quay.io/bapalm/tls-compliance-operator:latest
-```
-
-### Or Generate Install Manifest
-
-```bash
-make build-installer IMG=quay.io/bapalm/tls-compliance-operator:latest
-kubectl apply -f dist/install.yaml
-```
 
 ## Usage
 
