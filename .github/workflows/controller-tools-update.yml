@@ -1,0 +1,134 @@
+name: Update Controller-Tools Version
+
+on:
+  schedule:
+    # Run weekly on Monday at 9 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      controller_tools_version:
+        description: 'Controller-tools version to update to (e.g., v0.20.0)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-controller-tools:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Get latest Controller-Tools version
+        id: controller_tools
+        run: |
+          # Function to get version with retries
+          get_version() {
+            local retries=3
+            local delay=5
+
+            for ((i=1; i<=retries; i++)); do
+              echo "Attempt $i to fetch Controller-Tools version..." >&2
+
+              response=$(curl -s --max-time 30 https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/latest)
+
+              if [ $? -eq 0 ] && [ -n "$response" ]; then
+                version=$(echo "$response" | jq -r '.tag_name // empty')
+
+                if [ -n "$version" ] && [ "$version" != "null" ] && [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                  echo "Successfully fetched Controller-Tools version: $version" >&2
+                  echo "$version"
+                  return 0
+                else
+                  echo "Invalid version format: '$version'" >&2
+                fi
+              else
+                echo "API call failed or returned empty response" >&2
+              fi
+
+              if [ $i -lt $retries ]; then
+                echo "Retrying in $delay seconds..." >&2
+                sleep $delay
+              fi
+            done
+
+            echo "Failed to fetch valid Controller-Tools version after $retries attempts" >&2
+            return 1
+          }
+
+          if [ -n "${{ github.event.inputs.controller_tools_version }}" ]; then
+            LATEST_VERSION="${{ github.event.inputs.controller_tools_version }}"
+            # Validate manually provided version
+            if ! [[ "$LATEST_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Error: Invalid version format '$LATEST_VERSION' - expected format: vX.Y.Z"
+              exit 1
+            fi
+          else
+            LATEST_VERSION=$(get_version)
+            if [ $? -ne 0 ] || [ -z "$LATEST_VERSION" ]; then
+              echo "Error: Failed to fetch valid Controller-Tools version"
+              exit 1
+            fi
+          fi
+
+          echo "Latest Controller-Tools version: $LATEST_VERSION"
+          echo "version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+
+          # Get current version from Makefile
+          CURRENT_VERSION=$(grep -oP 'CONTROLLER_TOOLS_VERSION \?= \Kv[0-9]+\.[0-9]+\.[0-9]+' Makefile)
+          echo "Current version: $CURRENT_VERSION"
+          echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check if update is needed
+        id: check
+        run: |
+          if [ "${{ steps.controller_tools.outputs.version }}" == "${{ steps.controller_tools.outputs.current }}" ]; then
+            echo "No update needed. Already at ${{ steps.controller_tools.outputs.version }}"
+            echo "needs_update=false" >> $GITHUB_OUTPUT
+          else
+            echo "Update needed: ${{ steps.controller_tools.outputs.current }} -> ${{ steps.controller_tools.outputs.version }}"
+            echo "needs_update=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update Controller-Tools version in Makefile
+        if: steps.check.outputs.needs_update == 'true'
+        run: |
+          NEW_VERSION="${{ steps.controller_tools.outputs.version }}"
+          OLD_VERSION="${{ steps.controller_tools.outputs.current }}"
+
+          echo "Updating from $OLD_VERSION to $NEW_VERSION"
+
+          # Update Makefile
+          sed -i "s|CONTROLLER_TOOLS_VERSION ?= $OLD_VERSION|CONTROLLER_TOOLS_VERSION ?= $NEW_VERSION|g" Makefile
+
+          echo "Makefile updated successfully"
+
+      - name: Create Pull Request
+        if: steps.check.outputs.needs_update == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          commit-message: "Update Controller-Tools to ${{ steps.controller_tools.outputs.version }}"
+          title: "Update Controller-Tools to ${{ steps.controller_tools.outputs.version }}"
+          body: |
+            ## Update Controller-Tools Version
+
+            This PR updates Controller-Tools (controller-gen) from ${{ steps.controller_tools.outputs.current }} to ${{ steps.controller_tools.outputs.version }}.
+
+            ### Files Updated:
+            - `Makefile`
+
+            ### Controller-Tools Release Notes
+            https://github.com/kubernetes-sigs/controller-tools/releases/tag/${{ steps.controller_tools.outputs.version }}
+
+            ---
+            *This PR was automatically created by the Controller-Tools update workflow*
+          branch: update-controller-tools-${{ steps.controller_tools.outputs.version }}
+          delete-branch: true
+          labels: |
+            dependencies
+            automation
+          assignees: sebrandon1
