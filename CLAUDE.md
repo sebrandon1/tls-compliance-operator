@@ -57,9 +57,8 @@ make build-installer IMG=<img> # Generate dist/install.yaml
 - CR naming: `<sanitized-host>-<port>-<8-char-hash>` for uniqueness
 
 **Compliance Logic:**
-- **Compliant** = TLS 1.3 supported AND no TLS 1.0/1.1
-- **NonCompliant** = TLS 1.0 or 1.1 supported
-- **Warning** = TLS 1.3 not supported but no legacy TLS
+- **Compliant** = Supports TLS 1.2 or 1.3 (older versions alongside are fine)
+- **NonCompliant** = Only supports TLS 1.0/1.1, no modern TLS
 - **Unreachable** = Could not connect (connection refused, timeout)
 - **NoTLS** = Port is open but does not speak TLS
 - **MutualTLSRequired** = Server requires a client certificate

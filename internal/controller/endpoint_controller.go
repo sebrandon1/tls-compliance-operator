@@ -19,7 +19,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -339,16 +338,17 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	r.emitComplianceEvents(&cr, oldComplianceStatus, result)
 }
 
-// determineComplianceStatus determines the compliance status from TLS check results
+// determineComplianceStatus determines the compliance status from TLS check results.
+// Compliance is based on whether the endpoint supports modern TLS (1.2+).
+// Supporting older versions (1.0/1.1) alongside modern ones is acceptable
+// since OpenShift TLS security profiles may require them (e.g. the "Old" profile).
 func determineComplianceStatus(result *tlscheck.TLSCheckResult) securityv1alpha1.ComplianceStatus {
-	if result.SupportsTLS10 || result.SupportsTLS11 {
-		return securityv1alpha1.ComplianceStatusNonCompliant
-	}
-	if result.SupportsTLS13 {
+	if result.SupportsTLS12 || result.SupportsTLS13 {
 		return securityv1alpha1.ComplianceStatusCompliant
 	}
-	if result.SupportsTLS12 {
-		return securityv1alpha1.ComplianceStatusWarning
+	if result.SupportsTLS10 || result.SupportsTLS11 {
+		// Only legacy TLS versions, no modern TLS support
+		return securityv1alpha1.ComplianceStatusNonCompliant
 	}
 	return securityv1alpha1.ComplianceStatusUnknown
 }
@@ -367,22 +367,11 @@ func (r *EndpointReconciler) updateConditions(cr *securityv1alpha1.TLSCompliance
 	case securityv1alpha1.ComplianceStatusCompliant:
 		complianceCondition.Status = metav1.ConditionTrue
 		complianceCondition.Reason = "Compliant"
-		complianceCondition.Message = "Endpoint supports TLS 1.3 and does not support legacy TLS versions"
+		complianceCondition.Message = "Endpoint supports modern TLS (1.2 or 1.3)"
 	case securityv1alpha1.ComplianceStatusNonCompliant:
 		complianceCondition.Status = metav1.ConditionFalse
 		complianceCondition.Reason = "NonCompliant"
-		versions := []string{}
-		if result.SupportsTLS10 {
-			versions = append(versions, "1.0")
-		}
-		if result.SupportsTLS11 {
-			versions = append(versions, "1.1")
-		}
-		complianceCondition.Message = fmt.Sprintf("Endpoint supports legacy TLS versions: %s", strings.Join(versions, ", "))
-	case securityv1alpha1.ComplianceStatusWarning:
-		complianceCondition.Status = metav1.ConditionFalse
-		complianceCondition.Reason = "Warning"
-		complianceCondition.Message = "Endpoint does not support TLS 1.3"
+		complianceCondition.Message = "Endpoint only supports legacy TLS versions (no TLS 1.2 or 1.3)"
 	default:
 		complianceCondition.Status = metav1.ConditionUnknown
 		complianceCondition.Reason = "Unknown"
@@ -433,17 +422,10 @@ func (r *EndpointReconciler) emitComplianceEvents(cr *securityv1alpha1.TLSCompli
 		return
 	}
 
-	// Non-compliance detected
+	// Non-compliance detected — only legacy TLS, no modern TLS support
 	if cr.Status.ComplianceStatus == securityv1alpha1.ComplianceStatusNonCompliant {
-		versions := []string{}
-		if result.SupportsTLS10 {
-			versions = append(versions, "1.0")
-		}
-		if result.SupportsTLS11 {
-			versions = append(versions, "1.1")
-		}
 		r.Recorder.Event(cr, corev1.EventTypeWarning, EventReasonTLSNonCompliant,
-			fmt.Sprintf("Endpoint %s:%d supports legacy TLS versions: %s", cr.Spec.Host, cr.Spec.Port, strings.Join(versions, ", ")))
+			fmt.Sprintf("Endpoint %s:%d only supports legacy TLS versions (no TLS 1.2 or 1.3)", cr.Spec.Host, cr.Spec.Port))
 	}
 
 	// Compliance status changed

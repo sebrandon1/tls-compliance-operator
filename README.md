@@ -75,9 +75,8 @@ versions, cipher suites, and certificate details.
 
 | Status | Condition |
 |--------|-----------|
-| **Compliant** | TLS 1.3 supported AND no TLS 1.0/1.1 |
-| **NonCompliant** | TLS 1.0 or TLS 1.1 supported |
-| **Warning** | TLS 1.3 not supported but no legacy TLS |
+| **Compliant** | Supports TLS 1.2 or 1.3 (supporting older versions alongside is fine) |
+| **NonCompliant** | Only supports TLS 1.0/1.1 with no modern TLS |
 | **Unreachable** | Could not connect to endpoint (connection refused, timeout) |
 | **NoTLS** | Port is open but does not speak TLS |
 | **MutualTLSRequired** | Server requires a client certificate to complete handshake |

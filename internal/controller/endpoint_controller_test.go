@@ -455,28 +455,51 @@ func TestDetermineComplianceStatus(t *testing.T) {
 			expected: securityv1alpha1.ComplianceStatusCompliant,
 		},
 		{
-			name: "NonCompliant - TLS 1.0",
+			name: "Compliant - TLS 1.2 only",
+			result: &tlscheck.TLSCheckResult{
+				SupportsTLS12: true,
+			},
+			expected: securityv1alpha1.ComplianceStatusCompliant,
+		},
+		{
+			name: "Compliant - all versions (Old profile)",
 			result: &tlscheck.TLSCheckResult{
 				SupportsTLS10: true,
+				SupportsTLS11: true,
 				SupportsTLS12: true,
 				SupportsTLS13: true,
 			},
+			expected: securityv1alpha1.ComplianceStatusCompliant,
+		},
+		{
+			name: "Compliant - TLS 1.0 with 1.2",
+			result: &tlscheck.TLSCheckResult{
+				SupportsTLS10: true,
+				SupportsTLS12: true,
+			},
+			expected: securityv1alpha1.ComplianceStatusCompliant,
+		},
+		{
+			name: "NonCompliant - TLS 1.0 only",
+			result: &tlscheck.TLSCheckResult{
+				SupportsTLS10: true,
+			},
 			expected: securityv1alpha1.ComplianceStatusNonCompliant,
 		},
 		{
-			name: "NonCompliant - TLS 1.1",
+			name: "NonCompliant - TLS 1.1 only",
 			result: &tlscheck.TLSCheckResult{
 				SupportsTLS11: true,
-				SupportsTLS12: true,
 			},
 			expected: securityv1alpha1.ComplianceStatusNonCompliant,
 		},
 		{
-			name: "Warning - TLS 1.2 only",
+			name: "NonCompliant - TLS 1.0 and 1.1 only",
 			result: &tlscheck.TLSCheckResult{
-				SupportsTLS12: true,
+				SupportsTLS10: true,
+				SupportsTLS11: true,
 			},
-			expected: securityv1alpha1.ComplianceStatusWarning,
+			expected: securityv1alpha1.ComplianceStatusNonCompliant,
 		},
 		{
 			name:     "Unknown - no TLS versions",
