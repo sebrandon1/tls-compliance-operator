@@ -111,8 +111,8 @@ func TestEndpointReconciler_Reconcile_ServiceWithHTTPS(t *testing.T) {
 	}
 
 	cr := crList.Items[0]
-	if cr.Spec.Host != "my-service.default.svc.cluster.local" {
-		t.Errorf("Host = %v, want my-service.default.svc.cluster.local", cr.Spec.Host)
+	if cr.Spec.Host != "my-service.default" {
+		t.Errorf("Host = %v, want my-service.default", cr.Spec.Host)
 	}
 	if cr.Spec.Port != 443 {
 		t.Errorf("Port = %v, want 443", cr.Spec.Port)
@@ -289,7 +289,7 @@ func TestEndpointReconciler_CleanupOrphanedCRs(t *testing.T) {
 			Name: "existing-service-443-abc12345",
 		},
 		Spec: securityv1alpha1.TLSComplianceReportSpec{
-			Host:            "existing-service.default.svc.cluster.local",
+			Host:            "existing-service.default",
 			Port:            443,
 			SourceKind:      securityv1alpha1.SourceKindService,
 			SourceNamespace: testNamespace,
@@ -307,7 +307,7 @@ func TestEndpointReconciler_CleanupOrphanedCRs(t *testing.T) {
 			Name: "deleted-service-443-def67890",
 		},
 		Spec: securityv1alpha1.TLSComplianceReportSpec{
-			Host:            "deleted-service.default.svc.cluster.local",
+			Host:            "deleted-service.default",
 			Port:            443,
 			SourceKind:      securityv1alpha1.SourceKindService,
 			SourceNamespace: testNamespace,
@@ -636,7 +636,7 @@ func TestEndpointReconciler_ProcessEndpoint_Idempotent(t *testing.T) {
 	}
 
 	ep := endpoint.Endpoint{
-		Host:            "service.default.svc.cluster.local",
+		Host:            "service.default",
 		Port:            443,
 		SourceKind:      "Service",
 		SourceNamespace: "default",

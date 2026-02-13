@@ -45,8 +45,8 @@ func TestExtractFromService_HTTPSPort(t *testing.T) {
 	}
 
 	ep := endpoints[0]
-	if ep.Host != "my-service.default.svc.cluster.local" {
-		t.Errorf("host = %q, want my-service.default.svc.cluster.local", ep.Host)
+	if ep.Host != "my-service.default" {
+		t.Errorf("host = %q, want my-service.default", ep.Host)
 	}
 	if ep.Port != 443 {
 		t.Errorf("port = %d, want 443", ep.Port)
@@ -250,7 +250,7 @@ func TestExtractFromRoute_NoTLS(t *testing.T) {
 
 func TestGenerateCRName(t *testing.T) {
 	ep := Endpoint{
-		Host:            "my-service.default.svc.cluster.local",
+		Host:            "my-service.default",
 		Port:            443,
 		SourceKind:      "Service",
 		SourceNamespace: "default",
@@ -283,14 +283,14 @@ func TestGenerateCRName(t *testing.T) {
 
 func TestGenerateCRName_Uniqueness(t *testing.T) {
 	ep1 := Endpoint{
-		Host:            "service.default.svc.cluster.local",
+		Host:            "service.default",
 		Port:            443,
 		SourceKind:      "Service",
 		SourceNamespace: "default",
 		SourceName:      "service-a",
 	}
 	ep2 := Endpoint{
-		Host:            "service.default.svc.cluster.local",
+		Host:            "service.default",
 		Port:            443,
 		SourceKind:      "Service",
 		SourceNamespace: "default",
@@ -307,7 +307,7 @@ func TestGenerateCRName_Uniqueness(t *testing.T) {
 
 func TestGenerateCRName_LongHost(t *testing.T) {
 	ep := Endpoint{
-		Host:            "very-long-service-name-that-exceeds-normal-limits.very-long-namespace.svc.cluster.local",
+		Host:            "very-long-service-name-that-exceeds-normal-limits.very-long-namespace",
 		Port:            443,
 		SourceKind:      "Service",
 		SourceNamespace: "very-long-namespace",

@@ -113,9 +113,9 @@ kubectl get tlsreport
 
 # Example output:
 # NAME                                    HOST                                    PORT   SOURCE    COMPLIANCE     TLS1.3   TLS1.2   TLS1.0   CERT-EXPIRY   AGE
-# my-service-443-a1b2c3d4                 my-service.default.svc.cluster.local    443    Service   Compliant      true     true     false    29d           5m
+# my-service-443-a1b2c3d4                 my-service.default                      443    Service   Compliant      true     true     false    29d           5m
 # api-ingress-443-e5f6g7h8                api.example.com                         443    Ingress   NonCompliant   true     true     true     180d          5m
-# legacy-app-8443-i9j0k1l2                legacy.default.svc.cluster.local        8443   Service   Warning        false    true     false    7d            5m
+# legacy-app-8443-i9j0k1l2                legacy.default                          8443   Service   Warning        false    true     false    7d            5m
 ```
 
 ### View Detailed Report

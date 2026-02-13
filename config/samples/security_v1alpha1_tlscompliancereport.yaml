@@ -3,7 +3,7 @@ kind: TLSComplianceReport
 metadata:
   name: example-service-443-abc12345
 spec:
-  host: example-service.default.svc.cluster.local
+  host: example-service.default
   port: 443
   sourceKind: Service
   sourceNamespace: default

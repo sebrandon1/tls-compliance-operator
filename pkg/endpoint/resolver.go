@@ -49,7 +49,7 @@ func ExtractFromService(svc *corev1.Service) []Endpoint {
 
 	for _, port := range svc.Spec.Ports {
 		if isTLSPort(port) {
-			host := fmt.Sprintf("%s.%s.svc.cluster.local", svc.Name, svc.Namespace)
+			host := fmt.Sprintf("%s.%s", svc.Name, svc.Namespace)
 			endpoints = append(endpoints, Endpoint{
 				Host:            host,
 				Port:            port.Port,
