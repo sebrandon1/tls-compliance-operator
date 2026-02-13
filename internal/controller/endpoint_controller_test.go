@@ -518,6 +518,54 @@ func TestDetermineComplianceStatus(t *testing.T) {
 	}
 }
 
+func TestIsQuantumReady(t *testing.T) {
+	tests := []struct {
+		name     string
+		curves   map[string]string
+		expected bool
+	}{
+		{
+			name:     "nil map",
+			curves:   nil,
+			expected: false,
+		},
+		{
+			name:     "empty map",
+			curves:   map[string]string{},
+			expected: false,
+		},
+		{
+			name:     "classical only",
+			curves:   map[string]string{"TLS 1.2": "X25519", "TLS 1.3": "X25519"},
+			expected: false,
+		},
+		{
+			name:     "PQC on TLS 1.3",
+			curves:   map[string]string{"TLS 1.2": "X25519", "TLS 1.3": "X25519MLKEM768"},
+			expected: true,
+		},
+		{
+			name:     "PQC only version",
+			curves:   map[string]string{"TLS 1.3": "X25519MLKEM768"},
+			expected: true,
+		},
+		{
+			name:     "P-256 only",
+			curves:   map[string]string{"TLS 1.2": "P-256"},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isQuantumReady(tt.curves)
+			if got != tt.expected {
+				t.Errorf("isQuantumReady() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestEndpointReconciler_IsExcludedNamespace(t *testing.T) {
 	r := &EndpointReconciler{
 		ExcludeNamespaces: []string{"kube-system", "openshift-monitoring"},

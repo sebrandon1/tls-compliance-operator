@@ -139,6 +139,11 @@ type TLSComplianceReportStatus struct {
 	// +optional
 	NegotiatedCurves map[string]string `json:"negotiatedCurves,omitempty"`
 
+	// QuantumReady indicates whether any TLS connection negotiated a
+	// post-quantum key exchange algorithm (e.g. X25519MLKEM768)
+	// +optional
+	QuantumReady bool `json:"quantumReady,omitempty"`
+
 	// CertificateInfo contains details about the TLS certificate
 	// +optional
 	CertificateInfo *CertificateInfo `json:"certificateInfo,omitempty"`
@@ -184,6 +189,7 @@ type TLSComplianceReportStatus struct {
 // +kubebuilder:printcolumn:name="TLS1.3",type=boolean,JSONPath=`.status.tlsVersions.tls13`
 // +kubebuilder:printcolumn:name="TLS1.2",type=boolean,JSONPath=`.status.tlsVersions.tls12`
 // +kubebuilder:printcolumn:name="TLS1.0",type=boolean,JSONPath=`.status.tlsVersions.tls10`
+// +kubebuilder:printcolumn:name="PQC",type=boolean,JSONPath=`.status.quantumReady`
 // +kubebuilder:printcolumn:name="CertExpiry",type=integer,JSONPath=`.status.certificateInfo.daysUntilExpiry`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 

@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -298,8 +299,9 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	// Update cipher suites
 	cr.Status.CipherSuites = result.CipherSuites
 
-	// Update negotiated curves
+	// Update negotiated curves and quantum readiness
 	cr.Status.NegotiatedCurves = result.NegotiatedCurves
+	cr.Status.QuantumReady = isQuantumReady(result.NegotiatedCurves)
 
 	// Update certificate info
 	if result.Certificate != nil {
@@ -354,6 +356,17 @@ func determineComplianceStatus(result *tlscheck.TLSCheckResult) securityv1alpha1
 		return securityv1alpha1.ComplianceStatusNonCompliant
 	}
 	return securityv1alpha1.ComplianceStatusUnknown
+}
+
+// isQuantumReady returns true if any negotiated curve uses a post-quantum
+// key exchange algorithm (identified by containing "MLKEM" in the name).
+func isQuantumReady(curves map[string]string) bool {
+	for _, curve := range curves {
+		if strings.Contains(curve, "MLKEM") {
+			return true
+		}
+	}
+	return false
 }
 
 // updateConditions sets Kubernetes conditions based on check results
