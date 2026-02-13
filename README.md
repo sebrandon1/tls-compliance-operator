@@ -88,17 +88,17 @@ versions, cipher suites, and certificate details.
 
 ```bash
 # Build and push to your registry
-make docker-build docker-push IMG=quay.io/youruser/tls-compliance-operator:latest
+make docker-build docker-push IMG=quay.io/bapalm/tls-compliance-operator:latest
 
 # Install CRDs and deploy
 make install
-make deploy IMG=quay.io/youruser/tls-compliance-operator:latest
+make deploy IMG=quay.io/bapalm/tls-compliance-operator:latest
 ```
 
 ### Or Generate Install Manifest
 
 ```bash
-make build-installer IMG=quay.io/youruser/tls-compliance-operator:latest
+make build-installer IMG=quay.io/bapalm/tls-compliance-operator:latest
 kubectl apply -f dist/install.yaml
 ```
 
@@ -223,7 +223,7 @@ make manifests generate
 make test-e2e       # Creates Kind cluster, runs tests, cleans up
 
 # Multi-arch build
-make docker-buildx IMG=quay.io/youruser/tls-compliance-operator:latest
+make docker-buildx IMG=quay.io/bapalm/tls-compliance-operator:latest
 ```
 
 ## Contributing

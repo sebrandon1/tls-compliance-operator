@@ -26,9 +26,9 @@ make manifests                # Regenerate CRDs/RBAC from kubebuilder markers
 make generate                 # Regenerate DeepCopy methods
 
 # Docker
-make docker-build IMG=<img>   # Build image
-make docker-push IMG=<img>    # Push image
-make docker-buildx IMG=<img>  # Multi-arch build (amd64, arm64, s390x, ppc64le)
+make docker-build IMG=quay.io/bapalm/tls-compliance-operator:latest   # Build image
+make docker-push IMG=quay.io/bapalm/tls-compliance-operator:latest    # Push image
+make docker-buildx IMG=quay.io/bapalm/tls-compliance-operator:latest  # Multi-arch build (amd64, arm64, s390x, ppc64le)
 
 # Deploy to cluster
 make install                  # Install CRDs only
