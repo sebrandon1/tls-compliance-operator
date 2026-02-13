@@ -314,7 +314,7 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 			NotAfter:        &notAfter,
 			DNSNames:        result.Certificate.DNSNames,
 			IsExpired:       result.Certificate.IsExpired,
-			DaysUntilExpiry: &result.Certificate.DaysUntilExpiry,
+			DaysUntilExpiry: result.Certificate.DaysUntilExpiry,
 		}
 
 		// Record cert expiry metric

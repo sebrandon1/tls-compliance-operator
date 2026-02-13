@@ -87,7 +87,7 @@ type CertificateInfo struct {
 	IsExpired bool `json:"isExpired,omitempty"`
 	// DaysUntilExpiry is the number of days until the certificate expires
 	// +optional
-	DaysUntilExpiry *int `json:"daysUntilExpiry,omitempty"`
+	DaysUntilExpiry int `json:"daysUntilExpiry"`
 }
 
 // TLSComplianceReportSpec defines the desired state of TLSComplianceReport
@@ -138,7 +138,7 @@ type TLSComplianceReportStatus struct {
 	// QuantumReady indicates whether any TLS connection negotiated a
 	// post-quantum key exchange algorithm (e.g. X25519MLKEM768)
 	// +optional
-	QuantumReady bool `json:"quantumReady,omitempty"`
+	QuantumReady bool `json:"quantumReady"`
 
 	// CertificateInfo contains details about the TLS certificate
 	// +optional
