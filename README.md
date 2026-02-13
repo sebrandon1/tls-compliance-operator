@@ -31,6 +31,26 @@ versions, cipher suites, and certificate details.
 - **Kubernetes Events**: Emits events for non-compliance, status changes, and certificate warnings
 - **Rate Limiting**: Configurable rate limiting for TLS endpoint checks
 
+## Quick Deploy
+
+Deploy directly to your cluster with a single command (no clone required):
+
+```bash
+kubectl apply -f https://github.com/sebrandon1/tls-compliance-operator/releases/latest/download/install.yaml
+```
+
+To deploy a specific version:
+
+```bash
+kubectl apply -f https://github.com/sebrandon1/tls-compliance-operator/releases/download/v0.0.1/install.yaml
+```
+
+To uninstall:
+
+```bash
+kubectl delete -f https://github.com/sebrandon1/tls-compliance-operator/releases/latest/download/install.yaml
+```
+
 ## Quick Start
 
 ### Deploy from Source
