@@ -1,0 +1,135 @@
+name: Update Kustomize Version
+
+on:
+  schedule:
+    # Run weekly on Monday at 9 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      kustomize_version:
+        description: 'Kustomize version to update to (e.g., v5.7.1)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-kustomize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Get latest Kustomize version
+        id: kustomize
+        run: |
+          # Function to get version with retries
+          get_version() {
+            local retries=3
+            local delay=5
+
+            for ((i=1; i<=retries; i++)); do
+              echo "Attempt $i to fetch Kustomize version..." >&2
+
+              response=$(curl -s --max-time 30 https://api.github.com/repos/kubernetes-sigs/kustomize/releases)
+
+              if [ $? -eq 0 ] && [ -n "$response" ]; then
+                # Filter for kustomize releases (not kyaml, api, or cmd/config)
+                version=$(echo "$response" | jq -r '[.[] | select(.tag_name | startswith("kustomize/"))][0].tag_name // empty' | sed 's|kustomize/||')
+
+                if [ -n "$version" ] && [ "$version" != "null" ] && [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                  echo "Successfully fetched Kustomize version: $version" >&2
+                  echo "$version"
+                  return 0
+                else
+                  echo "Invalid version format: '$version'" >&2
+                fi
+              else
+                echo "API call failed or returned empty response" >&2
+              fi
+
+              if [ $i -lt $retries ]; then
+                echo "Retrying in $delay seconds..." >&2
+                sleep $delay
+              fi
+            done
+
+            echo "Failed to fetch valid Kustomize version after $retries attempts" >&2
+            return 1
+          }
+
+          if [ -n "${{ github.event.inputs.kustomize_version }}" ]; then
+            LATEST_VERSION="${{ github.event.inputs.kustomize_version }}"
+            # Validate manually provided version
+            if ! [[ "$LATEST_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Error: Invalid version format '$LATEST_VERSION' - expected format: vX.Y.Z"
+              exit 1
+            fi
+          else
+            LATEST_VERSION=$(get_version)
+            if [ $? -ne 0 ] || [ -z "$LATEST_VERSION" ]; then
+              echo "Error: Failed to fetch valid Kustomize version"
+              exit 1
+            fi
+          fi
+
+          echo "Latest Kustomize version: $LATEST_VERSION"
+          echo "version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+
+          # Get current version from Makefile
+          CURRENT_VERSION=$(grep -oP 'KUSTOMIZE_VERSION \?= \Kv[0-9]+\.[0-9]+\.[0-9]+' Makefile)
+          echo "Current version: $CURRENT_VERSION"
+          echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check if update is needed
+        id: check
+        run: |
+          if [ "${{ steps.kustomize.outputs.version }}" == "${{ steps.kustomize.outputs.current }}" ]; then
+            echo "No update needed. Already at ${{ steps.kustomize.outputs.version }}"
+            echo "needs_update=false" >> $GITHUB_OUTPUT
+          else
+            echo "Update needed: ${{ steps.kustomize.outputs.current }} -> ${{ steps.kustomize.outputs.version }}"
+            echo "needs_update=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update Kustomize version in Makefile
+        if: steps.check.outputs.needs_update == 'true'
+        run: |
+          NEW_VERSION="${{ steps.kustomize.outputs.version }}"
+          OLD_VERSION="${{ steps.kustomize.outputs.current }}"
+
+          echo "Updating from $OLD_VERSION to $NEW_VERSION"
+
+          # Update Makefile
+          sed -i "s|KUSTOMIZE_VERSION ?= $OLD_VERSION|KUSTOMIZE_VERSION ?= $NEW_VERSION|g" Makefile
+
+          echo "Makefile updated successfully"
+
+      - name: Create Pull Request
+        if: steps.check.outputs.needs_update == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          commit-message: "Update Kustomize to ${{ steps.kustomize.outputs.version }}"
+          title: "Update Kustomize to ${{ steps.kustomize.outputs.version }}"
+          body: |
+            ## Update Kustomize Version
+
+            This PR updates Kustomize from ${{ steps.kustomize.outputs.current }} to ${{ steps.kustomize.outputs.version }}.
+
+            ### Files Updated:
+            - `Makefile`
+
+            ### Kustomize Release Notes
+            https://github.com/kubernetes-sigs/kustomize/releases/tag/kustomize/${{ steps.kustomize.outputs.version }}
+
+            ---
+            *This PR was automatically created by the Kustomize update workflow*
+          branch: update-kustomize-${{ steps.kustomize.outputs.version }}
+          delete-branch: true
+          labels: |
+            dependencies
+            automation
+          assignees: sebrandon1

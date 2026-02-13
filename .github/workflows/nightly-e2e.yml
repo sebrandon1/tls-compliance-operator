@@ -1,0 +1,161 @@
+name: Nightly E2E Tests
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # 2 AM UTC daily
+  workflow_dispatch:      # Manual trigger
+
+jobs:
+  e2e-kubernetes:
+    name: E2E Tests on Kubernetes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Create Kubernetes cluster
+        uses: palmsoftware/quick-k8s@v0.0.47
+        with:
+          numControlPlaneNodes: 1
+          numWorkerNodes: 1
+          installLocalRegistry: 'true'
+          localRegistryPort: '5001'
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure containerd for local registry
+        run: |
+          # Configure Kind nodes to redirect localhost:5001 to registry container via HTTP
+          REGISTRY_DIR="/etc/containerd/certs.d/localhost:5001"
+          for node in $(kind get nodes --name kind); do
+            docker exec "${node}" mkdir -p "${REGISTRY_DIR}"
+            cat <<EOF | docker exec -i "${node}" cp /dev/stdin "${REGISTRY_DIR}/hosts.toml"
+          server = "http://quick-k8s-registry:5000"
+
+          [host."http://quick-k8s-registry:5000"]
+            capabilities = ["pull", "resolve", "push"]
+          EOF
+          done
+
+      - name: Build operator image
+        run: |
+          make docker-build IMG=localhost:5001/tls-compliance-operator:test
+
+      - name: Push to local registry
+        run: |
+          docker push localhost:5001/tls-compliance-operator:test
+
+      - name: Deploy operator
+        run: |
+          make deploy IMG=localhost:5001/tls-compliance-operator:test
+
+      - name: Wait for operator readiness
+        run: |
+          kubectl wait --for=condition=available --timeout=120s deployment/tls-compliance-operator-controller-manager -n tls-compliance-operator-system
+
+      - name: Run nightly e2e tests
+        run: |
+          make test-e2e CLUSTER_TYPE=kubernetes
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Controller Manager Logs ==="
+          kubectl logs -n tls-compliance-operator-system -l control-plane=controller-manager --tail=200 || true
+          echo "=== Events ==="
+          kubectl get events -n tls-compliance-operator-system --sort-by=.lastTimestamp || true
+          echo "=== All Pods ==="
+          kubectl get pods -A || true
+          echo "=== TLSComplianceReport Resources ==="
+          kubectl get tlscompliancereports -A -o yaml || true
+
+  e2e-openshift:
+    name: E2E Tests on OpenShift
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for PULL_SECRET
+        env:
+          PULL_SECRET: ${{ secrets.PULL_SECRET }}
+        run: |
+          if [ -z "$PULL_SECRET" ]; then
+            echo "::notice::PULL_SECRET not configured, skipping OpenShift tests"
+            echo "SKIP_OCP=true" >> $GITHUB_ENV
+          fi
+
+      - name: Clone the code
+        if: ${{ env.SKIP_OCP != 'true' }}
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        if: ${{ env.SKIP_OCP != 'true' }}
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Create OpenShift cluster
+        if: ${{ env.SKIP_OCP != 'true' }}
+        uses: palmsoftware/quick-ocp@v0.0.24
+        with:
+          ocpPullSecret: ${{ secrets.PULL_SECRET }}
+          desiredOCPVersion: "4.20"
+
+      - name: Setup OpenShift internal registry access
+        if: ${{ env.SKIP_OCP != 'true' }}
+        run: |
+          # Expose the internal registry
+          oc patch configs.imageregistry.operator.openshift.io/cluster --type merge -p '{"spec":{"defaultRoute":true}}'
+          # Wait for the route to be available
+          sleep 15
+          # Get the registry route
+          REGISTRY_HOST=$(oc get route default-route -n openshift-image-registry --template='{{ .spec.host }}')
+          echo "REGISTRY_HOST=${REGISTRY_HOST}" >> $GITHUB_ENV
+          # Configure Docker to trust the insecure registry
+          echo "{\"insecure-registries\": [\"${REGISTRY_HOST}\"]}" | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+          sleep 5
+          # Login to the internal registry
+          oc whoami -t | docker login ${REGISTRY_HOST} -u $(oc whoami) --password-stdin
+
+      - name: Build operator image
+        if: ${{ env.SKIP_OCP != 'true' }}
+        run: |
+          make docker-build IMG=${REGISTRY_HOST}/tls-compliance-operator-system/tls-compliance-operator:test
+
+      - name: Push to OpenShift registry
+        if: ${{ env.SKIP_OCP != 'true' }}
+        run: |
+          # Create the namespace first so we can push to it
+          oc create namespace tls-compliance-operator-system --dry-run=client -o yaml | oc apply -f -
+          docker push ${REGISTRY_HOST}/tls-compliance-operator-system/tls-compliance-operator:test
+
+      - name: Deploy operator
+        if: ${{ env.SKIP_OCP != 'true' }}
+        run: |
+          # Use the internal registry reference for the deployment
+          make deploy IMG=image-registry.openshift-image-registry.svc:5000/tls-compliance-operator-system/tls-compliance-operator:test
+
+      - name: Wait for operator readiness
+        if: ${{ env.SKIP_OCP != 'true' }}
+        run: |
+          kubectl wait --for=condition=available --timeout=180s deployment/tls-compliance-operator-controller-manager -n tls-compliance-operator-system
+
+      - name: Run nightly e2e tests
+        if: ${{ env.SKIP_OCP != 'true' }}
+        run: |
+          make test-e2e CLUSTER_TYPE=openshift
+
+      - name: Collect logs on failure
+        if: ${{ failure() && env.SKIP_OCP != 'true' }}
+        run: |
+          echo "=== Controller Manager Logs ==="
+          kubectl logs -n tls-compliance-operator-system -l control-plane=controller-manager --tail=200 || true
+          echo "=== Events ==="
+          kubectl get events -n tls-compliance-operator-system --sort-by=.lastTimestamp || true
+          echo "=== All Pods ==="
+          kubectl get pods -A || true
+          echo "=== TLSComplianceReport Resources ==="
+          kubectl get tlscompliancereports -A -o yaml || true
