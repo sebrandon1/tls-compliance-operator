@@ -21,6 +21,20 @@ import (
 	"time"
 )
 
+// FailureReason classifies why a TLS check failed
+type FailureReason string
+
+const (
+	// FailureReasonNone indicates the check succeeded
+	FailureReasonNone FailureReason = ""
+	// FailureReasonUnreachable indicates a network-level failure (connection refused, timeout)
+	FailureReasonUnreachable FailureReason = "Unreachable"
+	// FailureReasonNoTLS indicates the port is open but does not speak TLS
+	FailureReasonNoTLS FailureReason = "NoTLS"
+	// FailureReasonMutualTLSRequired indicates the server requires a client certificate
+	FailureReasonMutualTLSRequired FailureReason = "MutualTLSRequired"
+)
+
 // TLSCheckResult contains the results of a TLS endpoint check
 type TLSCheckResult struct {
 	// TLS version support
@@ -34,6 +48,9 @@ type TLSCheckResult struct {
 
 	// Certificate details (from the first successful connection)
 	Certificate *CertificateDetails
+
+	// FailureReason classifies why the check failed (empty on success)
+	FailureReason FailureReason
 
 	// Check metadata
 	CheckDuration time.Duration

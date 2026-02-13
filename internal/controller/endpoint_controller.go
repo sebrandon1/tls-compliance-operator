@@ -263,7 +263,15 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	portStr := fmt.Sprintf("%d", port)
 
 	if checkErr != nil {
-		cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusUnreachable
+		// Use the failure reason from the checker to set a specific status
+		switch result.FailureReason {
+		case tlscheck.FailureReasonNoTLS:
+			cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusNoTLS
+		case tlscheck.FailureReasonMutualTLSRequired:
+			cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusMutualTLSRequired
+		default:
+			cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusUnreachable
+		}
 		cr.Status.ConsecutiveErrors++
 		cr.Status.LastError = checkErr.Error()
 
@@ -572,12 +580,14 @@ func (r *EndpointReconciler) updateEndpointMetrics(ctx context.Context) {
 	}
 
 	counts := map[string]float64{
-		string(securityv1alpha1.ComplianceStatusCompliant):    0,
-		string(securityv1alpha1.ComplianceStatusNonCompliant): 0,
-		string(securityv1alpha1.ComplianceStatusWarning):      0,
-		string(securityv1alpha1.ComplianceStatusUnreachable):  0,
-		string(securityv1alpha1.ComplianceStatusPending):      0,
-		string(securityv1alpha1.ComplianceStatusUnknown):      0,
+		string(securityv1alpha1.ComplianceStatusCompliant):         0,
+		string(securityv1alpha1.ComplianceStatusNonCompliant):      0,
+		string(securityv1alpha1.ComplianceStatusWarning):           0,
+		string(securityv1alpha1.ComplianceStatusUnreachable):       0,
+		string(securityv1alpha1.ComplianceStatusNoTLS):             0,
+		string(securityv1alpha1.ComplianceStatusMutualTLSRequired): 0,
+		string(securityv1alpha1.ComplianceStatusPending):           0,
+		string(securityv1alpha1.ComplianceStatusUnknown):           0,
 	}
 
 	for _, cr := range crList.Items {

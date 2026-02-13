@@ -158,6 +158,8 @@ spec:
                 - NonCompliant
                 - Warning
                 - Unreachable
+                - NoTLS
+                - MutualTLSRequired
                 - Pending
                 - Unknown
                 type: string

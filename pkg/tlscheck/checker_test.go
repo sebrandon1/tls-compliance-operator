@@ -24,6 +24,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"math/big"
 	"net"
 	"testing"
@@ -170,6 +171,104 @@ func TestTLSChecker_CheckEndpoint_Unreachable(t *testing.T) {
 	if result == nil {
 		t.Fatal("expected non-nil result even on error")
 	}
+	if result.FailureReason != FailureReasonUnreachable {
+		t.Errorf("expected FailureReason=%q, got %q", FailureReasonUnreachable, result.FailureReason)
+	}
+}
+
+func TestTLSChecker_CheckEndpoint_NoTLS(t *testing.T) {
+	// Start a plain TCP server (no TLS)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start plain TCP listener: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			// Send non-TLS data and close
+			_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+			_ = conn.Close()
+		}
+	}()
+
+	addr := listener.Addr().(*net.TCPAddr)
+	checker := NewTLSChecker(2 * time.Second)
+	result, err := checker.CheckEndpoint(context.Background(), addr.IP.String(), addr.Port)
+	if err == nil {
+		t.Error("expected error for non-TLS endpoint")
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result even on error")
+	}
+	if result.FailureReason != FailureReasonNoTLS {
+		t.Errorf("expected FailureReason=%q, got %q", FailureReasonNoTLS, result.FailureReason)
+	}
+}
+
+func TestClassifyFailure(t *testing.T) {
+	tests := []struct {
+		name     string
+		errors   []error
+		expected FailureReason
+	}{
+		{
+			name:     "no errors",
+			errors:   nil,
+			expected: FailureReasonUnreachable,
+		},
+		{
+			name:     "connection refused",
+			errors:   []error{errors.New("dial tcp 10.0.0.1:443: connect: connection refused")},
+			expected: FailureReasonUnreachable,
+		},
+		{
+			name:     "timeout",
+			errors:   []error{errors.New("dial tcp 10.0.0.1:443: i/o timeout")},
+			expected: FailureReasonUnreachable,
+		},
+		{
+			name:     "not TLS",
+			errors:   []error{errors.New("tls: first record does not look like a TLS handshake")},
+			expected: FailureReasonNoTLS,
+		},
+		{
+			name:     "oversized record",
+			errors:   []error{errors.New("tls: oversized record received with length 22")},
+			expected: FailureReasonNoTLS,
+		},
+		{
+			name:     "certificate required",
+			errors:   []error{errors.New("remote error: tls: certificate required")},
+			expected: FailureReasonMutualTLSRequired,
+		},
+		{
+			name:     "bad certificate",
+			errors:   []error{errors.New("remote error: tls: bad certificate")},
+			expected: FailureReasonMutualTLSRequired,
+		},
+		{
+			name: "mTLS takes priority over NoTLS",
+			errors: []error{
+				errors.New("tls: first record does not look like a TLS handshake"),
+				errors.New("remote error: tls: certificate required"),
+			},
+			expected: FailureReasonMutualTLSRequired,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := classifyFailure(tt.errors)
+			if got != tt.expected {
+				t.Errorf("classifyFailure() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
 }
 
 func TestTLSChecker_CheckEndpoint_ContextCancelled(t *testing.T) {
@@ -270,4 +369,3 @@ func TestTLSChecker_CertificateExpiry(t *testing.T) {
 		t.Errorf("expected days until expiry to be 0 or 1, got %d", result.Certificate.DaysUntilExpiry)
 	}
 }
-

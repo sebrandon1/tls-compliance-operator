@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -69,6 +70,7 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 	}
 
 	anySuccess := false
+	var lastErrors []error
 
 	for _, vi := range tlsVersionInfo {
 		select {
@@ -88,16 +90,54 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 			if cert != nil && result.Certificate == nil {
 				result.Certificate = cert
 			}
+		} else if err != nil {
+			lastErrors = append(lastErrors, err)
 		}
 	}
 
 	result.CheckDuration = time.Since(start)
 
 	if !anySuccess {
+		result.FailureReason = classifyFailure(lastErrors)
 		return result, fmt.Errorf("could not establish TLS connection to %s on any TLS version", addr)
 	}
 
 	return result, nil
+}
+
+// classifyFailure analyzes TLS connection errors to determine the failure category
+func classifyFailure(errs []error) FailureReason {
+	if len(errs) == 0 {
+		return FailureReasonUnreachable
+	}
+
+	var hasNoTLS, hasMTLS bool
+
+	for _, err := range errs {
+		msg := err.Error()
+
+		// Server requires client certificate
+		if strings.Contains(msg, "certificate required") ||
+			strings.Contains(msg, "bad certificate") {
+			hasMTLS = true
+		}
+
+		// Port is open but not speaking TLS
+		if strings.Contains(msg, "first record does not look like a TLS handshake") ||
+			strings.Contains(msg, "oversized record") {
+			hasNoTLS = true
+		}
+	}
+
+	// mTLS takes priority — the server IS speaking TLS, it just wants a client cert
+	if hasMTLS {
+		return FailureReasonMutualTLSRequired
+	}
+	if hasNoTLS {
+		return FailureReasonNoTLS
+	}
+
+	return FailureReasonUnreachable
 }
 
 // tryTLSVersion attempts to connect with a specific TLS version

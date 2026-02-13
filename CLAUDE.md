@@ -60,7 +60,9 @@ make build-installer IMG=<img> # Generate dist/install.yaml
 - **Compliant** = TLS 1.3 supported AND no TLS 1.0/1.1
 - **NonCompliant** = TLS 1.0 or 1.1 supported
 - **Warning** = TLS 1.3 not supported but no legacy TLS
-- **Unreachable** = Could not connect
+- **Unreachable** = Could not connect (connection refused, timeout)
+- **NoTLS** = Port is open but does not speak TLS
+- **MutualTLSRequired** = Server requires a client certificate
 
 **Config Structure:**
 - `config/crd/` - Generated CRDs (DO NOT EDIT)
