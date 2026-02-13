@@ -25,7 +25,6 @@ jobs:
           numWorkerNodes: 1
           installLocalRegistry: 'true'
           localRegistryPort: '5001'
-          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure containerd for local registry
         run: |

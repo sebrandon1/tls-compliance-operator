@@ -23,11 +23,19 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
+
+// projectRoot returns the absolute path to the project root directory.
+func projectRoot() string {
+	_, filename, _, _ := runtime.Caller(0)
+	return filepath.Join(filepath.Dir(filename), "..", "..")
+}
 
 var managerImage = os.Getenv("IMG")
 
@@ -37,6 +45,7 @@ func TestE2E(t *testing.T) {
 		managerImage = "tls-compliance-operator:test-e2e"
 
 		cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", managerImage))
+		cmd.Dir = projectRoot()
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("Failed to build manager image: %v\nOutput: %s", err, output)

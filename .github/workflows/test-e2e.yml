@@ -22,7 +22,6 @@ jobs:
         with:
           numControlPlaneNodes: 1
           numWorkerNodes: 1
-          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Running Test e2e
         run: |
