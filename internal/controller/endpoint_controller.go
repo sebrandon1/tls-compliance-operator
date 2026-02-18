@@ -304,8 +304,10 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 		TLS13: result.SupportsTLS13,
 	}
 
-	// Update cipher suites
+	// Update cipher suites and grades
 	cr.Status.CipherSuites = result.CipherSuites
+	cr.Status.CipherStrengthGrades = tlscheck.GradeCipherSuites(result.CipherSuites)
+	cr.Status.OverallCipherGrade = tlscheck.OverallGrade(result.CipherSuites)
 
 	// Update negotiated curves and quantum readiness
 	cr.Status.NegotiatedCurves = result.NegotiatedCurves

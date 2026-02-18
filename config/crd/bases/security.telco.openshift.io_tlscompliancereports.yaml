@@ -29,6 +29,9 @@ spec:
     - jsonPath: .status.complianceStatus
       name: Compliance
       type: string
+    - jsonPath: .status.overallCipherGrade
+      name: Grade
+      type: string
     - jsonPath: .status.tlsVersions.tls13
       name: TLS1.3
       type: boolean
@@ -144,6 +147,12 @@ spec:
                 description: CheckCount is the number of TLS checks performed
                 format: int64
                 type: integer
+              cipherStrengthGrades:
+                additionalProperties:
+                  type: string
+                description: CipherStrengthGrades maps each cipher suite name to its
+                  strength grade (A-F)
+                type: object
               cipherSuites:
                 additionalProperties:
                   items:
@@ -256,6 +265,10 @@ spec:
                   NegotiatedCurves maps TLS version to the negotiated key exchange curve
                   (e.g. X25519, P-256, X25519MLKEM768)
                 type: object
+              overallCipherGrade:
+                description: OverallCipherGrade is the worst grade across all negotiated
+                  cipher suites
+                type: string
               quantumReady:
                 description: |-
                   QuantumReady indicates whether any TLS connection negotiated a
