@@ -27,8 +27,14 @@ type FailureReason string
 const (
 	// FailureReasonNone indicates the check succeeded
 	FailureReasonNone FailureReason = ""
-	// FailureReasonUnreachable indicates a network-level failure (connection refused, timeout)
+	// FailureReasonUnreachable indicates a generic network-level failure
 	FailureReasonUnreachable FailureReason = "Unreachable"
+	// FailureReasonTimeout indicates the connection timed out waiting for a response
+	FailureReasonTimeout FailureReason = "Timeout"
+	// FailureReasonClosed indicates the port is not listening (connection refused)
+	FailureReasonClosed FailureReason = "Closed"
+	// FailureReasonFiltered indicates no response and no explicit refusal (e.g. firewall drop)
+	FailureReasonFiltered FailureReason = "Filtered"
 	// FailureReasonNoTLS indicates the port is open but does not speak TLS
 	FailureReasonNoTLS FailureReason = "NoTLS"
 	// FailureReasonMutualTLSRequired indicates the server requires a client certificate

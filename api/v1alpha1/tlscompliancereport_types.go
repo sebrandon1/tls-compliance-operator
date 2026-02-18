@@ -31,7 +31,7 @@ const (
 )
 
 // ComplianceStatus indicates the TLS compliance status of an endpoint
-// +kubebuilder:validation:Enum=Compliant;NonCompliant;Warning;Unreachable;NoTLS;MutualTLSRequired;Pending;Unknown
+// +kubebuilder:validation:Enum=Compliant;NonCompliant;Warning;Unreachable;Timeout;Closed;Filtered;NoTLS;MutualTLSRequired;Pending;Unknown
 type ComplianceStatus string
 
 const (
@@ -41,8 +41,14 @@ const (
 	ComplianceStatusNonCompliant ComplianceStatus = "NonCompliant"
 	// ComplianceStatusWarning means TLS 1.3 not supported but no legacy TLS
 	ComplianceStatusWarning ComplianceStatus = "Warning"
-	// ComplianceStatusUnreachable means the endpoint could not be reached
+	// ComplianceStatusUnreachable means the endpoint could not be reached (generic failure)
 	ComplianceStatusUnreachable ComplianceStatus = "Unreachable"
+	// ComplianceStatusTimeout means the connection timed out waiting for a response
+	ComplianceStatusTimeout ComplianceStatus = "Timeout"
+	// ComplianceStatusClosed means the port is not listening (connection refused)
+	ComplianceStatusClosed ComplianceStatus = "Closed"
+	// ComplianceStatusFiltered means no response and no explicit refusal (e.g. firewall drop)
+	ComplianceStatusFiltered ComplianceStatus = "Filtered"
 	// ComplianceStatusNoTLS means the port is open but does not speak TLS
 	ComplianceStatusNoTLS ComplianceStatus = "NoTLS"
 	// ComplianceStatusMutualTLSRequired means the server requires a client certificate
