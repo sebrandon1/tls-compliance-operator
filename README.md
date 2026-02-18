@@ -30,6 +30,12 @@ versions, cipher suites, and certificate details.
 - **Prometheus Metrics**: Exposes compliance status, certificate expiry, and TLS version support
 - **Kubernetes Events**: Emits events for non-compliance, status changes, and certificate warnings
 - **Rate Limiting**: Configurable rate limiting for TLS endpoint checks
+- **Cipher Strength Grading**: A-F grades for negotiated cipher suites
+- **OpenShift TLS Profile Compliance**: Checks endpoints against APIServer, IngressController, and KubeletConfig TLS security profiles
+- **Arbitrary Target Scanning**: Scan any host:port via `TLSComplianceTarget` CRD
+- **Report Export**: CSV and JUnit XML export via `kubectl-tlsreport` plugin
+- **Worker Pool**: Configurable concurrent workers for periodic scans
+- **Post-Quantum Readiness**: Detects post-quantum key exchange algorithms (e.g. X25519MLKEM768)
 
 ## Quick Deploy
 
@@ -174,6 +180,8 @@ The operator accepts the following command-line flags:
 | `--include-namespaces` | `""` | Comma-separated namespaces to exclusively monitor (overrides exclude) |
 | `--exclude-namespaces` | `""` | Comma-separated namespaces to skip |
 | `--cert-expiry-warning-days` | `30` | Days before expiry to emit warnings |
+| `--workers` | `5` | Concurrent workers for periodic scans (1-50) |
+| `--profile-refresh-interval` | `5m` | Refresh interval for OpenShift TLS security profiles |
 | `--metrics-bind-address` | `0` | Metrics endpoint bind address |
 | `--health-probe-bind-address` | `:8081` | Health probe bind address |
 | `--leader-elect` | `false` | Enable leader election for HA |
@@ -221,7 +229,7 @@ The operator emits the following events on `TLSComplianceReport` resources:
 
 ## Feature Comparison: tls-compliance-operator vs openshift/tls-scanner
 
-The [openshift/tls-scanner](https://github.com/openshift/tls-scanner) is a batch Job-based TLS auditing tool for OpenShift/Kubernetes. This operator is independently developed but inspired by the scanner's categorization model. The tables below summarize shared features, unique capabilities, and planned work.
+The [openshift/tls-scanner](https://github.com/openshift/tls-scanner) is a batch Job-based TLS auditing tool for OpenShift/Kubernetes. This operator is independently developed but inspired by the scanner's categorization model. The tables below summarize shared features, unique capabilities, and architectural differences.
 
 ### Shared Capabilities
 
@@ -246,19 +254,15 @@ The [openshift/tls-scanner](https://github.com/openshift/tls-scanner) is a batch
 | Rate limiting | Configurable rate limiter for TLS checks |
 | Mutual TLS detection | Detects when server requires client certificate |
 | Multi-arch support | Builds for amd64, arm64, s390x, ppc64le |
-
-### Scanner Features (Planned)
-
-| Feature | Status | Issue |
-|---------|--------|-------|
-| TLSSecurityProfile compliance | Planned | [#6](https://github.com/sebrandon1/tls-compliance-operator/issues/6) |
-| Finer-grained failure statuses (Timeout/Closed/Filtered) | Planned | [#13](https://github.com/sebrandon1/tls-compliance-operator/issues/13) |
-| Cipher strength grading (A–F) | Planned | [#7](https://github.com/sebrandon1/tls-compliance-operator/issues/7) |
-| IANA/OpenSSL cipher name mapping | Planned | [#8](https://github.com/sebrandon1/tls-compliance-operator/issues/8) |
-| Include-mode namespace filtering | Planned | [#9](https://github.com/sebrandon1/tls-compliance-operator/issues/9) |
-| Arbitrary target scanning CRD | Planned | [#10](https://github.com/sebrandon1/tls-compliance-operator/issues/10) |
-| Configurable worker pool | Planned | [#11](https://github.com/sebrandon1/tls-compliance-operator/issues/11) |
-| CSV and JUnit XML export | Planned | [#12](https://github.com/sebrandon1/tls-compliance-operator/issues/12) |
+| Finer-grained failure statuses | Timeout, Closed, and Filtered states for unreachable endpoints |
+| Include-mode namespace filtering | `--include-namespaces` for allow-list namespace monitoring |
+| IANA/OpenSSL cipher name mapping | Bidirectional cipher suite name translation |
+| Cipher strength grading (A-F) | Per-cipher and overall strength grades |
+| OpenShift TLSSecurityProfile compliance | Checks against APIServer, IngressController, and KubeletConfig profiles |
+| Arbitrary target scanning | `TLSComplianceTarget` CRD for scanning any host:port |
+| Configurable worker pool | `--workers` flag for concurrent periodic scan throughput |
+| CSV and JUnit XML export | `kubectl-tlsreport` plugin for CI/CD integration |
+| Post-quantum readiness detection | Reports negotiated key exchange curves and PQC status |
 
 ### Architectural Differences
 
