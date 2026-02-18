@@ -136,6 +136,14 @@ type TLSComplianceReportStatus struct {
 	// +optional
 	CipherSuites map[string][]string `json:"cipherSuites,omitempty"`
 
+	// CipherStrengthGrades maps each cipher suite name to its strength grade (A-F)
+	// +optional
+	CipherStrengthGrades map[string]string `json:"cipherStrengthGrades,omitempty"`
+
+	// OverallCipherGrade is the worst grade across all negotiated cipher suites
+	// +optional
+	OverallCipherGrade string `json:"overallCipherGrade,omitempty"`
+
 	// NegotiatedCurves maps TLS version to the negotiated key exchange curve
 	// (e.g. X25519, P-256, X25519MLKEM768)
 	// +optional
@@ -188,6 +196,7 @@ type TLSComplianceReportStatus struct {
 // +kubebuilder:printcolumn:name="Port",type=integer,JSONPath=`.spec.port`
 // +kubebuilder:printcolumn:name="Source",type=string,JSONPath=`.spec.sourceKind`
 // +kubebuilder:printcolumn:name="Compliance",type=string,JSONPath=`.status.complianceStatus`
+// +kubebuilder:printcolumn:name="Grade",type=string,JSONPath=`.status.overallCipherGrade`
 // +kubebuilder:printcolumn:name="TLS1.3",type=boolean,JSONPath=`.status.tlsVersions.tls13`
 // +kubebuilder:printcolumn:name="TLS1.2",type=boolean,JSONPath=`.status.tlsVersions.tls12`
 // +kubebuilder:printcolumn:name="TLS1.0",type=boolean,JSONPath=`.status.tlsVersions.tls10`
