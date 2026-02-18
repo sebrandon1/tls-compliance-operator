@@ -73,6 +73,7 @@ func main() {
 	var tlsCheckTimeout time.Duration
 	var rateLimit float64
 	var rateBurst int
+	var includeNamespaces string
 	var excludeNamespaces string
 	var certExpiryWarningDays int
 
@@ -105,6 +106,8 @@ func main() {
 		"Rate limit for TLS checks per second")
 	flag.IntVar(&rateBurst, "rate-burst", 20,
 		"Burst size for TLS check rate limiting")
+	flag.StringVar(&includeNamespaces, "include-namespaces", "",
+		"Comma-separated list of namespaces to exclusively monitor (overrides exclude-namespaces)")
 	flag.StringVar(&excludeNamespaces, "exclude-namespaces", "",
 		"Comma-separated list of namespaces to exclude from TLS monitoring")
 	flag.IntVar(&certExpiryWarningDays, "cert-expiry-warning-days", 30,
@@ -196,7 +199,17 @@ func main() {
 		setupLog.Info("OpenShift Route API not detected, skipping Route monitoring")
 	}
 
-	// Parse excluded namespaces
+	// Parse namespace filters
+	var includedNS []string
+	if includeNamespaces != "" {
+		for _, ns := range strings.Split(includeNamespaces, ",") {
+			trimmed := strings.TrimSpace(ns)
+			if trimmed != "" {
+				includedNS = append(includedNS, trimmed)
+			}
+		}
+	}
+
 	var excludedNS []string
 	if excludeNamespaces != "" {
 		for _, ns := range strings.Split(excludeNamespaces, ",") {
@@ -205,6 +218,10 @@ func main() {
 				excludedNS = append(excludedNS, trimmed)
 			}
 		}
+	}
+
+	if len(includedNS) > 0 && len(excludedNS) > 0 {
+		setupLog.Info("WARNING: both --include-namespaces and --exclude-namespaces are set; --include-namespaces takes precedence")
 	}
 
 	// Initialize TLS checker with rate limiting
@@ -218,6 +235,7 @@ func main() {
 		"scanInterval", scanInterval,
 		"cleanupInterval", cleanupInterval,
 		"certExpiryWarningDays", certExpiryWarningDays,
+		"includeNamespaces", includedNS,
 		"excludeNamespaces", excludedNS)
 
 	// Set up the endpoint controller
@@ -226,6 +244,7 @@ func main() {
 		Scheme:            mgr.GetScheme(),
 		TLSChecker:        checker,
 		Recorder:          mgr.GetEventRecorderFor("tls-compliance-controller"), //nolint:staticcheck
+		IncludeNamespaces: includedNS,
 		ExcludeNamespaces: excludedNS,
 		CertExpiryDays:    certExpiryWarningDays,
 		RouteAPIAvailable: routeAPIAvailable,

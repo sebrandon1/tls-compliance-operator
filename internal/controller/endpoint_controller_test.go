@@ -264,6 +264,84 @@ func TestEndpointReconciler_Reconcile_ExcludedNamespace(t *testing.T) {
 	}
 }
 
+func TestEndpointReconciler_Reconcile_IncludeNamespaces(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	// Service in included namespace
+	includedSvc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "included-service",
+			Namespace: "my-app",
+		},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{
+				{Name: "https", Port: 443, Protocol: corev1.ProtocolTCP},
+			},
+		},
+	}
+
+	// Service in non-included namespace
+	excludedSvc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "excluded-service",
+			Namespace: "other-ns",
+		},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{
+				{Name: "https", Port: 443, Protocol: corev1.ProtocolTCP},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(includedSvc, excludedSvc).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:            fakeClient,
+		Scheme:            scheme,
+		CertExpiryDays:    30,
+		IncludeNamespaces: []string{"my-app"},
+	}
+
+	// Reconcile included namespace - should create CR
+	result, err := reconciler.Reconcile(ctx, reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "included-service", Namespace: "my-app"},
+	})
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.RequeueAfter != 0 {
+		t.Error("Reconcile() returned RequeueAfter != 0, want 0")
+	}
+
+	// Reconcile non-included namespace - should be skipped
+	result, err = reconciler.Reconcile(ctx, reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "excluded-service", Namespace: "other-ns"},
+	})
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.RequeueAfter != 0 {
+		t.Error("Reconcile() returned RequeueAfter != 0, want 0")
+	}
+
+	// Only 1 CR should exist (from included namespace)
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("Failed to list TLSComplianceReports: %v", err)
+	}
+	if len(crList.Items) != 1 {
+		t.Fatalf("TLSComplianceReport count = %v, want 1", len(crList.Items))
+	}
+	if crList.Items[0].Spec.SourceNamespace != "my-app" {
+		t.Errorf("SourceNamespace = %v, want my-app", crList.Items[0].Spec.SourceNamespace)
+	}
+}
+
 func TestEndpointReconciler_CleanupOrphanedCRs(t *testing.T) {
 	ctx := context.Background()
 	scheme := newTestScheme()
@@ -566,14 +644,14 @@ func TestIsQuantumReady(t *testing.T) {
 	}
 }
 
-func TestEndpointReconciler_IsExcludedNamespace(t *testing.T) {
+func TestEndpointReconciler_IsNamespaceFiltered_ExcludeMode(t *testing.T) {
 	r := &EndpointReconciler{
 		ExcludeNamespaces: []string{"kube-system", "openshift-monitoring"},
 	}
 
 	tests := []struct {
 		namespace string
-		excluded  bool
+		filtered  bool
 	}{
 		{"kube-system", true},
 		{"openshift-monitoring", true},
@@ -583,9 +661,81 @@ func TestEndpointReconciler_IsExcludedNamespace(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.namespace, func(t *testing.T) {
-			got := r.isExcludedNamespace(tt.namespace)
-			if got != tt.excluded {
-				t.Errorf("isExcludedNamespace(%q) = %v, want %v", tt.namespace, got, tt.excluded)
+			got := r.isNamespaceFiltered(tt.namespace)
+			if got != tt.filtered {
+				t.Errorf("isNamespaceFiltered(%q) = %v, want %v", tt.namespace, got, tt.filtered)
+			}
+		})
+	}
+}
+
+func TestEndpointReconciler_IsNamespaceFiltered_IncludeMode(t *testing.T) {
+	r := &EndpointReconciler{
+		IncludeNamespaces: []string{"my-app", "staging"},
+	}
+
+	tests := []struct {
+		namespace string
+		filtered  bool
+	}{
+		{"my-app", false},
+		{"staging", false},
+		{"default", true},
+		{"kube-system", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.namespace, func(t *testing.T) {
+			got := r.isNamespaceFiltered(tt.namespace)
+			if got != tt.filtered {
+				t.Errorf("isNamespaceFiltered(%q) = %v, want %v", tt.namespace, got, tt.filtered)
+			}
+		})
+	}
+}
+
+func TestEndpointReconciler_IsNamespaceFiltered_IncludeOverridesExclude(t *testing.T) {
+	r := &EndpointReconciler{
+		IncludeNamespaces: []string{"my-app"},
+		ExcludeNamespaces: []string{"my-app", "kube-system"},
+	}
+
+	tests := []struct {
+		namespace string
+		filtered  bool
+	}{
+		{"my-app", false},     // included, even though also in exclude list
+		{"kube-system", true}, // not in include list, so filtered
+		{"default", true},     // not in include list, so filtered
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.namespace, func(t *testing.T) {
+			got := r.isNamespaceFiltered(tt.namespace)
+			if got != tt.filtered {
+				t.Errorf("isNamespaceFiltered(%q) = %v, want %v", tt.namespace, got, tt.filtered)
+			}
+		})
+	}
+}
+
+func TestEndpointReconciler_IsNamespaceFiltered_NeitherSet(t *testing.T) {
+	r := &EndpointReconciler{}
+
+	tests := []struct {
+		namespace string
+		filtered  bool
+	}{
+		{"default", false},
+		{"kube-system", false},
+		{"my-app", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.namespace, func(t *testing.T) {
+			got := r.isNamespaceFiltered(tt.namespace)
+			if got != tt.filtered {
+				t.Errorf("isNamespaceFiltered(%q) = %v, want %v", tt.namespace, got, tt.filtered)
 			}
 		})
 	}
