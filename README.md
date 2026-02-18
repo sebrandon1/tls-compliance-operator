@@ -215,6 +215,57 @@ The operator emits the following events on `TLSComplianceReport` resources:
 | `CertificateExpired` | Warning | Certificate has expired |
 | `EndpointDiscovered` | Normal | New TLS endpoint discovered |
 
+## Feature Comparison: tls-compliance-operator vs openshift/tls-scanner
+
+The [openshift/tls-scanner](https://github.com/openshift/tls-scanner) is a batch Job-based TLS auditing tool for OpenShift/Kubernetes. This operator is independently developed but inspired by the scanner's categorization model. The tables below summarize shared features, unique capabilities, and planned work.
+
+### Shared Capabilities
+
+| Feature | tls-compliance-operator | openshift/tls-scanner |
+|---------|------------------------|-----------------------|
+| TLS version detection (1.0–1.3) | Yes | Yes |
+| Cipher suite reporting | Yes | Yes |
+| Certificate details | Yes | Yes |
+| Non-compliant endpoint flagging | Yes | Yes |
+| Namespace filtering (exclude) | Yes | Yes |
+
+### Operator-Only Features
+
+| Feature | Description |
+|---------|-------------|
+| Continuous monitoring | Watches for resource changes in real time via controller |
+| Prometheus metrics | `tls_compliance_*` gauge/counter/histogram metrics |
+| Kubernetes events | Emits Warning/Normal events for compliance changes |
+| CRD-based reporting | Results stored as `TLSComplianceReport` custom resources |
+| OpenShift Route support | Detects and monitors Routes with TLS termination |
+| Certificate expiry tracking | Reports days until expiry with configurable warning threshold |
+| Rate limiting | Configurable rate limiter for TLS checks |
+| Mutual TLS detection | Detects when server requires client certificate |
+| Multi-arch support | Builds for amd64, arm64, s390x, ppc64le |
+
+### Scanner Features (Planned)
+
+| Feature | Status | Issue |
+|---------|--------|-------|
+| TLSSecurityProfile compliance | Planned | [#6](https://github.com/sebrandon1/tls-compliance-operator/issues/6) |
+| Finer-grained failure statuses (Timeout/Closed/Filtered) | Planned | [#13](https://github.com/sebrandon1/tls-compliance-operator/issues/13) |
+| Cipher strength grading (A–F) | Planned | [#7](https://github.com/sebrandon1/tls-compliance-operator/issues/7) |
+| IANA/OpenSSL cipher name mapping | Planned | [#8](https://github.com/sebrandon1/tls-compliance-operator/issues/8) |
+| Include-mode namespace filtering | Planned | [#9](https://github.com/sebrandon1/tls-compliance-operator/issues/9) |
+| Arbitrary target scanning CRD | Planned | [#10](https://github.com/sebrandon1/tls-compliance-operator/issues/10) |
+| Configurable worker pool | Planned | [#11](https://github.com/sebrandon1/tls-compliance-operator/issues/11) |
+| CSV and JUnit XML export | Planned | [#12](https://github.com/sebrandon1/tls-compliance-operator/issues/12) |
+
+### Architectural Differences
+
+| Aspect | tls-compliance-operator | openshift/tls-scanner |
+|--------|------------------------|-----------------------|
+| Execution model | Long-running controller with periodic rescans | Batch Job (run once, collect results) |
+| TLS probing | Go `crypto/tls` | nmap with TLS scripts |
+| Output format | Kubernetes CRDs + events + Prometheus | Raw scan results / reports |
+| Discovery | Service, Ingress, Route watches | Pod-level endpoint scanning via lsof |
+| Deployment | Operator (Deployment + CRDs) | Job or CronJob |
+
 ## OpenShift Support
 
 On OpenShift clusters, the operator automatically detects the
