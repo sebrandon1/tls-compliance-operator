@@ -271,6 +271,12 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 			cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusNoTLS
 		case tlscheck.FailureReasonMutualTLSRequired:
 			cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusMutualTLSRequired
+		case tlscheck.FailureReasonTimeout:
+			cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusTimeout
+		case tlscheck.FailureReasonClosed:
+			cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusClosed
+		case tlscheck.FailureReasonFiltered:
+			cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusFiltered
 		default:
 			cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusUnreachable
 		}
@@ -584,6 +590,9 @@ func (r *EndpointReconciler) updateEndpointMetrics(ctx context.Context) {
 		string(securityv1alpha1.ComplianceStatusNonCompliant):      0,
 		string(securityv1alpha1.ComplianceStatusWarning):           0,
 		string(securityv1alpha1.ComplianceStatusUnreachable):       0,
+		string(securityv1alpha1.ComplianceStatusTimeout):           0,
+		string(securityv1alpha1.ComplianceStatusClosed):            0,
+		string(securityv1alpha1.ComplianceStatusFiltered):          0,
 		string(securityv1alpha1.ComplianceStatusNoTLS):             0,
 		string(securityv1alpha1.ComplianceStatusMutualTLSRequired): 0,
 		string(securityv1alpha1.ComplianceStatusPending):           0,

@@ -164,18 +164,18 @@ func TestTLSChecker_CheckEndpoint_TLS12And13(t *testing.T) {
 	}
 }
 
-func TestTLSChecker_CheckEndpoint_Unreachable(t *testing.T) {
+func TestTLSChecker_CheckEndpoint_Closed(t *testing.T) {
 	checker := NewTLSChecker(500 * time.Millisecond)
-	// Use a port that's unlikely to be open
+	// Use a port that's not listening — should get connection refused (Closed)
 	result, err := checker.CheckEndpoint(context.Background(), "127.0.0.1", 1)
 	if err == nil {
-		t.Error("expected error for unreachable endpoint")
+		t.Error("expected error for closed endpoint")
 	}
 	if result == nil {
 		t.Fatal("expected non-nil result even on error")
 	}
-	if result.FailureReason != FailureReasonUnreachable {
-		t.Errorf("expected FailureReason=%q, got %q", FailureReasonUnreachable, result.FailureReason)
+	if result.FailureReason != FailureReasonClosed {
+		t.Errorf("expected FailureReason=%q, got %q", FailureReasonClosed, result.FailureReason)
 	}
 }
 
@@ -225,14 +225,19 @@ func TestClassifyFailure(t *testing.T) {
 			expected: FailureReasonUnreachable,
 		},
 		{
-			name:     "connection refused",
+			name:     "connection refused - Closed",
 			errors:   []error{errors.New("dial tcp 10.0.0.1:443: connect: connection refused")},
-			expected: FailureReasonUnreachable,
+			expected: FailureReasonClosed,
 		},
 		{
-			name:     "timeout",
+			name:     "i/o timeout - Timeout",
 			errors:   []error{errors.New("dial tcp 10.0.0.1:443: i/o timeout")},
-			expected: FailureReasonUnreachable,
+			expected: FailureReasonTimeout,
+		},
+		{
+			name:     "deadline exceeded - Timeout",
+			errors:   []error{errors.New("dial tcp 10.0.0.1:443: deadline exceeded")},
+			expected: FailureReasonTimeout,
 		},
 		{
 			name:     "not TLS",
@@ -261,6 +266,35 @@ func TestClassifyFailure(t *testing.T) {
 				errors.New("remote error: tls: certificate required"),
 			},
 			expected: FailureReasonMutualTLSRequired,
+		},
+		{
+			name: "mTLS takes priority over Closed",
+			errors: []error{
+				errors.New("dial tcp 10.0.0.1:443: connect: connection refused"),
+				errors.New("remote error: tls: certificate required"),
+			},
+			expected: FailureReasonMutualTLSRequired,
+		},
+		{
+			name: "NoTLS takes priority over Closed",
+			errors: []error{
+				errors.New("dial tcp 10.0.0.1:443: connect: connection refused"),
+				errors.New("tls: first record does not look like a TLS handshake"),
+			},
+			expected: FailureReasonNoTLS,
+		},
+		{
+			name: "Closed takes priority over Timeout",
+			errors: []error{
+				errors.New("dial tcp 10.0.0.1:443: i/o timeout"),
+				errors.New("dial tcp 10.0.0.1:443: connect: connection refused"),
+			},
+			expected: FailureReasonClosed,
+		},
+		{
+			name:     "unknown error falls through to Unreachable",
+			errors:   []error{errors.New("some unknown network error")},
+			expected: FailureReasonUnreachable,
 		},
 	}
 

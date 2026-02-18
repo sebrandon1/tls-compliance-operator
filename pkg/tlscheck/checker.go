@@ -19,6 +19,7 @@ package tlscheck
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -109,13 +110,14 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 	return result, nil
 }
 
-// classifyFailure analyzes TLS connection errors to determine the failure category
+// classifyFailure analyzes TLS connection errors to determine the failure category.
+// Priority order: mTLS > NoTLS > Closed > Timeout > Filtered > Unreachable.
 func classifyFailure(errs []error) FailureReason {
 	if len(errs) == 0 {
 		return FailureReasonUnreachable
 	}
 
-	var hasNoTLS, hasMTLS bool
+	var hasNoTLS, hasMTLS, hasTimeout, hasClosed bool
 
 	for _, err := range errs {
 		msg := err.Error()
@@ -131,6 +133,21 @@ func classifyFailure(errs []error) FailureReason {
 			strings.Contains(msg, "oversized record") {
 			hasNoTLS = true
 		}
+
+		// Connection refused — port is not listening
+		if strings.Contains(msg, "connection refused") {
+			hasClosed = true
+		}
+
+		// Timeout — check both net.Error interface and string patterns
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			hasTimeout = true
+		}
+		if strings.Contains(msg, "i/o timeout") ||
+			strings.Contains(msg, "deadline exceeded") {
+			hasTimeout = true
+		}
 	}
 
 	// mTLS takes priority — the server IS speaking TLS, it just wants a client cert
@@ -139,6 +156,14 @@ func classifyFailure(errs []error) FailureReason {
 	}
 	if hasNoTLS {
 		return FailureReasonNoTLS
+	}
+	if hasClosed {
+		return FailureReasonClosed
+	}
+	if hasTimeout {
+		// Pure timeout with no refusal suggests a firewall drop (filtered),
+		// but we report Timeout since that's the observed behavior.
+		return FailureReasonTimeout
 	}
 
 	return FailureReasonUnreachable

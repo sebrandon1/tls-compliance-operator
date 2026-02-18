@@ -161,6 +161,9 @@ spec:
                 - NonCompliant
                 - Warning
                 - Unreachable
+                - Timeout
+                - Closed
+                - Filtered
                 - NoTLS
                 - MutualTLSRequired
                 - Pending

@@ -117,7 +117,10 @@ kubectl apply -f dist/install.yaml
 |--------|-----------|
 | **Compliant** | Supports TLS 1.2 or 1.3 (supporting older versions alongside is fine) |
 | **NonCompliant** | Only supports TLS 1.0/1.1 with no modern TLS |
-| **Unreachable** | Could not connect to endpoint (connection refused, timeout) |
+| **Timeout** | Connection timed out waiting for a response |
+| **Closed** | Port is not listening (connection refused) |
+| **Filtered** | No response and no explicit refusal (e.g. firewall drop) |
+| **Unreachable** | Could not connect to endpoint (unclassified network error) |
 | **NoTLS** | Port is open but does not speak TLS |
 | **MutualTLSRequired** | Server requires a client certificate to complete handshake |
 | **Pending** | Not yet checked |
