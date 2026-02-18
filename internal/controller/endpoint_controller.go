@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -65,6 +66,7 @@ type EndpointReconciler struct {
 	CertExpiryDays    int
 	RouteAPIAvailable bool
 	ProfileFetcher    *tlsprofile.Fetcher
+	Workers           int
 }
 
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
@@ -662,7 +664,7 @@ func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval tim
 	}()
 }
 
-// scanAllEndpoints re-checks all existing TLSComplianceReport CRs
+// scanAllEndpoints re-checks all existing TLSComplianceReport CRs using a worker pool.
 func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 
@@ -671,29 +673,45 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 		return fmt.Errorf("failed to list TLSComplianceReports: %w", err)
 	}
 
+	workers := r.Workers
+	if workers <= 0 {
+		workers = 5
+	}
+
+	type scanItem struct {
+		name string
+		host string
+		port int
+	}
+
+	items := make(chan scanItem, len(crList.Items))
 	for i := range crList.Items {
 		cr := &crList.Items[i]
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		r.performTLSCheck(ctx, cr.Name, cr.Spec.Host, int(cr.Spec.Port))
-
-		// Small delay between checks to avoid overwhelming the system
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(100 * time.Millisecond):
-		}
+		items <- scanItem{name: cr.Name, host: cr.Spec.Host, port: int(cr.Spec.Port)}
 	}
+	close(items)
+
+	var wg sync.WaitGroup
+	for range min(workers, len(crList.Items)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for item := range items {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+				r.performTLSCheck(ctx, item.name, item.host, item.port)
+			}
+		}()
+	}
+	wg.Wait()
 
 	// Update endpoint count metrics
 	r.updateEndpointMetrics(ctx)
 
-	logger.Info("scan completed", "endpoints", len(crList.Items))
+	logger.Info("scan completed", "endpoints", len(crList.Items), "workers", workers)
 	return nil
 }
 

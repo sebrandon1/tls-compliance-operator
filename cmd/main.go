@@ -78,6 +78,7 @@ func main() {
 	var excludeNamespaces string
 	var certExpiryWarningDays int
 	var profileRefreshInterval time.Duration
+	var workers int
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -116,6 +117,8 @@ func main() {
 		"Number of days before certificate expiry to emit a warning")
 	flag.DurationVar(&profileRefreshInterval, "profile-refresh-interval", 5*time.Minute,
 		"Interval for refreshing OpenShift TLS security profile configuration (OpenShift only)")
+	flag.IntVar(&workers, "workers", 5,
+		"Number of concurrent workers for periodic TLS scans (1-50)")
 
 	opts := zap.Options{
 		Development: true,
@@ -124,6 +127,12 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	// Validate workers flag
+	if workers < 1 || workers > 50 {
+		setupLog.Error(nil, "invalid --workers value, must be between 1 and 50", "workers", workers)
+		os.Exit(1)
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -253,7 +262,8 @@ func main() {
 		"cleanupInterval", cleanupInterval,
 		"certExpiryWarningDays", certExpiryWarningDays,
 		"includeNamespaces", includedNS,
-		"excludeNamespaces", excludedNS)
+		"excludeNamespaces", excludedNS,
+		"workers", workers)
 
 	// Set up the endpoint controller
 	endpointReconciler := &controller.EndpointReconciler{
@@ -266,6 +276,7 @@ func main() {
 		CertExpiryDays:    certExpiryWarningDays,
 		RouteAPIAvailable: routeAPIAvailable,
 		ProfileFetcher:    profileFetcher,
+		Workers:           workers,
 	}
 
 	if err = endpointReconciler.SetupWithManager(mgr); err != nil {
