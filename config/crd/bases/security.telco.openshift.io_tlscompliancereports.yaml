@@ -110,6 +110,36 @@ spec:
           status:
             description: Status defines the observed state of TLSComplianceReport
             properties:
+              apiServerProfileCompliance:
+                description: |-
+                  APIServerProfileCompliance contains the compliance result against the
+                  OpenShift APIServer TLS security profile (OpenShift only)
+                properties:
+                  compliant:
+                    description: Compliant indicates whether the endpoint meets the
+                      profile requirements
+                    type: boolean
+                  disallowedCiphers:
+                    description: |-
+                      DisallowedCiphers lists cipher suites negotiated by the endpoint that are
+                      not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  minTLSVersionMet:
+                    description: |-
+                      MinTLSVersionMet indicates whether the endpoint does not support TLS versions
+                      below the profile's minimum
+                    type: boolean
+                  profileType:
+                    description: ProfileType is the configured profile type (Old,
+                      Intermediate, Modern, Custom)
+                    type: string
+                required:
+                - compliant
+                - minTLSVersionMet
+                - profileType
+                type: object
               certificateInfo:
                 description: CertificateInfo contains details about the TLS certificate
                 properties:
@@ -247,6 +277,66 @@ spec:
                 description: FirstSeenAt is when this endpoint was first discovered
                 format: date-time
                 type: string
+              ingressProfileCompliance:
+                description: |-
+                  IngressProfileCompliance contains the compliance result against the
+                  OpenShift IngressController TLS security profile (OpenShift only)
+                properties:
+                  compliant:
+                    description: Compliant indicates whether the endpoint meets the
+                      profile requirements
+                    type: boolean
+                  disallowedCiphers:
+                    description: |-
+                      DisallowedCiphers lists cipher suites negotiated by the endpoint that are
+                      not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  minTLSVersionMet:
+                    description: |-
+                      MinTLSVersionMet indicates whether the endpoint does not support TLS versions
+                      below the profile's minimum
+                    type: boolean
+                  profileType:
+                    description: ProfileType is the configured profile type (Old,
+                      Intermediate, Modern, Custom)
+                    type: string
+                required:
+                - compliant
+                - minTLSVersionMet
+                - profileType
+                type: object
+              kubeletProfileCompliance:
+                description: |-
+                  KubeletProfileCompliance contains the compliance result against the
+                  OpenShift KubeletConfig TLS security profile (OpenShift only)
+                properties:
+                  compliant:
+                    description: Compliant indicates whether the endpoint meets the
+                      profile requirements
+                    type: boolean
+                  disallowedCiphers:
+                    description: |-
+                      DisallowedCiphers lists cipher suites negotiated by the endpoint that are
+                      not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  minTLSVersionMet:
+                    description: |-
+                      MinTLSVersionMet indicates whether the endpoint does not support TLS versions
+                      below the profile's minimum
+                    type: boolean
+                  profileType:
+                    description: ProfileType is the configured profile type (Old,
+                      Intermediate, Modern, Custom)
+                    type: string
+                required:
+                - compliant
+                - minTLSVersionMet
+                - profileType
+                type: object
               lastCheckAt:
                 description: LastCheckAt is when the last TLS check was performed
                 format: date-time

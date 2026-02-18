@@ -41,6 +41,7 @@ import (
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 	"github.com/sebrandon1/tls-compliance-operator/internal/controller"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlscheck"
+	"github.com/sebrandon1/tls-compliance-operator/pkg/tlsprofile"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -76,6 +77,7 @@ func main() {
 	var includeNamespaces string
 	var excludeNamespaces string
 	var certExpiryWarningDays int
+	var profileRefreshInterval time.Duration
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -112,6 +114,8 @@ func main() {
 		"Comma-separated list of namespaces to exclude from TLS monitoring")
 	flag.IntVar(&certExpiryWarningDays, "cert-expiry-warning-days", 30,
 		"Number of days before certificate expiry to emit a warning")
+	flag.DurationVar(&profileRefreshInterval, "profile-refresh-interval", 5*time.Minute,
+		"Interval for refreshing OpenShift TLS security profile configuration (OpenShift only)")
 
 	opts := zap.Options{
 		Development: true,
@@ -199,6 +203,19 @@ func main() {
 		setupLog.Info("OpenShift Route API not detected, skipping Route monitoring")
 	}
 
+	// Detect OpenShift Config API availability for TLS security profile monitoring
+	var profileFetcher *tlsprofile.Fetcher
+	_, err = restMapper.RESTMapping(schema.GroupKind{
+		Group: "config.openshift.io",
+		Kind:  "APIServer",
+	}, "v1")
+	if err == nil {
+		setupLog.Info("OpenShift Config API detected, enabling TLS security profile monitoring")
+		profileFetcher = tlsprofile.NewFetcher(mgr.GetClient())
+	} else {
+		setupLog.Info("OpenShift Config API not detected, skipping TLS security profile monitoring")
+	}
+
 	// Parse namespace filters
 	var includedNS []string
 	if includeNamespaces != "" {
@@ -248,6 +265,7 @@ func main() {
 		ExcludeNamespaces: excludedNS,
 		CertExpiryDays:    certExpiryWarningDays,
 		RouteAPIAvailable: routeAPIAvailable,
+		ProfileFetcher:    profileFetcher,
 	}
 
 	if err = endpointReconciler.SetupWithManager(mgr); err != nil {
@@ -259,6 +277,9 @@ func main() {
 	ctx := ctrl.SetupSignalHandler()
 	endpointReconciler.StartPeriodicScan(ctx, scanInterval)
 	endpointReconciler.StartCleanupLoop(ctx, cleanupInterval)
+	if profileFetcher != nil {
+		profileFetcher.StartPeriodicRefresh(ctx, profileRefreshInterval)
+	}
 
 	// +kubebuilder:scaffold:builder
 
