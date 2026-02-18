@@ -42,6 +42,7 @@ import (
 	"github.com/sebrandon1/tls-compliance-operator/internal/metrics"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/endpoint"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlscheck"
+	"github.com/sebrandon1/tls-compliance-operator/pkg/tlsprofile"
 )
 
 // Event reasons for Kubernetes events
@@ -63,12 +64,16 @@ type EndpointReconciler struct {
 	ExcludeNamespaces []string
 	CertExpiryDays    int
 	RouteAPIAvailable bool
+	ProfileFetcher    *tlsprofile.Fetcher
 }
 
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch
+// +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers,verbs=get;list;watch
+// +kubebuilder:rbac:groups=operator.openshift.io,resources=ingresscontrollers,verbs=get;list;watch
+// +kubebuilder:rbac:groups=machineconfiguration.openshift.io,resources=kubeletconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=security.telco.openshift.io,resources=tlscompliancereports,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=security.telco.openshift.io,resources=tlscompliancereports/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=security.telco.openshift.io,resources=tlscompliancereports/finalizers,verbs=update
@@ -331,6 +336,9 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 		metrics.RecordCertExpiry(host, portStr, float64(result.Certificate.DaysUntilExpiry))
 	}
 
+	// Check OpenShift TLS security profile compliance
+	r.checkProfileCompliance(&cr, result)
+
 	// Determine compliance status
 	cr.Status.ComplianceStatus = determineComplianceStatus(result)
 
@@ -377,6 +385,44 @@ func isQuantumReady(curves map[string]string) bool {
 		}
 	}
 	return false
+}
+
+// checkProfileCompliance evaluates the endpoint against OpenShift TLS security
+// profiles if a ProfileFetcher is configured. Populates the per-component
+// compliance fields on the CR status.
+func (r *EndpointReconciler) checkProfileCompliance(cr *securityv1alpha1.TLSComplianceReport, result *tlscheck.TLSCheckResult) {
+	if r.ProfileFetcher == nil {
+		return
+	}
+
+	profiles := r.ProfileFetcher.GetAllProfiles()
+
+	for component, profile := range profiles {
+		compResult := tlsprofile.CheckCompliance(
+			profile,
+			result.SupportsTLS10,
+			result.SupportsTLS11,
+			result.SupportsTLS12,
+			result.SupportsTLS13,
+			result.CipherSuites,
+		)
+
+		crdResult := &securityv1alpha1.TLSProfileComplianceResult{
+			ProfileType:       compResult.ProfileType,
+			Compliant:         compResult.Compliant,
+			MinTLSVersionMet:  compResult.MinTLSVersionMet,
+			DisallowedCiphers: compResult.DisallowedCiphers,
+		}
+
+		switch component {
+		case tlsprofile.ComponentIngressController:
+			cr.Status.IngressProfileCompliance = crdResult
+		case tlsprofile.ComponentAPIServer:
+			cr.Status.APIServerProfileCompliance = crdResult
+		case tlsprofile.ComponentKubeletConfig:
+			cr.Status.KubeletProfileCompliance = crdResult
+		}
+	}
 }
 
 // updateConditions sets Kubernetes conditions based on check results
@@ -428,6 +474,37 @@ func (r *EndpointReconciler) updateConditions(cr *securityv1alpha1.TLSCompliance
 		}
 
 		setCondition(&cr.Status.Conditions, certCondition)
+	}
+
+	// TLS Profile Compliant condition (OpenShift only)
+	if r.ProfileFetcher != nil {
+		profileCondition := metav1.Condition{
+			Type:               "TLSProfileCompliant",
+			LastTransitionTime: now,
+		}
+
+		allCompliant := true
+		if cr.Status.IngressProfileCompliance != nil && !cr.Status.IngressProfileCompliance.Compliant {
+			allCompliant = false
+		}
+		if cr.Status.APIServerProfileCompliance != nil && !cr.Status.APIServerProfileCompliance.Compliant {
+			allCompliant = false
+		}
+		if cr.Status.KubeletProfileCompliance != nil && !cr.Status.KubeletProfileCompliance.Compliant {
+			allCompliant = false
+		}
+
+		if allCompliant {
+			profileCondition.Status = metav1.ConditionTrue
+			profileCondition.Reason = "Compliant"
+			profileCondition.Message = "Endpoint meets all OpenShift TLS security profile requirements"
+		} else {
+			profileCondition.Status = metav1.ConditionFalse
+			profileCondition.Reason = "NonCompliant"
+			profileCondition.Message = "Endpoint does not meet one or more OpenShift TLS security profile requirements"
+		}
+
+		setCondition(&cr.Status.Conditions, profileCondition)
 	}
 }
 

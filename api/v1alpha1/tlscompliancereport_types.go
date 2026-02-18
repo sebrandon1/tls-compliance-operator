@@ -96,6 +96,22 @@ type CertificateInfo struct {
 	DaysUntilExpiry int `json:"daysUntilExpiry"`
 }
 
+// TLSProfileComplianceResult contains the result of checking an endpoint
+// against an OpenShift TLS security profile
+type TLSProfileComplianceResult struct {
+	// ProfileType is the configured profile type (Old, Intermediate, Modern, Custom)
+	ProfileType string `json:"profileType"`
+	// Compliant indicates whether the endpoint meets the profile requirements
+	Compliant bool `json:"compliant"`
+	// MinTLSVersionMet indicates whether the endpoint does not support TLS versions
+	// below the profile's minimum
+	MinTLSVersionMet bool `json:"minTLSVersionMet"`
+	// DisallowedCiphers lists cipher suites negotiated by the endpoint that are
+	// not in the profile's allowed list
+	// +optional
+	DisallowedCiphers []string `json:"disallowedCiphers,omitempty"`
+}
+
 // TLSComplianceReportSpec defines the desired state of TLSComplianceReport
 type TLSComplianceReportSpec struct {
 	// Host is the hostname or IP being checked
@@ -181,6 +197,21 @@ type TLSComplianceReportStatus struct {
 	// LastError is the last error message from a TLS check
 	// +optional
 	LastError string `json:"lastError,omitempty"`
+
+	// IngressProfileCompliance contains the compliance result against the
+	// OpenShift IngressController TLS security profile (OpenShift only)
+	// +optional
+	IngressProfileCompliance *TLSProfileComplianceResult `json:"ingressProfileCompliance,omitempty"`
+
+	// APIServerProfileCompliance contains the compliance result against the
+	// OpenShift APIServer TLS security profile (OpenShift only)
+	// +optional
+	APIServerProfileCompliance *TLSProfileComplianceResult `json:"apiServerProfileCompliance,omitempty"`
+
+	// KubeletProfileCompliance contains the compliance result against the
+	// OpenShift KubeletConfig TLS security profile (OpenShift only)
+	// +optional
+	KubeletProfileCompliance *TLSProfileComplianceResult `json:"kubeletProfileCompliance,omitempty"`
 
 	// Conditions represent the current state of the TLSComplianceReport resource
 	// +listType=map
