@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -58,6 +59,7 @@ type EndpointReconciler struct {
 	Scheme            *runtime.Scheme
 	TLSChecker        tlscheck.Checker
 	Recorder          record.EventRecorder
+	IncludeNamespaces []string
 	ExcludeNamespaces []string
 	CertExpiryDays    int
 	RouteAPIAvailable bool
@@ -76,7 +78,7 @@ func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	logger := log.FromContext(ctx)
 
 	// Check if namespace is excluded
-	if r.isExcludedNamespace(req.Namespace) {
+	if r.isNamespaceFiltered(req.Namespace) {
 		return ctrl.Result{}, nil
 	}
 
@@ -114,7 +116,7 @@ func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 func (r *EndpointReconciler) ReconcileIngress(ctx context.Context, req ctrl.Request) {
 	logger := log.FromContext(ctx)
 
-	if r.isExcludedNamespace(req.Namespace) {
+	if r.isNamespaceFiltered(req.Namespace) {
 		return
 	}
 
@@ -138,7 +140,7 @@ func (r *EndpointReconciler) ReconcileIngress(ctx context.Context, req ctrl.Requ
 func (r *EndpointReconciler) ReconcileRoute(ctx context.Context, req ctrl.Request) {
 	logger := log.FromContext(ctx)
 
-	if r.isExcludedNamespace(req.Namespace) {
+	if r.isNamespaceFiltered(req.Namespace) {
 		return
 	}
 
@@ -686,12 +688,12 @@ func (r *EndpointReconciler) sourceResourceExists(ctx context.Context, spec secu
 	return false, err
 }
 
-// isExcludedNamespace checks if a namespace is in the exclusion list
-func (r *EndpointReconciler) isExcludedNamespace(namespace string) bool {
-	for _, ns := range r.ExcludeNamespaces {
-		if ns == namespace {
-			return true
-		}
+// isNamespaceFiltered checks if a namespace should be skipped based on
+// include and exclude lists. If IncludeNamespaces is set, only those
+// namespaces are allowed. Otherwise, ExcludeNamespaces is checked.
+func (r *EndpointReconciler) isNamespaceFiltered(namespace string) bool {
+	if len(r.IncludeNamespaces) > 0 {
+		return !slices.Contains(r.IncludeNamespaces, namespace)
 	}
-	return false
+	return slices.Contains(r.ExcludeNamespaces, namespace)
 }

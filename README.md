@@ -168,6 +168,7 @@ The operator accepts the following command-line flags:
 | `--tls-check-timeout` | `5s` | Timeout per TLS connection attempt |
 | `--rate-limit` | `10.0` | TLS checks per second |
 | `--rate-burst` | `20` | Rate limiter burst size |
+| `--include-namespaces` | `""` | Comma-separated namespaces to exclusively monitor (overrides exclude) |
 | `--exclude-namespaces` | `""` | Comma-separated namespaces to skip |
 | `--cert-expiry-warning-days` | `30` | Days before expiry to emit warnings |
 | `--metrics-bind-address` | `0` | Metrics endpoint bind address |
