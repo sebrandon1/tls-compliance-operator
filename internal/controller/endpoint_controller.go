@@ -77,6 +77,7 @@ type EndpointReconciler struct {
 // +kubebuilder:rbac:groups=security.telco.openshift.io,resources=tlscompliancereports,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=security.telco.openshift.io,resources=tlscompliancereports/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=security.telco.openshift.io,resources=tlscompliancereports/finalizers,verbs=update
+// +kubebuilder:rbac:groups=security.telco.openshift.io,resources=tlscompliancetargets,verbs=get;list;watch
 
 // Reconcile handles Service events and creates/updates TLSComplianceReport CRs
 func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -169,6 +170,31 @@ func (r *EndpointReconciler) ReconcileRoute(ctx context.Context, req ctrl.Reques
 		if err := r.processEndpoint(ctx, ep); err != nil {
 			logger.Error(err, "failed to process Route endpoint", "host", ep.Host)
 		}
+	}
+}
+
+// ReconcileTarget handles TLSComplianceTarget events
+func (r *EndpointReconciler) ReconcileTarget(ctx context.Context, req ctrl.Request) {
+	logger := log.FromContext(ctx)
+
+	var target securityv1alpha1.TLSComplianceTarget
+	if err := r.Get(ctx, req.NamespacedName, &target); err != nil {
+		if !apierrors.IsNotFound(err) {
+			logger.Error(err, "unable to fetch TLSComplianceTarget")
+		}
+		return
+	}
+
+	ep := endpoint.Endpoint{
+		Host:            target.Spec.Host,
+		Port:            target.Spec.Port,
+		SourceKind:      string(securityv1alpha1.SourceKindTarget),
+		SourceNamespace: "cluster-scoped",
+		SourceName:      target.Name,
+	}
+
+	if err := r.processEndpoint(ctx, ep); err != nil {
+		logger.Error(err, "failed to process Target endpoint", "host", ep.Host, "port", ep.Port)
 	}
 }
 
@@ -569,6 +595,20 @@ func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			},
 		))
 
+	// Add TLSComplianceTarget watch
+	builder = builder.Watches(&securityv1alpha1.TLSComplianceTarget{}, handler.EnqueueRequestsFromMapFunc(
+		func(_ context.Context, obj client.Object) []ctrl.Request {
+			target, ok := obj.(*securityv1alpha1.TLSComplianceTarget)
+			if !ok {
+				return nil
+			}
+			go r.ReconcileTarget(context.Background(), ctrl.Request{
+				NamespacedName: client.ObjectKeyFromObject(target),
+			})
+			return nil
+		},
+	))
+
 	// Add Route watch if OpenShift Route API is available
 	if r.RouteAPIAvailable {
 		routeGVK := schema.GroupVersionKind{
@@ -763,6 +803,9 @@ func (r *EndpointReconciler) sourceResourceExists(ctx context.Context, spec secu
 			Kind:    "Route",
 		})
 		err = r.Get(ctx, key, route)
+	case securityv1alpha1.SourceKindTarget:
+		var target securityv1alpha1.TLSComplianceTarget
+		err = r.Get(ctx, client.ObjectKey{Name: spec.SourceName}, &target)
 	default:
 		return false, fmt.Errorf("unknown source kind: %s", spec.SourceKind)
 	}

@@ -85,3 +85,11 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - security.telco.openshift.io
+  resources:
+  - tlscompliancetargets
+  verbs:
+  - get
+  - list
+  - watch

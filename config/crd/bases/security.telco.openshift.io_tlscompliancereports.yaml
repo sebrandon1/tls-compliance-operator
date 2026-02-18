@@ -93,6 +93,7 @@ spec:
                 - Service
                 - Ingress
                 - Route
+                - Target
                 type: string
               sourceName:
                 description: SourceName is the name of the source resource
