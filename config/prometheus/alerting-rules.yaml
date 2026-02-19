@@ -1,0 +1,62 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  labels:
+    control-plane: controller-manager
+    app.kubernetes.io/name: tls-compliance-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: controller-manager-alerting-rules
+  namespace: system
+spec:
+  groups:
+    - name: tls-compliance
+      rules:
+        - alert: TLSEndpointNonCompliant
+          expr: tls_compliance_endpoints_total{status="NonCompliant"} > 0
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "TLS endpoint is non-compliant"
+            description: "{{ $value }} endpoint(s) have been non-compliant for more than 1 hour. These endpoints only support TLS 1.0/1.1 without any modern TLS version."
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator#compliance-logic"
+
+        - alert: TLSCertificateExpiringSoon
+          expr: tls_compliance_certificate_expiry_days > 0 and tls_compliance_certificate_expiry_days < 7
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "TLS certificate expiring soon"
+            description: "Certificate for {{ $labels.host }}:{{ $labels.port }} expires in {{ $value }} days."
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator#compliance-logic"
+
+        - alert: TLSCertificateExpired
+          expr: tls_compliance_certificate_expiry_days <= 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "TLS certificate has expired"
+            description: "Certificate for {{ $labels.host }}:{{ $labels.port }} expired {{ $value | humanize }} days ago."
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator#compliance-logic"
+
+        - alert: TLSScanCycleSlow
+          expr: histogram_quantile(0.95, rate(tls_compliance_scan_cycle_duration_seconds_bucket[1h])) > 300
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "TLS scan cycle is slow"
+            description: "The 95th percentile scan cycle duration is {{ $value | humanizeDuration }}, exceeding the 5-minute threshold."
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator#compliance-logic"
+
+        - alert: TLSEndpointUnreachable
+          expr: tls_compliance_endpoints_total{status="Unreachable"} > 0
+          for: 24h
+          labels:
+            severity: info
+          annotations:
+            summary: "TLS endpoint is unreachable"
+            description: "{{ $value }} endpoint(s) have been unreachable for more than 24 hours. Verify the endpoints are running and network policies allow access."
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator#compliance-logic"
