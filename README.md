@@ -8,8 +8,8 @@ for TLS version compliance, certificate health, and security posture.
 ## Overview
 
 The TLS Compliance Operator is a Kubernetes operator that watches Services,
-Ingresses, and OpenShift Routes to discover TLS endpoints, then probes each
-endpoint to determine which TLS versions it supports. It creates
+Ingresses, OpenShift Routes, and Pods to discover TLS endpoints, then probes
+each endpoint to determine which TLS versions it supports. It creates
 `TLSComplianceReport` custom resources with compliance status, supported TLS
 versions, cipher suites, and certificate details.
 
@@ -21,7 +21,8 @@ versions, cipher suites, and certificate details.
 
 ## Key Features
 
-- **Automatic Discovery**: Watches Services (ports 443, 8443, https-*), Ingresses with TLS, and OpenShift Routes
+- **Automatic Discovery**: Watches Services (ports 443, 8443, https-*), Ingresses with TLS, OpenShift Routes, and Pods with TLS container ports
+- **Pod IP Scanning**: Periodically scans all pod container ports for TLS endpoints, including hostNetwork pods exposing TLS on node interfaces
 - **TLS Version Detection**: Probes each endpoint for TLS 1.0, 1.1, 1.2, and 1.3 support
 - **Compliance Classification**: Categorizes endpoints as Compliant, NonCompliant, Warning, or Error
 - **Certificate Tracking**: Reports issuer, subject, DNS names, expiration, and days until expiry
@@ -80,39 +81,40 @@ kubectl apply -f dist/install.yaml
 ## Architecture
 
 ```
-+-------------------+     +-------------------+     +-------------------+
-|    Services       |     |    Ingresses      |     |  OpenShift Routes |
-+--------+----------+     +--------+----------+     +--------+----------+
-         |                         |                          |
-         +------------+------------+-----------+--------------+
-                      |                        |
-              +-------v--------+    +----------v-----------+
-              | Endpoint       |    | Route API Detection  |
-              | Resolver       |    | (runtime)            |
-              +-------+--------+    +----------+-----------+
-                      |                        |
-              +-------v------------------------v-------+
-              |         Endpoint Controller            |
-              |  - Creates TLSComplianceReport CRs     |
-              |  - Triggers async TLS checks           |
-              |  - Emits Kubernetes events              |
-              +-------+--------------------------------+
-                      |
-              +-------v--------+
-              | TLS Checker    |
-              | (crypto/tls)   |
-              | Rate Limited   |
-              +-------+--------+
-                      |
-              +-------v--------+
-              | TLSCompliance  |
-              | Report CR      |
-              +----------------+
++----------+     +-----------+     +--------+     +------+
+| Services |     | Ingresses |     | Routes |     | Pods |
++----+-----+     +-----+-----+     +---+----+     +--+---+
+     |                 |               |              |
+     +--------+--------+-------+-------+              |
+              |                |              +-------v--------+
+      +-------v--------+  +---v-----------+  | Periodic Pod   |
+      | Endpoint       |  | Route API     |  | Scanner        |
+      | Resolver       |  | Detection     |  | (scan cycle)   |
+      +-------+--------+  +-------+-------+  +-------+--------+
+              |                    |                  |
+      +-------v--------------------v------------------v-------+
+      |                  Endpoint Controller                  |
+      |  - Creates TLSComplianceReport CRs                    |
+      |  - Triggers async TLS checks                          |
+      |  - Labels hostNetwork pod CRs                         |
+      |  - Emits Kubernetes events                            |
+      +-------+-----------------------------------------------+
+              |
+      +-------v--------+
+      | TLS Checker    |
+      | (crypto/tls)   |
+      | Rate Limited   |
+      +-------+--------+
+              |
+      +-------v--------+
+      | TLSCompliance  |
+      | Report CR      |
+      +----------------+
 ```
 
 **Flow:**
-1. **Controller** watches Services, Ingresses, and Routes for changes
-2. **Endpoint Resolver** extracts TLS endpoints (host:port) from each resource
+1. **Controller** watches Services, Ingresses, and Routes for changes; periodically scans all Pods
+2. **Endpoint Resolver** extracts TLS endpoints (host:port) from each resource type
 3. **TLS Checker** probes each endpoint with all TLS versions using Go's `crypto/tls`
 4. **TLSComplianceReport** CR is created/updated with results
 5. **Events and Metrics** are emitted for observability
@@ -145,6 +147,7 @@ kubectl get tlsreport
 # NAME                                    HOST                                    PORT   SOURCE    COMPLIANCE     TLS1.3   TLS1.2   TLS1.0   CERT-EXPIRY   AGE
 # my-service-443-a1b2c3d4                 my-service.default                      443    Service   Compliant      true     true     false    29d           5m
 # api-ingress-443-e5f6g7h8                api.example.com                         443    Ingress   NonCompliant   true     true     true     180d          5m
+# 10-244-1-5-8443-f1e2d3c4                10.244.1.5                              8443   Pod       Compliant      true     true     false    365d          5m
 # legacy-app-8443-i9j0k1l2                legacy.default                          8443   Service   Warning        false    true     false    7d            5m
 ```
 
@@ -158,6 +161,12 @@ kubectl describe tlsreport my-service-443-a1b2c3d4
 
 ```bash
 kubectl get tlsreport -o json | jq '.items[] | select(.status.complianceStatus == "NonCompliant") | .metadata.name'
+```
+
+### Find hostNetwork Pod Endpoints
+
+```bash
+kubectl get tlsreport -l tls-compliance.telco.openshift.io/host-network=true
 ```
 
 ### Find Endpoints with Expiring Certificates
@@ -263,6 +272,7 @@ The [openshift/tls-scanner](https://github.com/openshift/tls-scanner) is a batch
 | Configurable worker pool | `--workers` flag for concurrent periodic scan throughput |
 | CSV and JUnit XML export | `kubectl-tlsreport` plugin for CI/CD integration |
 | Post-quantum readiness detection | Reports negotiated key exchange curves and PQC status |
+| Pod IP and hostNetwork scanning | Discovers TLS servers on pod IPs even without a Service/Ingress/Route |
 
 ### Architectural Differences
 
@@ -271,7 +281,7 @@ The [openshift/tls-scanner](https://github.com/openshift/tls-scanner) is a batch
 | Execution model | Long-running controller with periodic rescans | Batch Job (run once, collect results) |
 | TLS probing | Go `crypto/tls` | nmap with TLS scripts |
 | Output format | Kubernetes CRDs + events + Prometheus | Raw scan results / reports |
-| Discovery | Service, Ingress, Route watches | Pod-level endpoint scanning via lsof |
+| Discovery | Service, Ingress, Route watches + Pod IP scanning | Pod-level endpoint scanning via lsof |
 | Deployment | Operator (Deployment + CRDs) | Job or CronJob |
 
 ## OpenShift Support

@@ -885,5 +885,272 @@ func TestEndpointReconciler_ProcessEndpoint_Idempotent(t *testing.T) {
 	}
 }
 
+func TestEndpointReconciler_ScanPodEndpoints(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tls-pod",
+			Namespace: testNamespace,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name: "app",
+					Ports: []corev1.ContainerPort{
+						{ContainerPort: 443, Protocol: corev1.ProtocolTCP},
+					},
+				},
+			},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			PodIP: "10.244.1.5",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(pod).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		CertExpiryDays: 30,
+	}
+
+	err := reconciler.scanPodEndpoints(ctx)
+	if err != nil {
+		t.Fatalf("scanPodEndpoints() error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("Failed to list TLSComplianceReports: %v", err)
+	}
+	if len(crList.Items) != 1 {
+		t.Fatalf("TLSComplianceReport count = %d, want 1", len(crList.Items))
+	}
+
+	cr := crList.Items[0]
+	if cr.Spec.SourceKind != securityv1alpha1.SourceKindPod {
+		t.Errorf("SourceKind = %v, want Pod", cr.Spec.SourceKind)
+	}
+	if cr.Spec.Host != "10.244.1.5" {
+		t.Errorf("Host = %v, want 10.244.1.5", cr.Spec.Host)
+	}
+	if cr.Spec.Port != 443 {
+		t.Errorf("Port = %v, want 443", cr.Spec.Port)
+	}
+	if cr.Spec.SourceName != "tls-pod" {
+		t.Errorf("SourceName = %v, want tls-pod", cr.Spec.SourceName)
+	}
+}
+
+func TestEndpointReconciler_ScanPodEndpoints_NamespaceFiltered(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tls-pod",
+			Namespace: "kube-system",
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "app", Ports: []corev1.ContainerPort{{ContainerPort: 443, Protocol: corev1.ProtocolTCP}}},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.5"},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(pod).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:            fakeClient,
+		Scheme:            scheme,
+		CertExpiryDays:    30,
+		ExcludeNamespaces: []string{"kube-system"},
+	}
+
+	err := reconciler.scanPodEndpoints(ctx)
+	if err != nil {
+		t.Fatalf("scanPodEndpoints() error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("Failed to list TLSComplianceReports: %v", err)
+	}
+	if len(crList.Items) != 0 {
+		t.Errorf("TLSComplianceReport count = %d, want 0 for filtered namespace", len(crList.Items))
+	}
+}
+
+func TestEndpointReconciler_ScanPodEndpoints_NonRunningPod(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pending-pod",
+			Namespace: testNamespace,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "app", Ports: []corev1.ContainerPort{{ContainerPort: 443, Protocol: corev1.ProtocolTCP}}},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodPending, PodIP: "10.244.1.5"},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(pod).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		CertExpiryDays: 30,
+	}
+
+	err := reconciler.scanPodEndpoints(ctx)
+	if err != nil {
+		t.Fatalf("scanPodEndpoints() error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("Failed to list TLSComplianceReports: %v", err)
+	}
+	if len(crList.Items) != 0 {
+		t.Errorf("TLSComplianceReport count = %d, want 0 for non-running pod", len(crList.Items))
+	}
+}
+
+func TestEndpointReconciler_SourceResourceExists_Pod(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "existing-pod",
+			Namespace: testNamespace,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "app"},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(pod).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+	}
+
+	// Existing pod should return true
+	exists, err := reconciler.sourceResourceExists(ctx, securityv1alpha1.TLSComplianceReportSpec{
+		SourceKind:      securityv1alpha1.SourceKindPod,
+		SourceNamespace: testNamespace,
+		SourceName:      "existing-pod",
+	})
+	if err != nil {
+		t.Fatalf("sourceResourceExists() error = %v", err)
+	}
+	if !exists {
+		t.Error("sourceResourceExists() = false, want true for existing pod")
+	}
+
+	// Deleted pod should return false
+	exists, err = reconciler.sourceResourceExists(ctx, securityv1alpha1.TLSComplianceReportSpec{
+		SourceKind:      securityv1alpha1.SourceKindPod,
+		SourceNamespace: testNamespace,
+		SourceName:      "deleted-pod",
+	})
+	if err != nil {
+		t.Fatalf("sourceResourceExists() error = %v", err)
+	}
+	if exists {
+		t.Error("sourceResourceExists() = true, want false for deleted pod")
+	}
+}
+
+func TestEndpointReconciler_ScanPodEndpoints_HostNetworkLabel(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "hostnet-pod",
+			Namespace: testNamespace,
+		},
+		Spec: corev1.PodSpec{
+			HostNetwork: true,
+			Containers: []corev1.Container{
+				{
+					Name: "app",
+					Ports: []corev1.ContainerPort{
+						{ContainerPort: 443, Protocol: corev1.ProtocolTCP},
+					},
+				},
+			},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			PodIP: "192.168.1.100",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(pod).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		CertExpiryDays: 30,
+	}
+
+	err := reconciler.scanPodEndpoints(ctx)
+	if err != nil {
+		t.Fatalf("scanPodEndpoints() error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("Failed to list TLSComplianceReports: %v", err)
+	}
+	if len(crList.Items) != 1 {
+		t.Fatalf("TLSComplianceReport count = %d, want 1", len(crList.Items))
+	}
+
+	cr := crList.Items[0]
+	labelVal, ok := cr.Labels["tls-compliance.telco.openshift.io/host-network"]
+	if !ok {
+		t.Error("expected host-network label to be set on CR")
+	}
+	if labelVal != "true" {
+		t.Errorf("host-network label = %q, want true", labelVal)
+	}
+}
+
 // Ensure _ satisfies the client.Object interface for compile-time check
 var _ client.Object = &securityv1alpha1.TLSComplianceReport{}

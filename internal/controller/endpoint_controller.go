@@ -70,6 +70,7 @@ type EndpointReconciler struct {
 }
 
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch
@@ -664,9 +665,65 @@ func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval tim
 	}()
 }
 
+// scanPodEndpoints discovers TLS endpoints from all pods in the cluster.
+// For hostNetwork pods, the resulting CR is labeled for queryability.
+func (r *EndpointReconciler) scanPodEndpoints(ctx context.Context) error {
+	logger := log.FromContext(ctx)
+
+	var podList corev1.PodList
+	if err := r.List(ctx, &podList); err != nil {
+		return fmt.Errorf("failed to list pods: %w", err)
+	}
+
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+
+		if r.isNamespaceFiltered(pod.Namespace) {
+			continue
+		}
+
+		endpoints := endpoint.ExtractFromPod(pod)
+		for _, ep := range endpoints {
+			if err := r.processEndpoint(ctx, ep); err != nil {
+				logger.Error(err, "failed to process pod endpoint",
+					"pod", pod.Name, "namespace", pod.Namespace,
+					"host", ep.Host, "port", ep.Port)
+				continue
+			}
+
+			// Label hostNetwork pod CRs for queryability
+			if pod.Spec.HostNetwork {
+				crName := endpoint.GenerateCRName(ep)
+				var cr securityv1alpha1.TLSComplianceReport
+				if err := r.Get(ctx, client.ObjectKey{Name: crName}, &cr); err == nil {
+					labels := cr.Labels
+					if labels == nil {
+						labels = make(map[string]string)
+					}
+					if labels["tls-compliance.telco.openshift.io/host-network"] != "true" {
+						labels["tls-compliance.telco.openshift.io/host-network"] = "true"
+						cr.Labels = labels
+						if err := r.Update(ctx, &cr); err != nil {
+							logger.Error(err, "failed to label hostNetwork CR", "name", crName)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
 // scanAllEndpoints re-checks all existing TLSComplianceReport CRs using a worker pool.
 func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 	logger := log.FromContext(ctx)
+
+	// Phase 1: Discover new pod endpoints
+	if err := r.scanPodEndpoints(ctx); err != nil {
+		logger.Error(err, "pod endpoint scan failed")
+		// Continue — don't fail the whole scan
+	}
 
 	var crList securityv1alpha1.TLSComplianceReportList
 	if err := r.List(ctx, &crList); err != nil {
@@ -824,6 +881,9 @@ func (r *EndpointReconciler) sourceResourceExists(ctx context.Context, spec secu
 	case securityv1alpha1.SourceKindTarget:
 		var target securityv1alpha1.TLSComplianceTarget
 		err = r.Get(ctx, client.ObjectKey{Name: spec.SourceName}, &target)
+	case securityv1alpha1.SourceKindPod:
+		var pod corev1.Pod
+		err = r.Get(ctx, key, &pod)
 	default:
 		return false, fmt.Errorf("unknown source kind: %s", spec.SourceKind)
 	}

@@ -21,7 +21,7 @@ import (
 )
 
 // SourceKind indicates the type of Kubernetes resource that exposed the endpoint
-// +kubebuilder:validation:Enum=Service;Ingress;Route;Target
+// +kubebuilder:validation:Enum=Service;Ingress;Route;Target;Pod
 type SourceKind string
 
 const (
@@ -29,6 +29,7 @@ const (
 	SourceKindIngress SourceKind = "Ingress"
 	SourceKindRoute   SourceKind = "Route"
 	SourceKindTarget  SourceKind = "Target"
+	SourceKindPod     SourceKind = "Pod"
 )
 
 // ComplianceStatus indicates the TLS compliance status of an endpoint
