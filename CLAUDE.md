@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Kubernetes operator (Kubebuilder) that monitors all TLS endpoints (Services, Ingresses, OpenShift Routes) in a cluster for TLS version compliance. Checks which TLS versions (1.0, 1.1, 1.2, 1.3) each endpoint supports, flags non-compliant endpoints, reports certificate details, and provides observability via CRD status, Kubernetes events, and Prometheus metrics.
+Kubernetes operator (Kubebuilder) that monitors all TLS endpoints (Services, Ingresses, OpenShift Routes, and Pods) in a cluster for TLS version compliance. Checks which TLS versions (1.0, 1.1, 1.2, 1.3) each endpoint supports, flags non-compliant endpoints, reports certificate details, and provides observability via CRD status, Kubernetes events, and Prometheus metrics.
 
 ## Common Commands
 
@@ -41,13 +41,13 @@ make build-installer IMG=<img> # Generate dist/install.yaml
 **Core Components:**
 - `cmd/main.go` - Manager entry point, initializes TLS checker and controller
 - `api/v1alpha1/` - CRD schema (`TLSComplianceReport`), edit `*_types.go` here
-- `internal/controller/endpoint_controller.go` - Watches Services/Ingresses/Routes, creates TLSComplianceReport CRs
+- `internal/controller/endpoint_controller.go` - Watches Services/Ingresses/Routes, scans Pods, creates TLSComplianceReport CRs
 - `pkg/tlscheck/` - TLS endpoint checker using Go crypto/tls (interface-based, rate-limited)
-- `pkg/endpoint/` - Endpoint extraction from K8s resources (Service, Ingress, Route)
+- `pkg/endpoint/` - Endpoint extraction from K8s resources (Service, Ingress, Route, Pod)
 - `internal/metrics/` - Prometheus metrics
 
 **Key Patterns:**
-- Single controller with three watches (Service, Ingress, Route) to avoid CR conflicts
+- Single controller with three watches (Service, Ingress, Route) plus periodic Pod scanning to avoid CR conflicts
 - TLS checker uses `crypto/tls` with `InsecureSkipVerify` (reports cert info but doesn't enforce trust)
 - OpenShift Route API detected at startup via REST mapper; gracefully skipped on vanilla K8s
 - Interface-based TLS checker (`tlscheck.Checker`) enables mock injection for tests

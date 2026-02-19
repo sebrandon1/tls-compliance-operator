@@ -151,6 +151,55 @@ func GenerateCRName(ep Endpoint) string {
 	return name
 }
 
+// ExtractFromPod returns TLS endpoints from a Pod.
+// It inspects container ports for TLS-likely ports (443, 8443, or named https/https-*).
+// Only Running pods with a PodIP are considered. Init containers are skipped.
+func ExtractFromPod(pod *corev1.Pod) []Endpoint {
+	if pod.Status.Phase != corev1.PodRunning || pod.Status.PodIP == "" {
+		return nil
+	}
+
+	var endpoints []Endpoint
+	seen := make(map[int32]bool)
+
+	for _, container := range pod.Spec.Containers {
+		for _, port := range container.Ports {
+			if port.Protocol != "" && port.Protocol != corev1.ProtocolTCP {
+				continue
+			}
+			if seen[port.ContainerPort] {
+				continue
+			}
+			if isTLSContainerPort(port) {
+				seen[port.ContainerPort] = true
+				endpoints = append(endpoints, Endpoint{
+					Host:            pod.Status.PodIP,
+					Port:            port.ContainerPort,
+					SourceKind:      "Pod",
+					SourceNamespace: pod.Namespace,
+					SourceName:      pod.Name,
+				})
+			}
+		}
+	}
+
+	return endpoints
+}
+
+// isTLSContainerPort checks if a ContainerPort is likely a TLS port
+func isTLSContainerPort(port corev1.ContainerPort) bool {
+	if port.ContainerPort == 443 || port.ContainerPort == 8443 {
+		return true
+	}
+
+	name := strings.ToLower(port.Name)
+	if name == "https" || strings.HasPrefix(name, "https-") {
+		return true
+	}
+
+	return false
+}
+
 // isTLSPort checks if a ServicePort is likely a TLS port
 func isTLSPort(port corev1.ServicePort) bool {
 	// Check well-known TLS ports

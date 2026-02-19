@@ -94,6 +94,7 @@ spec:
                 - Ingress
                 - Route
                 - Target
+                - Pod
                 type: string
               sourceName:
                 description: SourceName is the name of the source resource

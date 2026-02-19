@@ -344,3 +344,276 @@ func TestIsTLSPort(t *testing.T) {
 		})
 	}
 }
+
+func TestIsTLSContainerPort(t *testing.T) {
+	tests := []struct {
+		name string
+		port corev1.ContainerPort
+		want bool
+	}{
+		{"port 443", corev1.ContainerPort{ContainerPort: 443}, true},
+		{"port 8443", corev1.ContainerPort{ContainerPort: 8443}, true},
+		{"named https", corev1.ContainerPort{Name: "https", ContainerPort: 9090}, true},
+		{"named https-metrics", corev1.ContainerPort{Name: "https-metrics", ContainerPort: 9443}, true},
+		{"port 80", corev1.ContainerPort{ContainerPort: 80}, false},
+		{"named http", corev1.ContainerPort{Name: "http", ContainerPort: 80}, false},
+		{"named grpc", corev1.ContainerPort{Name: "grpc", ContainerPort: 9090}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isTLSContainerPort(tt.port)
+			if got != tt.want {
+				t.Errorf("isTLSContainerPort(%v) = %v, want %v", tt.port, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExtractFromPod_Port443(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-pod",
+			Namespace: "default",
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name: "app",
+					Ports: []corev1.ContainerPort{
+						{ContainerPort: 443, Protocol: corev1.ProtocolTCP},
+					},
+				},
+			},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			PodIP: "10.244.1.5",
+		},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(endpoints))
+	}
+
+	ep := endpoints[0]
+	if ep.Host != "10.244.1.5" {
+		t.Errorf("host = %q, want 10.244.1.5", ep.Host)
+	}
+	if ep.Port != 443 {
+		t.Errorf("port = %d, want 443", ep.Port)
+	}
+	if ep.SourceKind != "Pod" {
+		t.Errorf("sourceKind = %q, want Pod", ep.SourceKind)
+	}
+	if ep.SourceNamespace != "default" {
+		t.Errorf("sourceNamespace = %q, want default", ep.SourceNamespace)
+	}
+	if ep.SourceName != "my-pod" {
+		t.Errorf("sourceName = %q, want my-pod", ep.SourceName)
+	}
+}
+
+func TestExtractFromPod_Port8443(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "app", Ports: []corev1.ContainerPort{{ContainerPort: 8443, Protocol: corev1.ProtocolTCP}}},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.5"},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(endpoints))
+	}
+	if endpoints[0].Port != 8443 {
+		t.Errorf("port = %d, want 8443", endpoints[0].Port)
+	}
+}
+
+func TestExtractFromPod_NamedHTTPS(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "app", Ports: []corev1.ContainerPort{{Name: "https", ContainerPort: 9443}}},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.5"},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(endpoints))
+	}
+	if endpoints[0].Port != 9443 {
+		t.Errorf("port = %d, want 9443", endpoints[0].Port)
+	}
+}
+
+func TestExtractFromPod_NotRunning(t *testing.T) {
+	phases := []corev1.PodPhase{corev1.PodPending, corev1.PodSucceeded, corev1.PodFailed}
+	for _, phase := range phases {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{
+					{Name: "app", Ports: []corev1.ContainerPort{{ContainerPort: 443}}},
+				},
+			},
+			Status: corev1.PodStatus{Phase: phase, PodIP: "10.244.1.5"},
+		}
+
+		endpoints := ExtractFromPod(pod)
+		if len(endpoints) != 0 {
+			t.Errorf("phase %q: expected 0 endpoints, got %d", phase, len(endpoints))
+		}
+	}
+}
+
+func TestExtractFromPod_NoPodIP(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "app", Ports: []corev1.ContainerPort{{ContainerPort: 443}}},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: ""},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 0 {
+		t.Fatalf("expected 0 endpoints for pod with no IP, got %d", len(endpoints))
+	}
+}
+
+func TestExtractFromPod_NonTLSPortsOnly(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "app", Ports: []corev1.ContainerPort{
+					{ContainerPort: 80, Protocol: corev1.ProtocolTCP},
+					{ContainerPort: 9090, Protocol: corev1.ProtocolTCP},
+				}},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.5"},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 0 {
+		t.Fatalf("expected 0 endpoints for non-TLS ports, got %d", len(endpoints))
+	}
+}
+
+func TestExtractFromPod_UDPPort443(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "app", Ports: []corev1.ContainerPort{
+					{ContainerPort: 443, Protocol: corev1.ProtocolUDP},
+				}},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.5"},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 0 {
+		t.Fatalf("expected 0 endpoints for UDP port, got %d", len(endpoints))
+	}
+}
+
+func TestExtractFromPod_MultipleTLSPorts(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "app", Ports: []corev1.ContainerPort{
+					{ContainerPort: 443, Protocol: corev1.ProtocolTCP},
+				}},
+				{Name: "sidecar", Ports: []corev1.ContainerPort{
+					{ContainerPort: 8443, Protocol: corev1.ProtocolTCP},
+				}},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.5"},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 2 {
+		t.Fatalf("expected 2 endpoints, got %d", len(endpoints))
+	}
+}
+
+func TestExtractFromPod_DuplicatePortAcrossContainers(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "app", Ports: []corev1.ContainerPort{
+					{ContainerPort: 443, Protocol: corev1.ProtocolTCP},
+				}},
+				{Name: "sidecar", Ports: []corev1.ContainerPort{
+					{ContainerPort: 443, Protocol: corev1.ProtocolTCP},
+				}},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.5"},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint (deduplicated), got %d", len(endpoints))
+	}
+}
+
+func TestExtractFromPod_HostNetwork(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			HostNetwork: true,
+			Containers: []corev1.Container{
+				{Name: "app", Ports: []corev1.ContainerPort{
+					{ContainerPort: 443, Protocol: corev1.ProtocolTCP},
+				}},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "192.168.1.100"},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint for hostNetwork pod, got %d", len(endpoints))
+	}
+	if endpoints[0].Host != "192.168.1.100" {
+		t.Errorf("host = %q, want 192.168.1.100 (node IP)", endpoints[0].Host)
+	}
+}
+
+func TestExtractFromPod_DefaultProtocol(t *testing.T) {
+	// When protocol is not specified, it defaults to TCP
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "app", Ports: []corev1.ContainerPort{
+					{ContainerPort: 443},
+				}},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.5"},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint for port with default protocol, got %d", len(endpoints))
+	}
+}
