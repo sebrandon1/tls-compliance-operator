@@ -16,6 +16,10 @@ resources:
 #- ../prometheus
 # [METRICS] Expose the controller manager metrics service.
 - metrics_service.yaml
+# [NETWORK] NetworkPolicy to restrict ingress/egress traffic.
+- networkpolicy.yaml
+# [PDB] PodDisruptionBudget for HA deployments with leader election.
+- pdb.yaml
 
 patches:
 # [METRICS] The following patch will enable the metrics endpoint using HTTPS and the port :8443.
