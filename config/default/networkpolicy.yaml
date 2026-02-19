@@ -1,0 +1,49 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    control-plane: controller-manager
+    app.kubernetes.io/name: tls-compliance-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: controller-manager
+  namespace: system
+spec:
+  podSelector:
+    matchLabels:
+      control-plane: controller-manager
+      app.kubernetes.io/name: tls-compliance-operator
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow Prometheus to scrape metrics
+    - ports:
+        - port: 8443
+          protocol: TCP
+    # Allow kubelet health probes
+    - ports:
+        - port: 8081
+          protocol: TCP
+  egress:
+    # Allow DNS resolution
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Allow access to Kubernetes API server
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+    # Allow TLS checks to any endpoint on any port
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 8443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+        - port: 9443
+          protocol: TCP
