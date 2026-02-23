@@ -18,6 +18,8 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -54,8 +56,33 @@ type MockTLSChecker struct {
 	Err    error
 }
 
-func (m *MockTLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (*tlscheck.TLSCheckResult, error) {
+func (m *MockTLSChecker) CheckEndpoint(_ context.Context, _ string, _ int) (*tlscheck.TLSCheckResult, error) {
 	return m.Result, m.Err
+}
+
+// SequencedMockTLSChecker returns different results on successive calls
+type SequencedMockTLSChecker struct {
+	Results []*tlscheck.TLSCheckResult
+	Errors  []error
+	callIdx int
+	mu      sync.Mutex
+}
+
+func (s *SequencedMockTLSChecker) CheckEndpoint(_ context.Context, _ string, _ int) (*tlscheck.TLSCheckResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	idx := s.callIdx
+	if idx >= len(s.Results) {
+		idx = len(s.Results) - 1
+	}
+	s.callIdx++
+	return s.Results[idx], s.Errors[idx]
+}
+
+func (s *SequencedMockTLSChecker) CallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.callIdx
 }
 
 func TestEndpointReconciler_Reconcile_ServiceWithHTTPS(t *testing.T) {
@@ -1149,6 +1176,345 @@ func TestEndpointReconciler_ScanPodEndpoints_HostNetworkLabel(t *testing.T) {
 	}
 	if labelVal != "true" {
 		t.Errorf("host-network label = %q, want true", labelVal)
+	}
+}
+
+func TestEndpointReconciler_RetryThenSuccess(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	// Pre-create the CR that performTLSCheck expects
+	crName := "retry-test-cr"
+	now := metav1.Now()
+	cr := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: crName,
+		},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host:            "test.example.com",
+			Port:            443,
+			SourceKind:      securityv1alpha1.SourceKindService,
+			SourceNamespace: testNamespace,
+			SourceName:      "test-service",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{
+			ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
+			FirstSeenAt:      &now,
+			LastSeenAt:       &now,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cr).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	checker := &SequencedMockTLSChecker{
+		Results: []*tlscheck.TLSCheckResult{
+			{FailureReason: tlscheck.FailureReasonTimeout},
+			{SupportsTLS12: true, SupportsTLS13: true, CipherSuites: map[string][]string{}},
+		},
+		Errors: []error{
+			fmt.Errorf("connection timed out"),
+			nil,
+		},
+	}
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		TLSChecker:     checker,
+		CertExpiryDays: 30,
+		MaxRetries:     3,
+		RetryBackoff:   10 * time.Millisecond,
+	}
+
+	reconciler.performTLSCheck(ctx, crName, "test.example.com", 443)
+
+	// Should have called checker twice (1 failure + 1 success)
+	if checker.CallCount() != 2 {
+		t.Errorf("expected 2 calls, got %d", checker.CallCount())
+	}
+
+	// Verify final CR status is Compliant
+	var updatedCR securityv1alpha1.TLSComplianceReport
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: crName}, &updatedCR); err != nil {
+		t.Fatalf("failed to get CR: %v", err)
+	}
+	if updatedCR.Status.ComplianceStatus != securityv1alpha1.ComplianceStatusCompliant {
+		t.Errorf("ComplianceStatus = %v, want Compliant", updatedCR.Status.ComplianceStatus)
+	}
+	if updatedCR.Status.RetryCount != 0 {
+		t.Errorf("RetryCount = %d, want 0 (cleared after completion)", updatedCR.Status.RetryCount)
+	}
+	if updatedCR.Status.NextRetryAt != nil {
+		t.Error("NextRetryAt should be nil after completion")
+	}
+}
+
+func TestEndpointReconciler_RetryExhausted(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	crName := "retry-exhausted-cr"
+	now := metav1.Now()
+	cr := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: crName,
+		},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host:            "unreachable.example.com",
+			Port:            443,
+			SourceKind:      securityv1alpha1.SourceKindService,
+			SourceNamespace: testNamespace,
+			SourceName:      "unreachable-service",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{
+			ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
+			FirstSeenAt:      &now,
+			LastSeenAt:       &now,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cr).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	// All attempts fail with transient error
+	checker := &SequencedMockTLSChecker{
+		Results: []*tlscheck.TLSCheckResult{
+			{FailureReason: tlscheck.FailureReasonTimeout},
+			{FailureReason: tlscheck.FailureReasonTimeout},
+			{FailureReason: tlscheck.FailureReasonTimeout},
+		},
+		Errors: []error{
+			fmt.Errorf("timeout 1"),
+			fmt.Errorf("timeout 2"),
+			fmt.Errorf("timeout 3"),
+		},
+	}
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		TLSChecker:     checker,
+		CertExpiryDays: 30,
+		MaxRetries:     2,
+		RetryBackoff:   10 * time.Millisecond,
+	}
+
+	reconciler.performTLSCheck(ctx, crName, "unreachable.example.com", 443)
+
+	// Should have called checker 3 times (1 initial + 2 retries)
+	if checker.CallCount() != 3 {
+		t.Errorf("expected 3 calls, got %d", checker.CallCount())
+	}
+
+	// Verify final CR status is Timeout
+	var updatedCR securityv1alpha1.TLSComplianceReport
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: crName}, &updatedCR); err != nil {
+		t.Fatalf("failed to get CR: %v", err)
+	}
+	if updatedCR.Status.ComplianceStatus != securityv1alpha1.ComplianceStatusTimeout {
+		t.Errorf("ComplianceStatus = %v, want Timeout", updatedCR.Status.ComplianceStatus)
+	}
+	if updatedCR.Status.RetryCount != 0 {
+		t.Errorf("RetryCount = %d, want 0 (cleared after completion)", updatedCR.Status.RetryCount)
+	}
+}
+
+func TestEndpointReconciler_NoRetryOnNoTLS(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	crName := "no-retry-notls-cr"
+	now := metav1.Now()
+	cr := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: crName,
+		},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host:            "notls.example.com",
+			Port:            80,
+			SourceKind:      securityv1alpha1.SourceKindService,
+			SourceNamespace: testNamespace,
+			SourceName:      "notls-service",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{
+			ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
+			FirstSeenAt:      &now,
+			LastSeenAt:       &now,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cr).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	checker := &SequencedMockTLSChecker{
+		Results: []*tlscheck.TLSCheckResult{
+			{FailureReason: tlscheck.FailureReasonNoTLS},
+		},
+		Errors: []error{
+			fmt.Errorf("not TLS"),
+		},
+	}
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		TLSChecker:     checker,
+		CertExpiryDays: 30,
+		MaxRetries:     3,
+		RetryBackoff:   10 * time.Millisecond,
+	}
+
+	reconciler.performTLSCheck(ctx, crName, "notls.example.com", 80)
+
+	// Should only call once — NoTLS is not transient
+	if checker.CallCount() != 1 {
+		t.Errorf("expected 1 call (no retry for NoTLS), got %d", checker.CallCount())
+	}
+
+	var updatedCR securityv1alpha1.TLSComplianceReport
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: crName}, &updatedCR); err != nil {
+		t.Fatalf("failed to get CR: %v", err)
+	}
+	if updatedCR.Status.ComplianceStatus != securityv1alpha1.ComplianceStatusNoTLS {
+		t.Errorf("ComplianceStatus = %v, want NoTLS", updatedCR.Status.ComplianceStatus)
+	}
+}
+
+func TestEndpointReconciler_NoRetryOnMutualTLS(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	crName := "no-retry-mtls-cr"
+	now := metav1.Now()
+	cr := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: crName,
+		},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host:            "mtls.example.com",
+			Port:            443,
+			SourceKind:      securityv1alpha1.SourceKindService,
+			SourceNamespace: testNamespace,
+			SourceName:      "mtls-service",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{
+			ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
+			FirstSeenAt:      &now,
+			LastSeenAt:       &now,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cr).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	checker := &SequencedMockTLSChecker{
+		Results: []*tlscheck.TLSCheckResult{
+			{FailureReason: tlscheck.FailureReasonMutualTLSRequired},
+		},
+		Errors: []error{
+			fmt.Errorf("mutual TLS required"),
+		},
+	}
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		TLSChecker:     checker,
+		CertExpiryDays: 30,
+		MaxRetries:     3,
+		RetryBackoff:   10 * time.Millisecond,
+	}
+
+	reconciler.performTLSCheck(ctx, crName, "mtls.example.com", 443)
+
+	// Should only call once — MutualTLSRequired is not transient
+	if checker.CallCount() != 1 {
+		t.Errorf("expected 1 call (no retry for MutualTLSRequired), got %d", checker.CallCount())
+	}
+
+	var updatedCR securityv1alpha1.TLSComplianceReport
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: crName}, &updatedCR); err != nil {
+		t.Fatalf("failed to get CR: %v", err)
+	}
+	if updatedCR.Status.ComplianceStatus != securityv1alpha1.ComplianceStatusMutualTLSRequired {
+		t.Errorf("ComplianceStatus = %v, want MutualTLSRequired", updatedCR.Status.ComplianceStatus)
+	}
+}
+
+func TestEndpointReconciler_RetryDisabled(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	crName := "retry-disabled-cr"
+	now := metav1.Now()
+	cr := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: crName,
+		},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host:            "timeout.example.com",
+			Port:            443,
+			SourceKind:      securityv1alpha1.SourceKindService,
+			SourceNamespace: testNamespace,
+			SourceName:      "timeout-service",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{
+			ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
+			FirstSeenAt:      &now,
+			LastSeenAt:       &now,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cr).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	checker := &SequencedMockTLSChecker{
+		Results: []*tlscheck.TLSCheckResult{
+			{FailureReason: tlscheck.FailureReasonTimeout},
+		},
+		Errors: []error{
+			fmt.Errorf("timeout"),
+		},
+	}
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		TLSChecker:     checker,
+		CertExpiryDays: 30,
+		MaxRetries:     0, // retries disabled
+		RetryBackoff:   10 * time.Millisecond,
+	}
+
+	reconciler.performTLSCheck(ctx, crName, "timeout.example.com", 443)
+
+	// Should only call once — retries disabled
+	if checker.CallCount() != 1 {
+		t.Errorf("expected 1 call (retries disabled), got %d", checker.CallCount())
+	}
+
+	var updatedCR securityv1alpha1.TLSComplianceReport
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: crName}, &updatedCR); err != nil {
+		t.Fatalf("failed to get CR: %v", err)
+	}
+	if updatedCR.Status.ComplianceStatus != securityv1alpha1.ComplianceStatusTimeout {
+		t.Errorf("ComplianceStatus = %v, want Timeout", updatedCR.Status.ComplianceStatus)
 	}
 }
 

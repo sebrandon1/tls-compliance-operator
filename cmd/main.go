@@ -79,6 +79,8 @@ func main() {
 	var certExpiryWarningDays int
 	var profileRefreshInterval time.Duration
 	var workers int
+	var maxRetries int
+	var retryBackoff time.Duration
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -119,6 +121,10 @@ func main() {
 		"Interval for refreshing OpenShift TLS security profile configuration (OpenShift only)")
 	flag.IntVar(&workers, "workers", 5,
 		"Number of concurrent workers for periodic TLS scans (1-50)")
+	flag.IntVar(&maxRetries, "max-retries", 3,
+		"Maximum number of retries for transient TLS check failures (0-10)")
+	flag.DurationVar(&retryBackoff, "retry-backoff", 30*time.Second,
+		"Base backoff duration between retries (exponential: base * 2^attempt)")
 
 	opts := zap.Options{
 		Development: true,
@@ -131,6 +137,12 @@ func main() {
 	// Validate workers flag
 	if workers < 1 || workers > 50 {
 		setupLog.Error(nil, "invalid --workers value, must be between 1 and 50", "workers", workers)
+		os.Exit(1)
+	}
+
+	// Validate max-retries flag
+	if maxRetries < 0 || maxRetries > 10 {
+		setupLog.Error(nil, "invalid --max-retries value, must be between 0 and 10", "maxRetries", maxRetries)
 		os.Exit(1)
 	}
 
@@ -263,7 +275,9 @@ func main() {
 		"certExpiryWarningDays", certExpiryWarningDays,
 		"includeNamespaces", includedNS,
 		"excludeNamespaces", excludedNS,
-		"workers", workers)
+		"workers", workers,
+		"maxRetries", maxRetries,
+		"retryBackoff", retryBackoff)
 
 	// Set up the endpoint controller
 	endpointReconciler := &controller.EndpointReconciler{
@@ -277,6 +291,8 @@ func main() {
 		RouteAPIAvailable: routeAPIAvailable,
 		ProfileFetcher:    profileFetcher,
 		Workers:           workers,
+		MaxRetries:        maxRetries,
+		RetryBackoff:      retryBackoff,
 	}
 
 	if err = endpointReconciler.SetupWithManager(mgr); err != nil {
