@@ -19,7 +19,9 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -133,6 +135,12 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	// Apply environment variable overrides for flags not explicitly set on the command line
+	envOverrides := resolveEnvConfig(flag.CommandLine, os.LookupEnv)
+	for _, msg := range envOverrides {
+		setupLog.Info(msg)
+	}
 
 	// Validate workers flag
 	if workers < 1 || workers > 50 {
@@ -324,4 +332,85 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+// envFlagMapping maps environment variable names to their corresponding flag names.
+var envFlagMapping = []struct {
+	envVar   string
+	flagName string
+}{
+	{"TLS_COMPLIANCE_SCAN_INTERVAL", "scan-interval"},
+	{"TLS_COMPLIANCE_CHECK_TIMEOUT", "tls-check-timeout"},
+	{"TLS_COMPLIANCE_RATE_LIMIT", "rate-limit"},
+	{"TLS_COMPLIANCE_WORKERS", "workers"},
+	{"TLS_COMPLIANCE_EXCLUDE_NAMESPACES", "exclude-namespaces"},
+}
+
+// resolveEnvConfig applies environment variable overrides to flags that were not
+// explicitly set on the command line. Precedence: CLI flag > env var > default.
+// It returns log messages describing which overrides were applied.
+func resolveEnvConfig(fs *flag.FlagSet, lookupEnv func(string) (string, bool)) []string {
+	// Build set of flags explicitly set via CLI
+	explicitlySet := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) {
+		explicitlySet[f.Name] = true
+	})
+
+	var messages []string
+
+	for _, mapping := range envFlagMapping {
+		if explicitlySet[mapping.flagName] {
+			messages = append(messages, fmt.Sprintf("config: %s set via CLI flag", mapping.flagName))
+			continue
+		}
+
+		envVal, ok := lookupEnv(mapping.envVar)
+		if !ok || envVal == "" {
+			messages = append(messages, fmt.Sprintf("config: %s using default", mapping.flagName))
+			continue
+		}
+
+		f := fs.Lookup(mapping.flagName)
+		if f == nil {
+			continue
+		}
+
+		// Validate the value before applying
+		if err := validateEnvValue(mapping.flagName, envVal); err != nil {
+			messages = append(messages, fmt.Sprintf("config: ignoring invalid %s=%q: %v", mapping.envVar, envVal, err))
+			continue
+		}
+
+		if err := f.Value.Set(envVal); err != nil {
+			messages = append(messages, fmt.Sprintf("config: ignoring invalid %s=%q: %v", mapping.envVar, envVal, err))
+			continue
+		}
+
+		messages = append(messages, fmt.Sprintf("config: %s set via env %s=%s", mapping.flagName, mapping.envVar, envVal))
+	}
+
+	return messages
+}
+
+// validateEnvValue performs type-appropriate validation for known flag types.
+func validateEnvValue(flagName, value string) error {
+	switch flagName {
+	case "scan-interval", "tls-check-timeout":
+		if _, err := time.ParseDuration(value); err != nil {
+			return fmt.Errorf("invalid duration: %w", err)
+		}
+	case "rate-limit":
+		if _, err := strconv.ParseFloat(value, 64); err != nil {
+			return fmt.Errorf("invalid float: %w", err)
+		}
+	case "workers":
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("invalid integer: %w", err)
+		}
+		if v < 1 || v > 50 {
+			return fmt.Errorf("must be between 1 and 50, got %d", v)
+		}
+	}
+	return nil
 }
