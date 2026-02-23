@@ -195,6 +195,72 @@ The operator accepts the following command-line flags:
 | `--health-probe-bind-address` | `:8081` | Health probe bind address |
 | `--leader-elect` | `false` | Enable leader election for HA |
 
+### Environment Variables
+
+All configuration flags can also be set via environment variables. This is
+useful when deploying via Helm charts or kustomize overlays where modifying
+container args is inconvenient.
+
+**Precedence:** CLI flag > environment variable > default value.
+
+| Environment Variable | Flag | Default |
+|---------------------|------|---------|
+| `TLS_COMPLIANCE_SCAN_INTERVAL` | `--scan-interval` | `1h` |
+| `TLS_COMPLIANCE_CHECK_TIMEOUT` | `--tls-check-timeout` | `5s` |
+| `TLS_COMPLIANCE_RATE_LIMIT` | `--rate-limit` | `10` |
+| `TLS_COMPLIANCE_WORKERS` | `--workers` | `5` |
+| `TLS_COMPLIANCE_EXCLUDE_NAMESPACES` | `--exclude-namespaces` | `""` |
+
+Example: set scan interval via environment variable in a Deployment:
+
+```yaml
+env:
+- name: TLS_COMPLIANCE_SCAN_INTERVAL
+  value: "30m"
+- name: TLS_COMPLIANCE_WORKERS
+  value: "10"
+```
+
+## Resource Sizing
+
+The default resource limits are configured for small-to-medium clusters
+(up to ~500 TLS endpoints):
+
+| Resource | Request | Limit |
+|----------|---------|-------|
+| CPU | 10m | 500m |
+| Memory | 64Mi | 256Mi |
+
+### Scaling Guidance
+
+Memory usage scales with the number of endpoints being monitored and the
+concurrency settings:
+
+| Endpoints | Workers | Rate Limit | Recommended Memory Limit |
+|-----------|---------|------------|-------------------------|
+| < 500 | 5 | 10 | 256Mi (default) |
+| 500-2000 | 10 | 20 | 512Mi |
+| 2000+ | 20 | 50 | 1Gi |
+
+Increasing `--workers` and `--rate-limit` will increase peak memory usage
+since more TLS checks run concurrently. Monitor actual usage with:
+
+```promql
+container_memory_working_set_bytes{container="manager"}
+```
+
+### High-Memory Kustomize Overlay
+
+For larger clusters, use the provided kustomize overlay:
+
+```bash
+kubectl kustomize config/overlays/high-memory/ | kubectl apply -f -
+```
+
+This sets memory limits to 512Mi and requests to 128Mi. Customize the overlay
+values for your workload by editing
+`config/overlays/high-memory/kustomization.yaml`.
+
 ## Prometheus Metrics
 
 All metrics use the `tls_compliance_` prefix.
