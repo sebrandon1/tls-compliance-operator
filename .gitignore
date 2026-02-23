@@ -31,4 +31,4 @@ go.work
 
 # Build artifacts
 dist/
-kubectl-tlsreport
+/kubectl-tlsreport

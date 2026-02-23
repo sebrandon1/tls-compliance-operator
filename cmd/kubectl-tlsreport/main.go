@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -38,71 +39,105 @@ func init() {
 	utilruntime.Must(securityv1alpha1.AddToScheme(scheme))
 }
 
+var filterOpts export.FilterOptions
+
 func main() {
-	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	if err := newRootCmd().Execute(); err != nil {
 		os.Exit(1)
 	}
 }
 
-func run() error {
-	format := "csv"
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "csv", "junit":
-			format = os.Args[1]
-		case "--help", "-h":
-			printUsage()
-			return nil
-		default:
-			fmt.Fprintf(os.Stderr, "Unknown format: %s\n\n", os.Args[1])
-			printUsage()
-			return fmt.Errorf("unknown format: %s", os.Args[1])
-		}
+func newRootCmd() *cobra.Command {
+	rootCmd := &cobra.Command{
+		Use:   "kubectl-tlsreport [csv|json|junit]",
+		Short: "Export TLS compliance reports from the cluster",
+		Long: `Export TLS compliance reports from the cluster in various formats.
+
+Supported formats: csv (default), json, junit`,
+		Args:          cobra.MaximumNArgs(1),
+		RunE:          runExport,
+		SilenceUsage:  true,
+		SilenceErrors: true,
 	}
 
-	// Build client from kubeconfig
+	rootCmd.PersistentFlags().StringVarP(&filterOpts.Namespace, "namespace", "n", "", "Filter by source namespace")
+	rootCmd.PersistentFlags().StringVar(&filterOpts.Status, "status", "", "Filter by compliance status (e.g. Compliant, NonCompliant)")
+	rootCmd.PersistentFlags().StringVar(&filterOpts.Source, "source", "", "Filter by source kind (e.g. Service, Ingress, Route, Pod)")
+
+	rootCmd.AddCommand(newSummaryCmd())
+
+	return rootCmd
+}
+
+func newSummaryCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "summary",
+		Short: "Show a compliance summary of all TLS endpoints",
+		RunE:  runSummary,
+	}
+}
+
+func runExport(cmd *cobra.Command, args []string) error {
+	format := "csv"
+	if len(args) > 0 {
+		format = args[0]
+	}
+
+	switch format {
+	case "csv", "json", "junit":
+	default:
+		return fmt.Errorf("unknown format: %s (supported: csv, json, junit)", format)
+	}
+
+	reports, err := fetchReports()
+	if err != nil {
+		return err
+	}
+
+	reports = export.FilterReports(reports, filterOpts)
+
+	switch format {
+	case "csv":
+		return export.WriteCSV(os.Stdout, reports)
+	case "json":
+		return export.WriteJSON(os.Stdout, reports)
+	case "junit":
+		return export.WriteJUnit(os.Stdout, reports)
+	}
+
+	return nil
+}
+
+func runSummary(_ *cobra.Command, _ []string) error {
+	reports, err := fetchReports()
+	if err != nil {
+		return err
+	}
+
+	reports = export.FilterReports(reports, filterOpts)
+
+	return export.WriteSummary(os.Stdout, reports)
+}
+
+func fetchReports() ([]securityv1alpha1.TLSComplianceReport, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	configOverrides := &clientcmd.ConfigOverrides{}
 	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
 
 	restConfig, err := kubeConfig.ClientConfig()
 	if err != nil {
-		return fmt.Errorf("building kubeconfig: %w", err)
+		return nil, fmt.Errorf("building kubeconfig: %w", err)
 	}
 
 	c, err := client.New(restConfig, client.Options{Scheme: scheme})
 	if err != nil {
-		return fmt.Errorf("creating client: %w", err)
+		return nil, fmt.Errorf("creating client: %w", err)
 	}
 
-	// List all TLSComplianceReports (cluster-scoped)
 	var reportList securityv1alpha1.TLSComplianceReportList
 	if err := c.List(context.Background(), &reportList); err != nil {
-		return fmt.Errorf("listing TLSComplianceReports: %w", err)
+		return nil, fmt.Errorf("listing TLSComplianceReports: %w", err)
 	}
 
-	switch format {
-	case "csv":
-		return export.WriteCSV(os.Stdout, reportList.Items)
-	case "junit":
-		return export.WriteJUnit(os.Stdout, reportList.Items)
-	}
-
-	return nil
-}
-
-func printUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: kubectl tlsreport [FORMAT]
-
-Export TLS compliance reports from the cluster.
-
-Formats:
-  csv    Export as CSV (default)
-  junit  Export as JUnit XML
-
-Examples:
-  kubectl tlsreport csv > report.csv
-  kubectl tlsreport junit > report.xml
-`)
+	return reportList.Items, nil
 }
