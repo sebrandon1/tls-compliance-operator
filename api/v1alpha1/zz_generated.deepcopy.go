@@ -178,6 +178,10 @@ func (in *TLSComplianceReportStatus) DeepCopyInto(out *TLSComplianceReportStatus
 		in, out := &in.LastSeenAt, &out.LastSeenAt
 		*out = (*in).DeepCopy()
 	}
+	if in.NextRetryAt != nil {
+		in, out := &in.NextRetryAt, &out.NextRetryAt
+		*out = (*in).DeepCopy()
+	}
 	if in.IngressProfileCompliance != nil {
 		in, out := &in.IngressProfileCompliance, &out.IngressProfileCompliance
 		*out = new(TLSProfileComplianceResult)

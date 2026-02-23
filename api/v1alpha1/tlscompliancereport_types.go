@@ -200,6 +200,14 @@ type TLSComplianceReportStatus struct {
 	// +optional
 	LastError string `json:"lastError,omitempty"`
 
+	// RetryCount is the current retry attempt number for transient failures
+	// +optional
+	RetryCount int `json:"retryCount,omitempty"`
+
+	// NextRetryAt is when the next retry attempt will happen
+	// +optional
+	NextRetryAt *metav1.Time `json:"nextRetryAt,omitempty"`
+
 	// IngressProfileCompliance contains the compliance result against the
 	// OpenShift IngressController TLS security profile (OpenShift only)
 	// +optional

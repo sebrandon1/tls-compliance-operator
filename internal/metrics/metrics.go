@@ -86,6 +86,25 @@ var (
 			Buckets:   []float64{1, 5, 10, 30, 60, 120, 300, 600},
 		},
 	)
+
+	// CheckRetriesTotal tracks the number of TLS check retry attempts
+	CheckRetriesTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: MetricsNamespace,
+			Name:      "check_retries_total",
+			Help:      "Total number of TLS check retry attempts",
+		},
+		[]string{"reason"},
+	)
+
+	// CheckRetriesExhaustedTotal tracks how many times retries were exhausted
+	CheckRetriesExhaustedTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: MetricsNamespace,
+			Name:      "check_retries_exhausted_total",
+			Help:      "Total number of times TLS check retries were exhausted",
+		},
+	)
 )
 
 func init() {
@@ -96,6 +115,8 @@ func init() {
 		VersionSupport,
 		ReconcileTotal,
 		ScanCycleDurationSeconds,
+		CheckRetriesTotal,
+		CheckRetriesExhaustedTotal,
 	)
 }
 
@@ -126,4 +147,14 @@ func RecordVersionSupport(host, port, version string, supported bool) {
 // RecordScanCycleDuration records the duration of a full scan cycle
 func RecordScanCycleDuration(durationSeconds float64) {
 	ScanCycleDurationSeconds.Observe(durationSeconds)
+}
+
+// RecordRetry records a TLS check retry attempt with the given failure reason
+func RecordRetry(reason string) {
+	CheckRetriesTotal.WithLabelValues(reason).Inc()
+}
+
+// RecordRetriesExhausted records that retries were exhausted for a TLS check
+func RecordRetriesExhausted() {
+	CheckRetriesExhaustedTotal.Inc()
 }

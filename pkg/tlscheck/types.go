@@ -41,6 +41,18 @@ const (
 	FailureReasonMutualTLSRequired FailureReason = "MutualTLSRequired"
 )
 
+// IsTransient returns true if the failure reason represents a transient error
+// that may resolve on retry (e.g. timeout, connection refused, unreachable).
+// Returns false for permanent failures (NoTLS, MutualTLSRequired) and success (None).
+func (f FailureReason) IsTransient() bool {
+	switch f {
+	case FailureReasonTimeout, FailureReasonClosed, FailureReasonUnreachable, FailureReasonFiltered:
+		return true
+	default:
+		return false
+	}
+}
+
 // TLSCheckResult contains the results of a TLS endpoint check
 type TLSCheckResult struct {
 	// TLS version support

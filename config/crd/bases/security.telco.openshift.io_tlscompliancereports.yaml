@@ -357,6 +357,10 @@ spec:
                   NegotiatedCurves maps TLS version to the negotiated key exchange curve
                   (e.g. X25519, P-256, X25519MLKEM768)
                 type: object
+              nextRetryAt:
+                description: NextRetryAt is when the next retry attempt will happen
+                format: date-time
+                type: string
               overallCipherGrade:
                 description: OverallCipherGrade is the worst grade across all negotiated
                   cipher suites
@@ -366,6 +370,10 @@ spec:
                   QuantumReady indicates whether any TLS connection negotiated a
                   post-quantum key exchange algorithm (e.g. X25519MLKEM768)
                 type: boolean
+              retryCount:
+                description: RetryCount is the current retry attempt number for transient
+                  failures
+                type: integer
               tlsVersions:
                 description: TLSVersions indicates which TLS versions are supported
                 properties:

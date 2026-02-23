@@ -53,6 +53,7 @@ const (
 	EventReasonCertificateExpiring = "CertificateExpiring"
 	EventReasonCertificateExpired  = "CertificateExpired"
 	EventReasonEndpointDiscovered  = "EndpointDiscovered"
+	EventReasonRetryExhausted      = "RetryExhausted"
 )
 
 // EndpointReconciler reconciles Service, Ingress, and Route resources
@@ -67,6 +68,8 @@ type EndpointReconciler struct {
 	RouteAPIAvailable bool
 	ProfileFetcher    *tlsprofile.Fetcher
 	Workers           int
+	MaxRetries        int
+	RetryBackoff      time.Duration
 }
 
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
@@ -274,7 +277,8 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep endpoint.En
 	return nil
 }
 
-// performTLSCheck runs the TLS check and updates the CR status
+// performTLSCheck runs the TLS check and updates the CR status.
+// On transient failures, it retries with exponential backoff up to MaxRetries times.
 func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host string, port int) {
 	logger := log.FromContext(ctx).WithValues("crName", crName)
 
@@ -282,8 +286,50 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 		return
 	}
 
-	// Perform TLS check
-	result, checkErr := r.TLSChecker.CheckEndpoint(ctx, host, port)
+	maxAttempts := 1 + r.MaxRetries
+	backoff := r.RetryBackoff
+	if backoff <= 0 {
+		backoff = 30 * time.Second
+	}
+
+	var result *tlscheck.TLSCheckResult
+	var checkErr error
+
+	for attempt := range maxAttempts {
+		result, checkErr = r.TLSChecker.CheckEndpoint(ctx, host, port)
+
+		// Success — break out
+		if checkErr == nil {
+			break
+		}
+
+		// Non-transient failure — no retry
+		if !result.FailureReason.IsTransient() {
+			break
+		}
+
+		// Transient failure with retries remaining
+		if attempt < maxAttempts-1 {
+			retryDelay := backoff * time.Duration(1<<uint(attempt))
+			logger.Info("transient TLS check failure, retrying",
+				"attempt", attempt+1,
+				"maxAttempts", maxAttempts,
+				"reason", string(result.FailureReason),
+				"retryDelay", retryDelay)
+
+			metrics.RecordRetry(string(result.FailureReason))
+
+			// Update CR with retry status
+			r.updateRetryStatus(ctx, crName, attempt+1, retryDelay, result.FailureReason, checkErr)
+
+			// Context-aware sleep
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(retryDelay):
+			}
+		}
+	}
 
 	// Re-fetch the CR to avoid conflicts
 	var cr securityv1alpha1.TLSComplianceReport
@@ -295,6 +341,8 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	now := metav1.Now()
 	cr.Status.LastCheckAt = &now
 	cr.Status.CheckCount++
+	cr.Status.RetryCount = 0
+	cr.Status.NextRetryAt = nil
 
 	portStr := fmt.Sprintf("%d", port)
 
@@ -319,6 +367,16 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 
 		if err := r.Status().Update(ctx, &cr); err != nil {
 			logger.Error(err, "failed to update TLSComplianceReport after check error")
+		}
+
+		// Emit retry exhausted event if retries were attempted on a transient failure
+		if result.FailureReason.IsTransient() && r.MaxRetries > 0 {
+			metrics.RecordRetriesExhausted()
+			if r.Recorder != nil {
+				r.Recorder.Event(&cr, corev1.EventTypeWarning, EventReasonRetryExhausted,
+					fmt.Sprintf("TLS check retries exhausted for %s:%d after %d attempts: %s",
+						host, port, maxAttempts, result.FailureReason))
+			}
 		}
 		return
 	}
@@ -388,6 +446,38 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 
 	// Emit events
 	r.emitComplianceEvents(&cr, oldComplianceStatus, result)
+}
+
+// updateRetryStatus updates the CR with intermediate retry status information
+func (r *EndpointReconciler) updateRetryStatus(ctx context.Context, crName string, retryCount int, retryDelay time.Duration, reason tlscheck.FailureReason, checkErr error) {
+	logger := log.FromContext(ctx).WithValues("crName", crName)
+
+	var cr securityv1alpha1.TLSComplianceReport
+	if err := r.Get(ctx, client.ObjectKey{Name: crName}, &cr); err != nil {
+		logger.Error(err, "failed to get TLSComplianceReport for retry status update")
+		return
+	}
+
+	nextRetry := metav1.NewTime(time.Now().Add(retryDelay))
+	cr.Status.RetryCount = retryCount
+	cr.Status.NextRetryAt = &nextRetry
+	cr.Status.LastError = checkErr.Error()
+	cr.Status.ConsecutiveErrors++
+
+	switch reason {
+	case tlscheck.FailureReasonTimeout:
+		cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusTimeout
+	case tlscheck.FailureReasonClosed:
+		cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusClosed
+	case tlscheck.FailureReasonFiltered:
+		cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusFiltered
+	default:
+		cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusUnreachable
+	}
+
+	if err := r.Status().Update(ctx, &cr); err != nil {
+		logger.Error(err, "failed to update TLSComplianceReport retry status")
+	}
 }
 
 // determineComplianceStatus determines the compliance status from TLS check results.
