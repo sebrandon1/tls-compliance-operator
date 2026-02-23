@@ -50,6 +50,19 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 benchmark: ## Run Go benchmark tests.
 	go test -bench=. -benchmem ./pkg/tlscheck/ ./pkg/endpoint/
 
+COVERAGE_THRESHOLD ?= 40
+
+.PHONY: check-coverage
+check-coverage: ## Check that test coverage meets the minimum threshold.
+	@echo "Checking coverage threshold (minimum $(COVERAGE_THRESHOLD)%)..."
+	@total=$$(go tool cover -func=cover.out | grep '^total:' | awk '{print $$NF}' | tr -d '%'); \
+	if [ $$(echo "$$total < $(COVERAGE_THRESHOLD)" | bc) -eq 1 ]; then \
+		echo "FAIL: total coverage $${total}% is below threshold $(COVERAGE_THRESHOLD)%"; \
+		exit 1; \
+	else \
+		echo "OK: total coverage $${total}% meets threshold $(COVERAGE_THRESHOLD)%"; \
+	fi
+
 KIND_CLUSTER ?= tls-compliance-operator-test-e2e
 
 .PHONY: setup-test-e2e
@@ -68,7 +81,7 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
-	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
+	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v -timeout 20m
 	$(MAKE) cleanup-test-e2e
 
 .PHONY: cleanup-test-e2e
