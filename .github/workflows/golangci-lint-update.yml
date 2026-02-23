@@ -11,9 +11,7 @@ on:
         required: false
         type: string
 
-permissions:
-  contents: write
-  pull-requests: write
+permissions: read-all
 
 jobs:
   update-golangci-lint:

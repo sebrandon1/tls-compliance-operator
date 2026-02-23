@@ -5,6 +5,8 @@ on:
     - cron: '0 2 * * *'  # 2 AM UTC daily
   workflow_dispatch:      # Manual trigger
 
+permissions: read-all
+
 jobs:
   e2e-kubernetes:
     name: E2E Tests on Kubernetes
