@@ -46,6 +46,10 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
+.PHONY: benchmark
+benchmark: ## Run Go benchmark tests.
+	go test -bench=. -benchmem ./pkg/tlscheck/ ./pkg/endpoint/
+
 KIND_CLUSTER ?= tls-compliance-operator-test-e2e
 
 .PHONY: setup-test-e2e
