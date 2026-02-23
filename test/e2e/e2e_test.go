@@ -22,6 +22,7 @@ package e2e
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -66,6 +67,19 @@ var _ = Describe("Manager", Ordered, func() {
 		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+
+		By("patching scan interval for faster pod scanning in E2E")
+		cmd = exec.Command("kubectl", "patch", "deployment",
+			"tls-compliance-operator-controller-manager", "-n", namespace,
+			"--type=json", `-p=[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--scan-interval=30s"}]`)
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to patch scan interval")
+
+		By("waiting for patched rollout to complete")
+		cmd = exec.Command("kubectl", "rollout", "status", "deployment",
+			"tls-compliance-operator-controller-manager", "-n", namespace, "--timeout=120s")
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to wait for rollout")
 	})
 
 	AfterAll(func() {
@@ -109,7 +123,7 @@ var _ = Describe("Manager", Ordered, func() {
 		}
 	})
 
-	SetDefaultEventuallyTimeout(2 * time.Minute)
+	SetDefaultEventuallyTimeout(5 * time.Minute)
 	SetDefaultEventuallyPollingInterval(time.Second)
 
 	Context("Manager", func() {
@@ -153,6 +167,183 @@ var _ = Describe("Manager", Ordered, func() {
 			By("cleaning up test service")
 			cmd = exec.Command("kubectl", "delete", "service", "test-https", "-n", "default")
 			_, _ = utils.Run(cmd)
+		})
+	})
+
+	Context("Pod Scanning", func() {
+		const agnhostImage = "registry.k8s.io/e2e-test-images/agnhost:2.53"
+
+		It("should create TLSComplianceReport for a pod with TLS port", func() {
+			By("creating a pod with port 443")
+			cmd := exec.Command("kubectl", "run", "test-tls-pod",
+				"--image="+agnhostImage,
+				"--port=443",
+				"--command", "--", "sleep", "3600")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "pod", "test-tls-pod",
+					"--grace-period=0", "--force", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+
+			By("waiting for the pod to be running")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "pod", "test-tls-pod",
+					"-o", "jsonpath={.status.phase}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(output)).To(Equal("Running"))
+			}).Should(Succeed())
+
+			By("waiting for TLSComplianceReport CR with sourceKind=Pod")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					"jsonpath={range .items[*]}{.spec.sourceKind},{.spec.sourceName}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("Pod,test-tls-pod"),
+					"expected a TLSComplianceReport with sourceKind=Pod for test-tls-pod")
+			}).Should(Succeed())
+		})
+
+		It("should label hostNetwork pod CR with host-network=true", func() {
+			By("creating a hostNetwork pod with port 8443")
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(`
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-hostnet-pod
+  namespace: default
+spec:
+  hostNetwork: true
+  containers:
+  - name: agnhost
+    image: ` + agnhostImage + `
+    command: ["sleep", "3600"]
+    ports:
+    - containerPort: 8443
+`)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Always clean up the pod, even if the test skips
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "pod", "test-hostnet-pod",
+					"--grace-period=0", "--force", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+
+			By("checking if pod can run on Kind")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "pod", "test-hostnet-pod",
+					"-o", "jsonpath={.status.phase}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				phase := strings.TrimSpace(output)
+				// hostNetwork pods may fail to run on Kind; treat non-Running as eventual success
+				// so we can check the phase outside Eventually
+				g.Expect(phase).NotTo(BeEmpty())
+			}).WithTimeout(30 * time.Second).Should(Succeed())
+
+			cmd = exec.Command("kubectl", "get", "pod", "test-hostnet-pod",
+				"-o", "jsonpath={.status.phase}")
+			phaseOut, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			if strings.TrimSpace(phaseOut) != "Running" {
+				Skip("hostNetwork pod cannot run on Kind cluster — skipping")
+			}
+
+			By("waiting for TLSComplianceReport CR with host-network label")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport",
+					"-l", "tls-compliance.telco.openshift.io/host-network=true",
+					"-o", "name")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).NotTo(BeEmpty(),
+					"expected a TLSComplianceReport with host-network=true label")
+			}).Should(Succeed())
+		})
+
+		It("should remove TLSComplianceReport when source pod is deleted", func() {
+			By("creating a pod with port 443")
+			cmd := exec.Command("kubectl", "run", "test-cleanup-pod",
+				"--image="+agnhostImage,
+				"--port=443",
+				"--command", "--", "sleep", "3600")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("waiting for the pod to be running")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "pod", "test-cleanup-pod",
+					"-o", "jsonpath={.status.phase}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(output)).To(Equal("Running"))
+			}).Should(Succeed())
+
+			By("waiting for TLSComplianceReport CR to appear")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					"jsonpath={range .items[*]}{.spec.sourceName}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("test-cleanup-pod"))
+			}).Should(Succeed())
+
+			By("deleting the source pod")
+			cmd = exec.Command("kubectl", "delete", "pod", "test-cleanup-pod", "--grace-period=0", "--force")
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("waiting for the TLSComplianceReport CR to be removed by cleanup loop")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					"jsonpath={range .items[*]}{.spec.sourceName}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).NotTo(ContainSubstring("test-cleanup-pod"),
+					"expected TLSComplianceReport for test-cleanup-pod to be removed")
+			}).WithTimeout(6 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+		})
+
+		It("should not create TLSComplianceReport for a non-TLS pod", func() {
+			By("creating a pod with only port 80 (non-TLS)")
+			cmd := exec.Command("kubectl", "run", "test-notls-pod",
+				"--image="+agnhostImage,
+				"--port=80",
+				"--command", "--", "sleep", "3600")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "pod", "test-notls-pod",
+					"--grace-period=0", "--force", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+
+			By("waiting for the pod to be running")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "pod", "test-notls-pod",
+					"-o", "jsonpath={.status.phase}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(output)).To(Equal("Running"))
+			}).Should(Succeed())
+
+			By("verifying no TLSComplianceReport is created for the non-TLS pod")
+			Consistently(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					"jsonpath={range .items[*]}{.spec.sourceName}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).NotTo(ContainSubstring("test-notls-pod"),
+					"expected no TLSComplianceReport for non-TLS pod")
+			}).WithTimeout(30 * time.Second).WithPolling(5 * time.Second).Should(Succeed())
 		})
 	})
 })

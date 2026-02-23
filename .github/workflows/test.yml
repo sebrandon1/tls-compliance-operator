@@ -2,6 +2,7 @@ name: Tests
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 jobs:
@@ -21,3 +22,36 @@ jobs:
         run: |
           go mod tidy
           make test
+
+      - name: Check coverage threshold
+        run: make check-coverage
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          echo "## Test Coverage" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Package | Coverage |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---------|----------|" >> "$GITHUB_STEP_SUMMARY"
+          go tool cover -func=cover.out | awk '
+            /^total:/ { total = $NF; next }
+            {
+              # Extract package path from file path (drop filename)
+              split($1, a, "/")
+              n = length(a)
+              pkg = ""
+              for (i = 1; i < n; i++) pkg = (pkg == "" ? a[i] : pkg "/" a[i])
+              # Track statements per package using coverage percentage
+              count[pkg]++
+              sum[pkg] += ($NF + 0)
+            }
+            END {
+              for (pkg in count) {
+                avg = sum[pkg] / count[pkg]
+                printf "| `%s` | %.1f%% |\n", pkg, avg
+              }
+            }
+          ' >> "$GITHUB_STEP_SUMMARY"
+          total=$(go tool cover -func=cover.out | grep '^total:' | awk '{print $NF}')
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Total: ${total}**" >> "$GITHUB_STEP_SUMMARY"
