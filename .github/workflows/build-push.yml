@@ -7,6 +7,8 @@ on:
   release:
     types: [published]
 
+permissions: read-all
+
 env:
   REGISTRY: quay.io
   IMAGE_NAME: bapalm/tls-compliance-operator

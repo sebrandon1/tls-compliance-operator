@@ -15,12 +15,12 @@ env:
   REGISTRY: quay.io
   IMAGE_NAME: bapalm/tls-compliance-operator
 
-permissions:
-  contents: read
-  security-events: write
+permissions: read-all
 
 jobs:
   trivy-fs-scan:
+    permissions:
+      security-events: write
     name: Filesystem Vulnerability Scan
     runs-on: ubuntu-latest
     steps:
@@ -45,6 +45,8 @@ jobs:
           category: "trivy-filesystem"
 
   trivy-config-scan:
+    permissions:
+      security-events: write
     name: Configuration Scan (IaC)
     runs-on: ubuntu-latest
     steps:
@@ -70,6 +72,8 @@ jobs:
           category: "trivy-config"
 
   trivy-image-scan:
+    permissions:
+      security-events: write
     name: Container Image Scan
     runs-on: ubuntu-latest
     steps:
