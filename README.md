@@ -78,6 +78,16 @@ make build-installer IMG=quay.io/bapalm/tls-compliance-operator:latest
 kubectl apply -f dist/install.yaml
 ```
 
+## Guides
+
+| Guide | Description |
+|-------|-------------|
+| [Installation](docs/installation.md) | Deploy to your cluster in one command |
+| [Viewing Reports](docs/viewing-reports.md) | Understand compliance status, cipher grades, and certificate info |
+| [Custom Targets](docs/custom-targets.md) | Scan arbitrary external hosts with `TLSComplianceTarget` |
+| [Exporting Reports](docs/exporting-reports.md) | CSV, JSON, and JUnit XML export for CI/CD |
+| [Troubleshooting](docs/troubleshooting.md) | Common issues and how to fix them |
+
 ## Architecture
 
 ```
