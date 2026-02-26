@@ -21,7 +21,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Create Kubernetes cluster
-        uses: palmsoftware/quick-k8s@v0.0.50
+        uses: palmsoftware/quick-k8s@v0.0.53
         with:
           numControlPlaneNodes: 1
           numWorkerNodes: 1
