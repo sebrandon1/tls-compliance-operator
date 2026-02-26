@@ -99,7 +99,7 @@ jobs:
 
       - name: Create OpenShift cluster
         if: ${{ env.SKIP_OCP != 'true' }}
-        uses: palmsoftware/quick-ocp@v0.0.25
+        uses: palmsoftware/quick-ocp@v0.0.26
         with:
           ocpPullSecret: ${{ secrets.PULL_SECRET }}
           desiredOCPVersion: "4.20"
