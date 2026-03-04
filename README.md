@@ -1,4 +1,6 @@
-# TLS Compliance Operator
+<![CDATA[# TLS Compliance Operator
+
+> **See also:** [tls-config-lint](https://github.com/sebrandon1/tls-config-lint) — a GitHub Action that scans source code for TLS configuration anti-patterns (shift-left). Use **tls-config-lint** to catch issues during development and **tls-compliance-operator** to verify runtime compliance in your cluster.
 
 ![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
 
@@ -398,3 +400,4 @@ Contributions are welcome! Please feel free to submit issues and pull requests.
 ## License
 
 Apache License 2.0 - See [LICENSE](LICENSE) for details.
+]]>
