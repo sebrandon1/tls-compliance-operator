@@ -53,15 +53,19 @@ func WriteCSV(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) error
 	return cw.Error()
 }
 
-func reportToCSVRow(r *securityv1alpha1.TLSComplianceReport) []string {
-	certExpiry := ""
-	certIssuer := ""
+// extractCertInfo returns the formatted expiry date and issuer from a report's certificate info.
+func extractCertInfo(r *securityv1alpha1.TLSComplianceReport) (certExpiry, certIssuer string) {
 	if r.Status.CertificateInfo != nil {
 		if r.Status.CertificateInfo.NotAfter != nil {
 			certExpiry = r.Status.CertificateInfo.NotAfter.Format("2006-01-02")
 		}
 		certIssuer = r.Status.CertificateInfo.Issuer
 	}
+	return
+}
+
+func reportToCSVRow(r *securityv1alpha1.TLSComplianceReport) []string {
+	certExpiry, certIssuer := extractCertInfo(r)
 
 	return []string{
 		r.Spec.Host,

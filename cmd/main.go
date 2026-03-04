@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -246,25 +245,8 @@ func main() {
 	}
 
 	// Parse namespace filters
-	var includedNS []string
-	if includeNamespaces != "" {
-		for _, ns := range strings.Split(includeNamespaces, ",") {
-			trimmed := strings.TrimSpace(ns)
-			if trimmed != "" {
-				includedNS = append(includedNS, trimmed)
-			}
-		}
-	}
-
-	var excludedNS []string
-	if excludeNamespaces != "" {
-		for _, ns := range strings.Split(excludeNamespaces, ",") {
-			trimmed := strings.TrimSpace(ns)
-			if trimmed != "" {
-				excludedNS = append(excludedNS, trimmed)
-			}
-		}
-	}
+	includedNS := controller.ParseNamespaceList(includeNamespaces)
+	excludedNS := controller.ParseNamespaceList(excludeNamespaces)
 
 	if len(includedNS) > 0 && len(excludedNS) > 0 {
 		setupLog.Info("WARNING: both --include-namespaces and --exclude-namespaces are set; --include-namespaces takes precedence")

@@ -60,14 +60,7 @@ func WriteJSON(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) erro
 }
 
 func reportToJSON(r *securityv1alpha1.TLSComplianceReport) JSONReport {
-	certExpiry := ""
-	certIssuer := ""
-	if r.Status.CertificateInfo != nil {
-		if r.Status.CertificateInfo.NotAfter != nil {
-			certExpiry = r.Status.CertificateInfo.NotAfter.Format("2006-01-02")
-		}
-		certIssuer = r.Status.CertificateInfo.Issuer
-	}
+	certExpiry, certIssuer := extractCertInfo(r)
 
 	return JSONReport{
 		Host:         r.Spec.Host,
