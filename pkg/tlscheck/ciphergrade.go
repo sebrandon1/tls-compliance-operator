@@ -76,7 +76,25 @@ func GradeCipherSuites(cipherSuites map[string][]string) map[string]string {
 
 // OverallGrade returns the worst (lowest) grade across all cipher suites.
 // Returns an empty string if no cipher suites are provided.
-func OverallGrade(cipherSuites map[string][]string) string {
+// Accepts an optional pre-computed grades map (from GradeCipherSuites) to avoid
+// re-grading every cipher suite. If nil, grades are computed from scratch.
+func OverallGrade(cipherSuites map[string][]string, precomputed ...map[string]string) string {
+	// If pre-computed grades are available, derive the worst grade from them
+	if len(precomputed) > 0 && precomputed[0] != nil {
+		grades := precomputed[0]
+		if len(grades) == 0 {
+			return ""
+		}
+		worst := GradeA
+		for _, g := range grades {
+			grade := CipherGrade(g)
+			if gradeOrder[grade] > gradeOrder[worst] {
+				worst = grade
+			}
+		}
+		return string(worst)
+	}
+
 	worst := GradeA
 	found := false
 

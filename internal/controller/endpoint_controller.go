@@ -19,7 +19,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +45,13 @@ import (
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlsprofile"
 )
 
+// routeGVK is the GroupVersionKind for OpenShift Routes, defined once to avoid repetition.
+var routeGVK = schema.GroupVersionKind{
+	Group:   "route.openshift.io",
+	Version: "v1",
+	Kind:    "Route",
+}
+
 // Event reasons for Kubernetes events
 const (
 	EventReasonTLSNonCompliant     = "TLSNonCompliant"
@@ -62,8 +68,8 @@ type EndpointReconciler struct {
 	Scheme            *runtime.Scheme
 	TLSChecker        tlscheck.Checker
 	Recorder          record.EventRecorder
-	IncludeNamespaces []string
-	ExcludeNamespaces []string
+	IncludeNamespaces map[string]bool
+	ExcludeNamespaces map[string]bool
 	CertExpiryDays    int
 	RouteAPIAvailable bool
 	ProfileFetcher    *tlsprofile.Fetcher
@@ -158,11 +164,7 @@ func (r *EndpointReconciler) ReconcileRoute(ctx context.Context, req ctrl.Reques
 
 	// Fetch Route as unstructured
 	route := &unstructured.Unstructured{}
-	route.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "route.openshift.io",
-		Version: "v1",
-		Kind:    "Route",
-	})
+	route.SetGroupVersionKind(routeGVK)
 
 	if err := r.Get(ctx, req.NamespacedName, route); err != nil {
 		if !apierrors.IsNotFound(err) && ctx.Err() == nil {
@@ -260,8 +262,8 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep endpoint.En
 				fmt.Sprintf("Discovered TLS endpoint %s:%d from %s %s/%s", ep.Host, ep.Port, ep.SourceKind, ep.SourceNamespace, ep.SourceName))
 		}
 
-		// Launch async TLS check
-		go r.performTLSCheck(context.Background(), crName, ep.Host, int(ep.Port))
+		// Launch async TLS check using the caller's context for cancellation
+		go r.performTLSCheck(ctx, crName, ep.Host, int(ep.Port))
 
 		return nil
 	} else if err != nil {
@@ -347,21 +349,7 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	portStr := fmt.Sprintf("%d", port)
 
 	if checkErr != nil {
-		// Use the failure reason from the checker to set a specific status
-		switch result.FailureReason {
-		case tlscheck.FailureReasonNoTLS:
-			cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusNoTLS
-		case tlscheck.FailureReasonMutualTLSRequired:
-			cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusMutualTLSRequired
-		case tlscheck.FailureReasonTimeout:
-			cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusTimeout
-		case tlscheck.FailureReasonClosed:
-			cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusClosed
-		case tlscheck.FailureReasonFiltered:
-			cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusFiltered
-		default:
-			cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusUnreachable
-		}
+		cr.Status.ComplianceStatus = failureReasonToComplianceStatus(result.FailureReason)
 		cr.Status.ConsecutiveErrors++
 		cr.Status.LastError = checkErr.Error()
 
@@ -396,10 +384,11 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 		TLS13: result.SupportsTLS13,
 	}
 
-	// Update cipher suites and grades
+	// Update cipher suites and grades (compute once, reuse for overall)
 	cr.Status.CipherSuites = result.CipherSuites
-	cr.Status.CipherStrengthGrades = tlscheck.GradeCipherSuites(result.CipherSuites)
-	cr.Status.OverallCipherGrade = tlscheck.OverallGrade(result.CipherSuites)
+	cipherGrades := tlscheck.GradeCipherSuites(result.CipherSuites)
+	cr.Status.CipherStrengthGrades = cipherGrades
+	cr.Status.OverallCipherGrade = tlscheck.OverallGrade(result.CipherSuites, cipherGrades)
 
 	// Update negotiated curves and quantum readiness
 	cr.Status.NegotiatedCurves = result.NegotiatedCurves
@@ -427,7 +416,8 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	r.checkProfileCompliance(&cr, result)
 
 	// Determine compliance status
-	cr.Status.ComplianceStatus = determineComplianceStatus(result)
+	complianceStatus := determineComplianceStatus(result)
+	cr.Status.ComplianceStatus = complianceStatus
 
 	// Record metrics
 	metrics.RecordCheckDuration(result.CheckDuration.Seconds())
@@ -437,7 +427,7 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	metrics.RecordVersionSupport(host, portStr, "1.3", result.SupportsTLS13)
 
 	// Update conditions
-	r.updateConditions(&cr, result)
+	r.updateConditions(&cr, complianceStatus, result)
 
 	if err := r.Status().Update(ctx, &cr); err != nil {
 		logger.Error(err, "failed to update TLSComplianceReport with check results")
@@ -464,16 +454,7 @@ func (r *EndpointReconciler) updateRetryStatus(ctx context.Context, crName strin
 	cr.Status.LastError = checkErr.Error()
 	cr.Status.ConsecutiveErrors++
 
-	switch reason {
-	case tlscheck.FailureReasonTimeout:
-		cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusTimeout
-	case tlscheck.FailureReasonClosed:
-		cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusClosed
-	case tlscheck.FailureReasonFiltered:
-		cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusFiltered
-	default:
-		cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusUnreachable
-	}
+	cr.Status.ComplianceStatus = failureReasonToComplianceStatus(reason)
 
 	if err := r.Status().Update(ctx, &cr); err != nil {
 		logger.Error(err, "failed to update TLSComplianceReport retry status")
@@ -545,7 +526,7 @@ func (r *EndpointReconciler) checkProfileCompliance(cr *securityv1alpha1.TLSComp
 }
 
 // updateConditions sets Kubernetes conditions based on check results
-func (r *EndpointReconciler) updateConditions(cr *securityv1alpha1.TLSComplianceReport, result *tlscheck.TLSCheckResult) {
+func (r *EndpointReconciler) updateConditions(cr *securityv1alpha1.TLSComplianceReport, complianceStatus securityv1alpha1.ComplianceStatus, result *tlscheck.TLSCheckResult) {
 	now := metav1.Now()
 
 	// TLS Compliant condition
@@ -554,7 +535,7 @@ func (r *EndpointReconciler) updateConditions(cr *securityv1alpha1.TLSCompliance
 		LastTransitionTime: now,
 	}
 
-	switch determineComplianceStatus(result) {
+	switch complianceStatus {
 	case securityv1alpha1.ComplianceStatusCompliant:
 		complianceCondition.Status = metav1.ConditionTrue
 		complianceCondition.Reason = "Compliant"
@@ -669,19 +650,22 @@ func (r *EndpointReconciler) emitComplianceEvents(cr *securityv1alpha1.TLSCompli
 	}
 }
 
-// SetupWithManager sets up the controller with the Manager
+// SetupWithManager sets up the controller with the Manager.
+// Ingress and Target events are mapped to reconciliation requests that flow
+// through the controller-runtime work queue (bounded concurrency, back-pressure).
+// Route events use WatchesRawSource because the Route API may not be present.
 func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Service{}).
 		Named("endpoint").
 		WithOptions(controller.Options{}).
 		Watches(&networkingv1.Ingress{}, handler.EnqueueRequestsFromMapFunc(
-			func(_ context.Context, obj client.Object) []ctrl.Request {
+			func(ctx context.Context, obj client.Object) []ctrl.Request {
 				ing, ok := obj.(*networkingv1.Ingress)
 				if !ok {
 					return nil
 				}
-				go r.ReconcileIngress(context.Background(), ctrl.Request{
+				r.ReconcileIngress(ctx, ctrl.Request{
 					NamespacedName: client.ObjectKeyFromObject(ing),
 				})
 				return nil
@@ -690,12 +674,12 @@ func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	// Add TLSComplianceTarget watch
 	builder = builder.Watches(&securityv1alpha1.TLSComplianceTarget{}, handler.EnqueueRequestsFromMapFunc(
-		func(_ context.Context, obj client.Object) []ctrl.Request {
+		func(ctx context.Context, obj client.Object) []ctrl.Request {
 			target, ok := obj.(*securityv1alpha1.TLSComplianceTarget)
 			if !ok {
 				return nil
 			}
-			go r.ReconcileTarget(context.Background(), ctrl.Request{
+			r.ReconcileTarget(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKeyFromObject(target),
 			})
 			return nil
@@ -704,20 +688,14 @@ func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	// Add Route watch if OpenShift Route API is available
 	if r.RouteAPIAvailable {
-		routeGVK := schema.GroupVersionKind{
-			Group:   "route.openshift.io",
-			Version: "v1",
-			Kind:    "Route",
-		}
-
 		routeObj := &unstructured.Unstructured{}
 		routeObj.SetGroupVersionKind(routeGVK)
 
 		builder = builder.WatchesRawSource(source.Kind(
 			mgr.GetCache(),
 			routeObj,
-			handler.TypedEnqueueRequestsFromMapFunc(func(_ context.Context, obj *unstructured.Unstructured) []ctrl.Request {
-				go r.ReconcileRoute(context.Background(), ctrl.Request{
+			handler.TypedEnqueueRequestsFromMapFunc(func(ctx context.Context, obj *unstructured.Unstructured) []ctrl.Request {
+				r.ReconcileRoute(ctx, ctrl.Request{
 					NamespacedName: client.ObjectKeyFromObject(obj),
 				})
 				return nil
@@ -855,18 +833,21 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 	}
 	wg.Wait()
 
-	// Update endpoint count metrics
-	r.updateEndpointMetrics(ctx)
+	// Update endpoint count metrics using the already-fetched list
+	r.updateEndpointMetrics(ctx, &crList)
 
 	logger.Info("scan completed", "endpoints", len(crList.Items), "workers", workers)
 	return nil
 }
 
-// updateEndpointMetrics recounts endpoints by compliance status
-func (r *EndpointReconciler) updateEndpointMetrics(ctx context.Context) {
-	var crList securityv1alpha1.TLSComplianceReportList
-	if err := r.List(ctx, &crList); err != nil {
-		return
+// updateEndpointMetrics recounts endpoints by compliance status.
+// If crList is nil, it fetches from the API; otherwise reuses the provided list.
+func (r *EndpointReconciler) updateEndpointMetrics(ctx context.Context, crList *securityv1alpha1.TLSComplianceReportList) {
+	if crList == nil {
+		crList = &securityv1alpha1.TLSComplianceReportList{}
+		if err := r.List(ctx, crList); err != nil {
+			return
+		}
 	}
 
 	counts := map[string]float64{
@@ -915,7 +896,14 @@ func (r *EndpointReconciler) StartCleanupLoop(ctx context.Context, interval time
 	}()
 }
 
-// cleanupOrphanedCRs removes TLSComplianceReport CRs whose source resources no longer exist
+// sourceKey builds a lookup key "namespace/name" for source resource existence checks.
+func sourceKey(namespace, name string) string {
+	return namespace + "/" + name
+}
+
+// cleanupOrphanedCRs removes TLSComplianceReport CRs whose source resources no longer exist.
+// It batches source resource lookups by listing each resource type once, then cross-referencing
+// in memory to avoid N+1 API calls.
 func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 
@@ -924,16 +912,88 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 		return fmt.Errorf("failed to list TLSComplianceReports: %w", err)
 	}
 
+	if len(crList.Items) == 0 {
+		return nil
+	}
+
+	// Build sets of existing source resources by listing each type once
+	existingSources := make(map[securityv1alpha1.SourceKind]map[string]bool)
+
+	// Services
+	var svcList corev1.ServiceList
+	if err := r.List(ctx, &svcList); err != nil {
+		logger.Error(err, "failed to list Services for cleanup")
+	} else {
+		svcSet := make(map[string]bool, len(svcList.Items))
+		for i := range svcList.Items {
+			svcSet[sourceKey(svcList.Items[i].Namespace, svcList.Items[i].Name)] = true
+		}
+		existingSources[securityv1alpha1.SourceKindService] = svcSet
+	}
+
+	// Ingresses
+	var ingList networkingv1.IngressList
+	if err := r.List(ctx, &ingList); err != nil {
+		logger.Error(err, "failed to list Ingresses for cleanup")
+	} else {
+		ingSet := make(map[string]bool, len(ingList.Items))
+		for i := range ingList.Items {
+			ingSet[sourceKey(ingList.Items[i].Namespace, ingList.Items[i].Name)] = true
+		}
+		existingSources[securityv1alpha1.SourceKindIngress] = ingSet
+	}
+
+	// Routes (if available)
+	if r.RouteAPIAvailable {
+		routeList := &unstructured.UnstructuredList{}
+		routeList.SetGroupVersionKind(routeGVK)
+		if err := r.List(ctx, routeList); err != nil {
+			logger.Error(err, "failed to list Routes for cleanup")
+		} else {
+			routeSet := make(map[string]bool, len(routeList.Items))
+			for i := range routeList.Items {
+				routeSet[sourceKey(routeList.Items[i].GetNamespace(), routeList.Items[i].GetName())] = true
+			}
+			existingSources[securityv1alpha1.SourceKindRoute] = routeSet
+		}
+	}
+
+	// Pods
+	var podList corev1.PodList
+	if err := r.List(ctx, &podList); err != nil {
+		logger.Error(err, "failed to list Pods for cleanup")
+	} else {
+		podSet := make(map[string]bool, len(podList.Items))
+		for i := range podList.Items {
+			podSet[sourceKey(podList.Items[i].Namespace, podList.Items[i].Name)] = true
+		}
+		existingSources[securityv1alpha1.SourceKindPod] = podSet
+	}
+
+	// Targets
+	var targetList securityv1alpha1.TLSComplianceTargetList
+	if err := r.List(ctx, &targetList); err != nil {
+		logger.Error(err, "failed to list TLSComplianceTargets for cleanup")
+	} else {
+		targetSet := make(map[string]bool, len(targetList.Items))
+		for i := range targetList.Items {
+			targetSet[sourceKey("cluster-scoped", targetList.Items[i].Name)] = true
+		}
+		existingSources[securityv1alpha1.SourceKindTarget] = targetSet
+	}
+
+	// Check each CR against the in-memory sets
 	for i := range crList.Items {
 		cr := &crList.Items[i]
 
-		exists, err := r.sourceResourceExists(ctx, cr.Spec)
-		if err != nil {
-			logger.Error(err, "error checking source resource", "name", cr.Name)
+		sourceSet, known := existingSources[cr.Spec.SourceKind]
+		if !known {
+			// Source kind's list failed or is unknown; skip to avoid false deletions
 			continue
 		}
 
-		if !exists {
+		key := sourceKey(cr.Spec.SourceNamespace, cr.Spec.SourceName)
+		if !sourceSet[key] {
 			logger.Info("deleting orphaned TLSComplianceReport", "name", cr.Name,
 				"sourceKind", cr.Spec.SourceKind, "sourceName", cr.Spec.SourceName)
 			if err := r.Delete(ctx, cr); err != nil && !apierrors.IsNotFound(err) {
@@ -945,54 +1005,47 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 	return nil
 }
 
-// sourceResourceExists checks if the source resource for a CR still exists
-func (r *EndpointReconciler) sourceResourceExists(ctx context.Context, spec securityv1alpha1.TLSComplianceReportSpec) (bool, error) {
-	key := client.ObjectKey{
-		Namespace: spec.SourceNamespace,
-		Name:      spec.SourceName,
-	}
-
-	var err error
-	switch spec.SourceKind {
-	case securityv1alpha1.SourceKindService:
-		var svc corev1.Service
-		err = r.Get(ctx, key, &svc)
-	case securityv1alpha1.SourceKindIngress:
-		var ing networkingv1.Ingress
-		err = r.Get(ctx, key, &ing)
-	case securityv1alpha1.SourceKindRoute:
-		route := &unstructured.Unstructured{}
-		route.SetGroupVersionKind(schema.GroupVersionKind{
-			Group:   "route.openshift.io",
-			Version: "v1",
-			Kind:    "Route",
-		})
-		err = r.Get(ctx, key, route)
-	case securityv1alpha1.SourceKindTarget:
-		var target securityv1alpha1.TLSComplianceTarget
-		err = r.Get(ctx, client.ObjectKey{Name: spec.SourceName}, &target)
-	case securityv1alpha1.SourceKindPod:
-		var pod corev1.Pod
-		err = r.Get(ctx, key, &pod)
-	default:
-		return false, fmt.Errorf("unknown source kind: %s", spec.SourceKind)
-	}
-
-	if err == nil {
-		return true, nil
-	}
-	if apierrors.IsNotFound(err) {
-		return false, nil
-	}
-	return false, err
-}
-
 // isNamespaceFiltered checks if a namespace should be skipped based on
-// include and exclude lists. If IncludeNamespaces is set, only those
+// include and exclude maps. If IncludeNamespaces is set, only those
 // namespaces are allowed. Otherwise, ExcludeNamespaces is checked.
+// Uses map lookups for O(1) performance on every reconcile event.
 func (r *EndpointReconciler) isNamespaceFiltered(namespace string) bool {
 	if len(r.IncludeNamespaces) > 0 {
-		return !slices.Contains(r.IncludeNamespaces, namespace)
+		return !r.IncludeNamespaces[namespace]
 	}
-	return slices.Contains(r.ExcludeNamespaces, namespace)
+	return r.ExcludeNamespaces[namespace]
+}
+
+// failureReasonToComplianceStatus maps a TLS check failure reason to the
+// corresponding compliance status. Used by both performTLSCheck and updateRetryStatus.
+func failureReasonToComplianceStatus(reason tlscheck.FailureReason) securityv1alpha1.ComplianceStatus {
+	switch reason {
+	case tlscheck.FailureReasonNoTLS:
+		return securityv1alpha1.ComplianceStatusNoTLS
+	case tlscheck.FailureReasonMutualTLSRequired:
+		return securityv1alpha1.ComplianceStatusMutualTLSRequired
+	case tlscheck.FailureReasonTimeout:
+		return securityv1alpha1.ComplianceStatusTimeout
+	case tlscheck.FailureReasonClosed:
+		return securityv1alpha1.ComplianceStatusClosed
+	case tlscheck.FailureReasonFiltered:
+		return securityv1alpha1.ComplianceStatusFiltered
+	default:
+		return securityv1alpha1.ComplianceStatusUnreachable
+	}
+}
+
+// ParseNamespaceList parses a comma-separated namespace string into a map for O(1) lookups.
+func ParseNamespaceList(namespaces string) map[string]bool {
+	result := make(map[string]bool)
+	if namespaces == "" {
+		return result
+	}
+	for _, ns := range strings.Split(namespaces, ",") {
+		trimmed := strings.TrimSpace(ns)
+		if trimmed != "" {
+			result[trimmed] = true
+		}
+	}
+	return result
 }

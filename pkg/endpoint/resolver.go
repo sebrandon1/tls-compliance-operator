@@ -186,32 +186,23 @@ func ExtractFromPod(pod *corev1.Pod) []Endpoint {
 	return endpoints
 }
 
+// isTLSPortByNumberAndName checks if a port number and name indicate a TLS port.
+// Shared logic for both ServicePort and ContainerPort classification.
+func isTLSPortByNumberAndName(portNumber int32, portName string) bool {
+	if portNumber == 443 || portNumber == 8443 {
+		return true
+	}
+
+	name := strings.ToLower(portName)
+	return name == "https" || strings.HasPrefix(name, "https-")
+}
+
 // isTLSContainerPort checks if a ContainerPort is likely a TLS port
 func isTLSContainerPort(port corev1.ContainerPort) bool {
-	if port.ContainerPort == 443 || port.ContainerPort == 8443 {
-		return true
-	}
-
-	name := strings.ToLower(port.Name)
-	if name == "https" || strings.HasPrefix(name, "https-") {
-		return true
-	}
-
-	return false
+	return isTLSPortByNumberAndName(port.ContainerPort, port.Name)
 }
 
 // isTLSPort checks if a ServicePort is likely a TLS port
 func isTLSPort(port corev1.ServicePort) bool {
-	// Check well-known TLS ports
-	if port.Port == 443 || port.Port == 8443 {
-		return true
-	}
-
-	// Check port name
-	name := strings.ToLower(port.Name)
-	if name == "https" || strings.HasPrefix(name, "https-") {
-		return true
-	}
-
-	return false
+	return isTLSPortByNumberAndName(port.Port, port.Name)
 }

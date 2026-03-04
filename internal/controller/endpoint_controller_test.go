@@ -263,7 +263,7 @@ func TestEndpointReconciler_Reconcile_ExcludedNamespace(t *testing.T) {
 		Client:            fakeClient,
 		Scheme:            scheme,
 		CertExpiryDays:    30,
-		ExcludeNamespaces: []string{"kube-system"},
+		ExcludeNamespaces: map[string]bool{"kube-system": true},
 	}
 
 	req := reconcile.Request{
@@ -331,7 +331,7 @@ func TestEndpointReconciler_Reconcile_IncludeNamespaces(t *testing.T) {
 		Client:            fakeClient,
 		Scheme:            scheme,
 		CertExpiryDays:    30,
-		IncludeNamespaces: []string{"my-app"},
+		IncludeNamespaces: map[string]bool{"my-app": true},
 	}
 
 	// Reconcile included namespace - should create CR
@@ -673,7 +673,7 @@ func TestIsQuantumReady(t *testing.T) {
 
 func TestEndpointReconciler_IsNamespaceFiltered_ExcludeMode(t *testing.T) {
 	r := &EndpointReconciler{
-		ExcludeNamespaces: []string{"kube-system", "openshift-monitoring"},
+		ExcludeNamespaces: map[string]bool{"kube-system": true, "openshift-monitoring": true},
 	}
 
 	tests := []struct {
@@ -698,7 +698,7 @@ func TestEndpointReconciler_IsNamespaceFiltered_ExcludeMode(t *testing.T) {
 
 func TestEndpointReconciler_IsNamespaceFiltered_IncludeMode(t *testing.T) {
 	r := &EndpointReconciler{
-		IncludeNamespaces: []string{"my-app", "staging"},
+		IncludeNamespaces: map[string]bool{"my-app": true, "staging": true},
 	}
 
 	tests := []struct {
@@ -723,8 +723,8 @@ func TestEndpointReconciler_IsNamespaceFiltered_IncludeMode(t *testing.T) {
 
 func TestEndpointReconciler_IsNamespaceFiltered_IncludeOverridesExclude(t *testing.T) {
 	r := &EndpointReconciler{
-		IncludeNamespaces: []string{"my-app"},
-		ExcludeNamespaces: []string{"my-app", "kube-system"},
+		IncludeNamespaces: map[string]bool{"my-app": true},
+		ExcludeNamespaces: map[string]bool{"my-app": true, "kube-system": true},
 	}
 
 	tests := []struct {
@@ -1004,7 +1004,7 @@ func TestEndpointReconciler_ScanPodEndpoints_NamespaceFiltered(t *testing.T) {
 		Client:            fakeClient,
 		Scheme:            scheme,
 		CertExpiryDays:    30,
-		ExcludeNamespaces: []string{"kube-system"},
+		ExcludeNamespaces: map[string]bool{"kube-system": true},
 	}
 
 	err := reconciler.scanPodEndpoints(ctx)
@@ -1064,7 +1064,7 @@ func TestEndpointReconciler_ScanPodEndpoints_NonRunningPod(t *testing.T) {
 	}
 }
 
-func TestEndpointReconciler_SourceResourceExists_Pod(t *testing.T) {
+func TestEndpointReconciler_CleanupOrphanedCRs_BatchedLookup(t *testing.T) {
 	ctx := context.Background()
 	scheme := newTestScheme()
 
@@ -1081,9 +1081,37 @@ func TestEndpointReconciler_SourceResourceExists_Pod(t *testing.T) {
 		Status: corev1.PodStatus{Phase: corev1.PodRunning},
 	}
 
+	// CR whose source pod still exists
+	existingCR := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "existing-pod-cr",
+		},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host:            "10.0.0.1",
+			Port:            443,
+			SourceKind:      securityv1alpha1.SourceKindPod,
+			SourceNamespace: testNamespace,
+			SourceName:      "existing-pod",
+		},
+	}
+
+	// CR whose source pod was deleted (orphaned)
+	orphanedCR := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "deleted-pod-cr",
+		},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host:            "10.0.0.2",
+			Port:            443,
+			SourceKind:      securityv1alpha1.SourceKindPod,
+			SourceNamespace: testNamespace,
+			SourceName:      "deleted-pod",
+		},
+	}
+
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(pod).
+		WithObjects(pod, existingCR, orphanedCR).
 		Build()
 
 	reconciler := &EndpointReconciler{
@@ -1091,30 +1119,21 @@ func TestEndpointReconciler_SourceResourceExists_Pod(t *testing.T) {
 		Scheme: scheme,
 	}
 
-	// Existing pod should return true
-	exists, err := reconciler.sourceResourceExists(ctx, securityv1alpha1.TLSComplianceReportSpec{
-		SourceKind:      securityv1alpha1.SourceKindPod,
-		SourceNamespace: testNamespace,
-		SourceName:      "existing-pod",
-	})
-	if err != nil {
-		t.Fatalf("sourceResourceExists() error = %v", err)
-	}
-	if !exists {
-		t.Error("sourceResourceExists() = false, want true for existing pod")
+	if err := reconciler.cleanupOrphanedCRs(ctx); err != nil {
+		t.Fatalf("cleanupOrphanedCRs() error = %v", err)
 	}
 
-	// Deleted pod should return false
-	exists, err = reconciler.sourceResourceExists(ctx, securityv1alpha1.TLSComplianceReportSpec{
-		SourceKind:      securityv1alpha1.SourceKindPod,
-		SourceNamespace: testNamespace,
-		SourceName:      "deleted-pod",
-	})
-	if err != nil {
-		t.Fatalf("sourceResourceExists() error = %v", err)
+	// Verify the orphaned CR was deleted and the existing one remains
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("List() error = %v", err)
 	}
-	if exists {
-		t.Error("sourceResourceExists() = true, want false for deleted pod")
+
+	if len(crList.Items) != 1 {
+		t.Fatalf("expected 1 CR after cleanup, got %d", len(crList.Items))
+	}
+	if crList.Items[0].Name != "existing-pod-cr" {
+		t.Errorf("expected remaining CR to be 'existing-pod-cr', got %q", crList.Items[0].Name)
 	}
 }
 
