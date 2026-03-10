@@ -70,6 +70,10 @@ make build-installer IMG=<img> # Generate dist/install.yaml
 - `config/samples/` - Example CRs (safe to edit)
 - `config/prometheus/` - ServiceMonitor for metrics scraping
 
+## Requirements
+
+- Go 1.26+
+
 ## Development Rules
 
 **Never edit (auto-generated):**
