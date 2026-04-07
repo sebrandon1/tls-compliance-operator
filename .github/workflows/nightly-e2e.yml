@@ -78,6 +78,13 @@ jobs:
     name: E2E Tests on OpenShift
     runs-on: ubuntu-latest
     steps:
+      - name: Check Red Hat Status
+        uses: palmsoftware/redhat-status@v0
+        with:
+          components: |
+            api.openshift.com
+            developers.redhat.com
+
       - name: Check for PULL_SECRET
         env:
           PULL_SECRET: ${{ secrets.PULL_SECRET }}

@@ -40,6 +40,12 @@ jobs:
       id-token: write  # Required for cosign keyless signing with GitHub OIDC
 
     steps:
+      - name: Check Red Hat Status
+        uses: palmsoftware/redhat-status@v0
+        with:
+          components: |
+            Quay.io
+
       - name: Checkout code
         uses: actions/checkout@v6
 
