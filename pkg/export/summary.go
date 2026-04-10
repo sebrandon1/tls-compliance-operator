@@ -59,16 +59,18 @@ var knownSourceKinds = []securityv1alpha1.SourceKind{
 
 // Summary holds aggregated statistics for a set of TLS compliance reports.
 type Summary struct {
-	Total             int
-	ByStatus          map[securityv1alpha1.ComplianceStatus]int
-	BySourceKind      map[securityv1alpha1.SourceKind]int
-	ByPQCReadiness    map[securityv1alpha1.PQCReadiness]int
-	CompliancePercent float64
-	PQCReadyPercent   float64
-	CertExpired       int
-	CertExpiring7d    int
-	CertExpiring30d   int
-	CertExpiring90d   int
+	Total               int
+	ByStatus            map[securityv1alpha1.ComplianceStatus]int
+	BySourceKind        map[securityv1alpha1.SourceKind]int
+	ByPQCReadiness      map[securityv1alpha1.PQCReadiness]int
+	ForwardSecrecyCount   int
+	CompliancePercent     float64
+	ForwardSecrecyPercent float64
+	PQCReadyPercent       float64
+	CertExpired         int
+	CertExpiring7d      int
+	CertExpiring30d     int
+	CertExpiring90d     int
 }
 
 // ComputeSummary calculates summary statistics from a slice of reports.
@@ -85,6 +87,9 @@ func ComputeSummary(reports []securityv1alpha1.TLSComplianceReport, now time.Tim
 		r := &reports[i]
 		s.ByStatus[r.Status.ComplianceStatus]++
 		s.BySourceKind[r.Spec.SourceKind]++
+		if r.Status.ForwardSecrecy {
+			s.ForwardSecrecyCount++
+		}
 		if r.Status.PQCReadiness != "" {
 			s.ByPQCReadiness[r.Status.PQCReadiness]++
 		}
@@ -109,6 +114,7 @@ func ComputeSummary(reports []securityv1alpha1.TLSComplianceReport, now time.Tim
 	if s.Total > 0 {
 		compliant := s.ByStatus[securityv1alpha1.ComplianceStatusCompliant]
 		s.CompliancePercent = float64(compliant) / float64(s.Total) * 100
+		s.ForwardSecrecyPercent = float64(s.ForwardSecrecyCount) / float64(s.Total) * 100
 		pqcReady := s.ByPQCReadiness[securityv1alpha1.PQCReadinessPQCReady]
 		s.PQCReadyPercent = float64(pqcReady) / float64(s.Total) * 100
 	}
@@ -139,7 +145,11 @@ func WriteSummary(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) e
 	ew.printf("TLS Compliance Summary\n")
 	ew.printf("======================\n\n")
 	ew.printf("Total Endpoints:\t%d\n", s.Total)
-	ew.printf("Compliance Rate:\t%.1f%%\n\n", s.CompliancePercent)
+	ew.printf("Compliance Rate:\t%.1f%%\n", s.CompliancePercent)
+	if s.Total > 0 {
+		ew.printf("Forward Secrecy:\t%d/%d (%.1f%%)\n", s.ForwardSecrecyCount, s.Total, s.ForwardSecrecyPercent)
+	}
+	ew.printf("\n")
 
 	ew.printf("Status Breakdown\n")
 	ew.printf("----------------\n")

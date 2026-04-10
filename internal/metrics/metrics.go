@@ -69,6 +69,16 @@ var (
 		[]string{"host", "port", "version"},
 	)
 
+	// ForwardSecrecy tracks whether all ciphers support forward secrecy per endpoint
+	ForwardSecrecy = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: MetricsNamespace,
+			Name:      "forward_secrecy",
+			Help:      "Forward secrecy support (1=all ciphers use ephemeral key exchange, 0=not)",
+		},
+		[]string{"host", "port"},
+	)
+
 	// PQCReadiness tracks PQC readiness status per endpoint (1=current status, 0=not)
 	PQCReadiness = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -125,6 +135,7 @@ func init() {
 		CheckDurationSeconds,
 		CertificateExpiryDays,
 		VersionSupport,
+		ForwardSecrecy,
 		PQCReadiness,
 		ReconcileTotal,
 		ScanCycleDurationSeconds,
@@ -146,6 +157,15 @@ func RecordCheckDuration(durationSeconds float64) {
 // RecordCertExpiry records the days until certificate expiry
 func RecordCertExpiry(host, port string, days float64) {
 	CertificateExpiryDays.WithLabelValues(host, port).Set(days)
+}
+
+// RecordForwardSecrecy records whether all ciphers support forward secrecy
+func RecordForwardSecrecy(host, port string, supported bool) {
+	val := float64(0)
+	if supported {
+		val = 1
+	}
+	ForwardSecrecy.WithLabelValues(host, port).Set(val)
 }
 
 // RecordVersionSupport records whether a TLS version is supported

@@ -70,6 +70,92 @@ func TestAllGoCipherSuitesGraded(t *testing.T) {
 	}
 }
 
+func TestCipherHasForwardSecrecy(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected bool
+	}{
+		// TLS 1.3 ciphers always have FS
+		{"TLS_AES_128_GCM_SHA256", true},
+		{"TLS_AES_256_GCM_SHA384", true},
+		{"TLS_CHACHA20_POLY1305_SHA256", true},
+		// ECDHE = forward secrecy
+		{"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256", true},
+		{"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384", true},
+		{"TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA", true},
+		{"TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA", true},
+		// DHE = forward secrecy
+		{"TLS_DHE_RSA_WITH_AES_128_GCM_SHA256", true},
+		// RSA = no forward secrecy
+		{"TLS_RSA_WITH_AES_128_GCM_SHA256", false},
+		{"TLS_RSA_WITH_AES_128_CBC_SHA", false},
+		{"TLS_RSA_WITH_3DES_EDE_CBC_SHA", false},
+		// NULL/export = no forward secrecy
+		{"TLS_RSA_WITH_NULL_SHA", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CipherHasForwardSecrecy(tt.name)
+			if got != tt.expected {
+				t.Errorf("CipherHasForwardSecrecy(%q) = %v, want %v", tt.name, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestAllCiphersHaveForwardSecrecy(t *testing.T) {
+	tests := []struct {
+		name         string
+		cipherSuites map[string][]string
+		expected     bool
+	}{
+		{
+			name:         "empty",
+			cipherSuites: map[string][]string{},
+			expected:     false,
+		},
+		{
+			name: "all TLS 1.3",
+			cipherSuites: map[string][]string{
+				"TLS 1.3": {"TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384"},
+			},
+			expected: true,
+		},
+		{
+			name: "all ECDHE",
+			cipherSuites: map[string][]string{
+				"TLS 1.2": {"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256", "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA"},
+			},
+			expected: true,
+		},
+		{
+			name: "mixed ECDHE and RSA",
+			cipherSuites: map[string][]string{
+				"TLS 1.3": {"TLS_AES_128_GCM_SHA256"},
+				"TLS 1.2": {"TLS_RSA_WITH_AES_128_GCM_SHA256"},
+			},
+			expected: false,
+		},
+		{
+			name: "RSA only",
+			cipherSuites: map[string][]string{
+				"TLS 1.2": {"TLS_RSA_WITH_AES_128_CBC_SHA"},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := AllCiphersHaveForwardSecrecy(tt.cipherSuites)
+			if got != tt.expected {
+				t.Errorf("AllCiphersHaveForwardSecrecy() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestGradeCipherSuites(t *testing.T) {
 	cipherSuites := map[string][]string{
 		"TLS 1.3": {"TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384"},

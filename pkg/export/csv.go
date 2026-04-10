@@ -28,7 +28,7 @@ import (
 // CSVHeader is the header row for CSV exports.
 var CSVHeader = []string{
 	"Host", "Port", "Source", "Namespace", "Name",
-	"Compliance", "Grade",
+	"Compliance", "Grade", "ForwardSecrecy",
 	"TLS1.3", "TLS1.2", "TLS1.1", "TLS1.0",
 	"QuantumReady", "PQCReadiness",
 	"CertExpiry", "CertIssuer",
@@ -75,6 +75,7 @@ func reportToCSVRow(r *securityv1alpha1.TLSComplianceReport) []string {
 		r.Spec.SourceName,
 		string(r.Status.ComplianceStatus),
 		r.Status.OverallCipherGrade,
+		strconv.FormatBool(r.Status.ForwardSecrecy),
 		strconv.FormatBool(r.Status.TLSVersions.TLS13),
 		strconv.FormatBool(r.Status.TLSVersions.TLS12),
 		strconv.FormatBool(r.Status.TLSVersions.TLS11),
