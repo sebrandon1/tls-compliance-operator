@@ -61,6 +61,31 @@ func GradeCipherSuite(name string) CipherGrade {
 	return GradeC
 }
 
+// CipherHasForwardSecrecy returns true if the IANA cipher suite name uses
+// ephemeral key exchange (ECDHE or DHE), or is a TLS 1.3 cipher (which
+// always uses ephemeral key exchange).
+func CipherHasForwardSecrecy(name string) bool {
+	if !strings.Contains(name, "_WITH_") {
+		return true
+	}
+	return strings.HasPrefix(name, "TLS_ECDHE_") || strings.HasPrefix(name, "TLS_DHE_")
+}
+
+// AllCiphersHaveForwardSecrecy returns true if every negotiated cipher suite
+// supports forward secrecy. Returns false if no ciphers were negotiated.
+func AllCiphersHaveForwardSecrecy(cipherSuites map[string][]string) bool {
+	found := false
+	for _, suites := range cipherSuites {
+		for _, suite := range suites {
+			found = true
+			if !CipherHasForwardSecrecy(suite) {
+				return false
+			}
+		}
+	}
+	return found
+}
+
 // GradeCipherSuites returns per-cipher grades for a map of TLS version to cipher suite names.
 func GradeCipherSuites(cipherSuites map[string][]string) map[string]string {
 	grades := make(map[string]string)

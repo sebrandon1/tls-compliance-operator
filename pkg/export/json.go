@@ -27,21 +27,22 @@ import (
 
 // JSONReport is the JSON representation of a single TLS compliance report.
 type JSONReport struct {
-	Host         string `json:"host"`
-	Port         string `json:"port"`
-	Source       string `json:"source"`
-	Namespace    string `json:"namespace"`
-	Name         string `json:"name"`
-	Compliance   string `json:"compliance"`
-	Grade        string `json:"grade"`
-	TLS13        bool   `json:"tls13"`
-	TLS12        bool   `json:"tls12"`
-	TLS11        bool   `json:"tls11"`
-	TLS10        bool   `json:"tls10"`
-	QuantumReady bool   `json:"quantumReady"`
-	PQCReadiness string `json:"pqcReadiness"`
-	CertExpiry   string `json:"certExpiry"`
-	CertIssuer   string `json:"certIssuer"`
+	Host           string `json:"host"`
+	Port           string `json:"port"`
+	Source         string `json:"source"`
+	Namespace      string `json:"namespace"`
+	Name           string `json:"name"`
+	Compliance     string `json:"compliance"`
+	Grade          string `json:"grade"`
+	ForwardSecrecy bool   `json:"forwardSecrecy"`
+	TLS13          bool   `json:"tls13"`
+	TLS12          bool   `json:"tls12"`
+	TLS11          bool   `json:"tls11"`
+	TLS10          bool   `json:"tls10"`
+	QuantumReady   bool   `json:"quantumReady"`
+	PQCReadiness   string `json:"pqcReadiness"`
+	CertExpiry     string `json:"certExpiry"`
+	CertIssuer     string `json:"certIssuer"`
 }
 
 // WriteJSON writes TLSComplianceReport items as pretty-printed JSON to the given writer.
@@ -64,20 +65,21 @@ func reportToJSON(r *securityv1alpha1.TLSComplianceReport) JSONReport {
 	certExpiry, certIssuer := extractCertInfo(r)
 
 	return JSONReport{
-		Host:         r.Spec.Host,
-		Port:         strconv.Itoa(int(r.Spec.Port)),
-		Source:       string(r.Spec.SourceKind),
-		Namespace:    r.Spec.SourceNamespace,
-		Name:         r.Spec.SourceName,
-		Compliance:   string(r.Status.ComplianceStatus),
-		Grade:        r.Status.OverallCipherGrade,
-		TLS13:        r.Status.TLSVersions.TLS13,
-		TLS12:        r.Status.TLSVersions.TLS12,
-		TLS11:        r.Status.TLSVersions.TLS11,
-		TLS10:        r.Status.TLSVersions.TLS10,
-		QuantumReady: r.Status.QuantumReady,
-		PQCReadiness: string(r.Status.PQCReadiness),
-		CertExpiry:   certExpiry,
-		CertIssuer:   certIssuer,
+		Host:           r.Spec.Host,
+		Port:           strconv.Itoa(int(r.Spec.Port)),
+		Source:         string(r.Spec.SourceKind),
+		Namespace:      r.Spec.SourceNamespace,
+		Name:           r.Spec.SourceName,
+		Compliance:     string(r.Status.ComplianceStatus),
+		Grade:          r.Status.OverallCipherGrade,
+		ForwardSecrecy: r.Status.ForwardSecrecy,
+		TLS13:          r.Status.TLSVersions.TLS13,
+		TLS12:          r.Status.TLSVersions.TLS12,
+		TLS11:          r.Status.TLSVersions.TLS11,
+		TLS10:          r.Status.TLSVersions.TLS10,
+		QuantumReady:   r.Status.QuantumReady,
+		PQCReadiness:   string(r.Status.PQCReadiness),
+		CertExpiry:     certExpiry,
+		CertIssuer:     certIssuer,
 	}
 }

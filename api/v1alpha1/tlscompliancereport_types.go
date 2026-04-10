@@ -180,6 +180,11 @@ type TLSComplianceReportStatus struct {
 	// +optional
 	OverallCipherGrade string `json:"overallCipherGrade,omitempty"`
 
+	// ForwardSecrecy indicates whether all negotiated cipher suites use
+	// ephemeral key exchange (ECDHE/DHE), providing perfect forward secrecy
+	// +optional
+	ForwardSecrecy bool `json:"forwardSecrecy"`
+
 	// NegotiatedCurves maps TLS version to the negotiated key exchange curve
 	// (e.g. X25519, P-256, X25519MLKEM768)
 	// +optional
@@ -262,6 +267,7 @@ type TLSComplianceReportStatus struct {
 // +kubebuilder:printcolumn:name="Source",type=string,JSONPath=`.spec.sourceKind`
 // +kubebuilder:printcolumn:name="Compliance",type=string,JSONPath=`.status.complianceStatus`
 // +kubebuilder:printcolumn:name="Grade",type=string,JSONPath=`.status.overallCipherGrade`
+// +kubebuilder:printcolumn:name="FS",type=boolean,JSONPath=`.status.forwardSecrecy`
 // +kubebuilder:printcolumn:name="TLS1.3",type=boolean,JSONPath=`.status.tlsVersions.tls13`
 // +kubebuilder:printcolumn:name="TLS1.2",type=boolean,JSONPath=`.status.tlsVersions.tls12`
 // +kubebuilder:printcolumn:name="TLS1.0",type=boolean,JSONPath=`.status.tlsVersions.tls10`

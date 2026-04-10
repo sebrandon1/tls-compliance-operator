@@ -32,6 +32,9 @@ spec:
     - jsonPath: .status.overallCipherGrade
       name: Grade
       type: string
+    - jsonPath: .status.forwardSecrecy
+      name: FS
+      type: boolean
     - jsonPath: .status.tlsVersions.tls13
       name: TLS1.3
       type: boolean
@@ -279,6 +282,11 @@ spec:
                 description: FirstSeenAt is when this endpoint was first discovered
                 format: date-time
                 type: string
+              forwardSecrecy:
+                description: |-
+                  ForwardSecrecy indicates whether all negotiated cipher suites use
+                  ephemeral key exchange (ECDHE/DHE), providing perfect forward secrecy
+                type: boolean
               ingressProfileCompliance:
                 description: |-
                   IngressProfileCompliance contains the compliance result against the
