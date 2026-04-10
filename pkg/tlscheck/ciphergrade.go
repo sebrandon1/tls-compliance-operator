@@ -1,6 +1,9 @@
 package tlscheck
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // CipherGrade represents the strength grade of a cipher suite.
 type CipherGrade string
@@ -64,10 +67,7 @@ func GradeCipherSuite(name string) CipherGrade {
 // ephemeral key exchange (ECDHE or DHE), or is a TLS 1.3 cipher (which
 // always uses ephemeral key exchange).
 func CipherHasForwardSecrecy(name string) bool {
-	if !strings.Contains(name, "_WITH_") {
-		return true
-	}
-	return strings.HasPrefix(name, "TLS_ECDHE_") || strings.HasPrefix(name, "TLS_DHE_")
+	return KeyExchangeType(name) != "RSA"
 }
 
 // AllCiphersHaveForwardSecrecy returns true if every negotiated cipher suite
@@ -83,6 +83,44 @@ func AllCiphersHaveForwardSecrecy(cipherSuites map[string][]string) bool {
 		}
 	}
 	return found
+}
+
+// KeyExchangeType extracts the key exchange algorithm from an IANA cipher suite name.
+// Returns "ECDHE", "DHE", "RSA", or "TLS13" (TLS 1.3 uses implicit ephemeral exchange).
+func KeyExchangeType(name string) string {
+	if !strings.Contains(name, "_WITH_") {
+		return "TLS13"
+	}
+	if strings.HasPrefix(name, "TLS_ECDHE_") {
+		return "ECDHE"
+	}
+	if strings.HasPrefix(name, "TLS_DHE_") {
+		return "DHE"
+	}
+	return "RSA"
+}
+
+// KeyExchangeTypes returns the key exchange types used per TLS version.
+// If multiple cipher suites use different key exchange algorithms for the
+// same version, all distinct types are included (e.g. "ECDHE,RSA").
+func KeyExchangeTypes(cipherSuites map[string][]string) map[string]string {
+	result := make(map[string]string, len(cipherSuites))
+	for version, suites := range cipherSuites {
+		seen := make(map[string]bool)
+		var types []string
+		for _, suite := range suites {
+			ke := KeyExchangeType(suite)
+			if !seen[ke] {
+				seen[ke] = true
+				types = append(types, ke)
+			}
+		}
+		if len(types) > 0 {
+			sort.Strings(types)
+			result[version] = strings.Join(types, ",")
+		}
+	}
+	return result
 }
 
 // GradeCipherSuites returns per-cipher grades for a map of TLS version to cipher suite names.

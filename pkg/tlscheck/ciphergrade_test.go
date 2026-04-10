@@ -104,6 +104,89 @@ func TestCipherHasForwardSecrecy(t *testing.T) {
 	}
 }
 
+func TestKeyExchangeType(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected string
+	}{
+		// TLS 1.3
+		{"TLS_AES_128_GCM_SHA256", "TLS13"},
+		{"TLS_AES_256_GCM_SHA384", "TLS13"},
+		{"TLS_CHACHA20_POLY1305_SHA256", "TLS13"},
+		// ECDHE
+		{"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256", "ECDHE"},
+		{"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384", "ECDHE"},
+		{"TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA", "ECDHE"},
+		// DHE
+		{"TLS_DHE_RSA_WITH_AES_128_GCM_SHA256", "DHE"},
+		// RSA
+		{"TLS_RSA_WITH_AES_128_GCM_SHA256", "RSA"},
+		{"TLS_RSA_WITH_AES_128_CBC_SHA", "RSA"},
+		{"TLS_RSA_WITH_3DES_EDE_CBC_SHA", "RSA"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := KeyExchangeType(tt.name)
+			if got != tt.expected {
+				t.Errorf("KeyExchangeType(%q) = %q, want %q", tt.name, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestKeyExchangeTypes(t *testing.T) {
+	tests := []struct {
+		name         string
+		cipherSuites map[string][]string
+		expected     map[string]string
+	}{
+		{
+			name: "single cipher per version",
+			cipherSuites: map[string][]string{
+				"TLS 1.3": {"TLS_AES_128_GCM_SHA256"},
+				"TLS 1.2": {"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
+				"TLS 1.0": {"TLS_RSA_WITH_AES_128_CBC_SHA"},
+			},
+			expected: map[string]string{
+				"TLS 1.3": "TLS13",
+				"TLS 1.2": "ECDHE",
+				"TLS 1.0": "RSA",
+			},
+		},
+		{
+			name: "mixed key exchange in same version",
+			cipherSuites: map[string][]string{
+				"TLS 1.2": {
+					"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+					"TLS_RSA_WITH_AES_128_CBC_SHA",
+				},
+			},
+			expected: map[string]string{
+				"TLS 1.2": "ECDHE,RSA",
+			},
+		},
+		{
+			name:         "empty",
+			cipherSuites: map[string][]string{},
+			expected:     map[string]string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := KeyExchangeTypes(tt.cipherSuites)
+			for version, expectedKE := range tt.expected {
+				if got, ok := result[version]; !ok {
+					t.Errorf("missing key exchange for %q", version)
+				} else if got != expectedKE {
+					t.Errorf("KeyExchangeTypes[%q] = %q, want %q", version, got, expectedKE)
+				}
+			}
+		})
+	}
+}
+
 func TestAllCiphersHaveForwardSecrecy(t *testing.T) {
 	tests := []struct {
 		name         string

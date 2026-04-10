@@ -185,6 +185,11 @@ type TLSComplianceReportStatus struct {
 	// +optional
 	ForwardSecrecy bool `json:"forwardSecrecy"`
 
+	// KeyExchangeTypes maps TLS version to the key exchange algorithm used
+	// (ECDHE, DHE, RSA, or TLS13)
+	// +optional
+	KeyExchangeTypes map[string]string `json:"keyExchangeTypes,omitempty"`
+
 	// NegotiatedCurves maps TLS version to the negotiated key exchange curve
 	// (e.g. X25519, P-256, X25519MLKEM768)
 	// +optional

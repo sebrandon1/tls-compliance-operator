@@ -394,6 +394,8 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	cr.Status.OverallCipherGrade = tlscheck.OverallGrade(result.CipherSuites, cipherGrades)
 	cr.Status.ForwardSecrecy = tlscheck.AllCiphersHaveForwardSecrecy(result.CipherSuites)
 
+	cr.Status.KeyExchangeTypes = tlscheck.KeyExchangeTypes(result.CipherSuites)
+
 	// PQCReadiness supersedes QuantumReady with a richer classification;
 	// both are populated for backward compatibility.
 	cr.Status.NegotiatedCurves = result.NegotiatedCurves

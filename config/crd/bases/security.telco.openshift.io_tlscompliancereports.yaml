@@ -317,6 +317,13 @@ spec:
                 - minTLSVersionMet
                 - profileType
                 type: object
+              keyExchangeTypes:
+                additionalProperties:
+                  type: string
+                description: |-
+                  KeyExchangeTypes maps TLS version to the key exchange algorithm used
+                  (ECDHE, DHE, RSA, or TLS13)
+                type: object
               kubeletProfileCompliance:
                 description: |-
                   KubeletProfileCompliance contains the compliance result against the
