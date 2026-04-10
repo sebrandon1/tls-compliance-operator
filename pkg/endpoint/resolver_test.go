@@ -796,6 +796,72 @@ func TestExtractFromPod_MultipleProbeTypes(t *testing.T) {
 	}
 }
 
+func TestExtractFromPod_MixedHTTPAndHTTPSProbesSamePort(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:  "app",
+					Ports: []corev1.ContainerPort{{ContainerPort: 8443, Protocol: corev1.ProtocolTCP}},
+					LivenessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							HTTPGet: &corev1.HTTPGetAction{
+								Port:   intstr.FromInt32(8443),
+								Scheme: corev1.URISchemeHTTP,
+							},
+						},
+					},
+					ReadinessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							HTTPGet: &corev1.HTTPGetAction{
+								Port:   intstr.FromInt32(8443),
+								Scheme: corev1.URISchemeHTTPS,
+							},
+						},
+					},
+				},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.5"},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint (HTTPS wins over HTTP), got %d", len(endpoints))
+	}
+	if !endpoints[0].IsProbePort {
+		t.Error("expected IsProbePort=true")
+	}
+}
+
+func TestExtractFromPod_GRPCProbePortSkipped(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:  "app",
+					Ports: []corev1.ContainerPort{{ContainerPort: 8443, Protocol: corev1.ProtocolTCP}},
+					LivenessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							GRPC: &corev1.GRPCAction{
+								Port: 8443,
+							},
+						},
+					},
+				},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.5"},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 0 {
+		t.Fatalf("expected 0 endpoints (gRPC probe port skipped), got %d", len(endpoints))
+	}
+}
+
 func TestExtractFromPod_DefaultProtocol(t *testing.T) {
 	// When protocol is not specified, it defaults to TCP
 	pod := &corev1.Pod{

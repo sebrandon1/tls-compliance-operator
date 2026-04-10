@@ -197,6 +197,12 @@ func collectProbePorts(pod *corev1.Pod) map[int32]probePortInfo {
 					}
 				}
 			}
+
+			if probe.GRPC != nil && probe.GRPC.Port > 0 {
+				if _, exists := probePorts[int32(probe.GRPC.Port)]; !exists {
+					probePorts[int32(probe.GRPC.Port)] = probePortInfo{}
+				}
+			}
 		}
 	}
 
