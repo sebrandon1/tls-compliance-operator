@@ -41,9 +41,9 @@ spec:
     - jsonPath: .status.tlsVersions.tls10
       name: TLS1.0
       type: boolean
-    - jsonPath: .status.quantumReady
+    - jsonPath: .status.pqcReadiness
       name: PQC
-      type: boolean
+      type: string
     - jsonPath: .status.certificateInfo.daysUntilExpiry
       name: CertExpiry
       type: integer
@@ -364,6 +364,17 @@ spec:
               overallCipherGrade:
                 description: OverallCipherGrade is the worst grade across all negotiated
                   cipher suites
+                type: string
+              pqcReadiness:
+                description: |-
+                  PQCReadiness classifies the endpoint's post-quantum cryptography readiness:
+                  PQCReady (TLS 1.3 + ML-KEM), TLS13Capable (TLS 1.3 without ML-KEM),
+                  LegacyTLS (TLS 1.2 or older only), or NoPQC (no TLS detected)
+                enum:
+                - PQCReady
+                - TLS13Capable
+                - LegacyTLS
+                - NoPQC
                 type: string
               quantumReady:
                 description: |-

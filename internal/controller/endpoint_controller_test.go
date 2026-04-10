@@ -671,6 +671,71 @@ func TestIsQuantumReady(t *testing.T) {
 	}
 }
 
+func TestDeterminePQCReadiness(t *testing.T) {
+	tests := []struct {
+		name     string
+		result   *tlscheck.TLSCheckResult
+		expected securityv1alpha1.PQCReadiness
+	}{
+		{
+			name: "PQCReady - TLS 1.3 with MLKEM",
+			result: &tlscheck.TLSCheckResult{
+				SupportsTLS13:    true,
+				SupportsTLS12:    true,
+				NegotiatedCurves: map[string]string{"TLS 1.3": "X25519MLKEM768", "TLS 1.2": "X25519"},
+			},
+			expected: securityv1alpha1.PQCReadinessPQCReady,
+		},
+		{
+			name: "TLS13Capable - TLS 1.3 without MLKEM",
+			result: &tlscheck.TLSCheckResult{
+				SupportsTLS13:    true,
+				SupportsTLS12:    true,
+				NegotiatedCurves: map[string]string{"TLS 1.3": "X25519", "TLS 1.2": "X25519"},
+			},
+			expected: securityv1alpha1.PQCReadinessTLS13Capable,
+		},
+		{
+			name: "LegacyTLS - TLS 1.2 only",
+			result: &tlscheck.TLSCheckResult{
+				SupportsTLS12:    true,
+				NegotiatedCurves: map[string]string{"TLS 1.2": "P-256"},
+			},
+			expected: securityv1alpha1.PQCReadinessLegacyTLS,
+		},
+		{
+			name: "LegacyTLS - TLS 1.0 and 1.1 only",
+			result: &tlscheck.TLSCheckResult{
+				SupportsTLS10: true,
+				SupportsTLS11: true,
+			},
+			expected: securityv1alpha1.PQCReadinessLegacyTLS,
+		},
+		{
+			name:     "NoPQC - no TLS detected",
+			result:   &tlscheck.TLSCheckResult{},
+			expected: securityv1alpha1.PQCReadinessNoPQC,
+		},
+		{
+			name: "PQCReady - TLS 1.3 only with MLKEM",
+			result: &tlscheck.TLSCheckResult{
+				SupportsTLS13:    true,
+				NegotiatedCurves: map[string]string{"TLS 1.3": "X25519MLKEM768"},
+			},
+			expected: securityv1alpha1.PQCReadinessPQCReady,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := determinePQCReadiness(tt.result)
+			if got != tt.expected {
+				t.Errorf("determinePQCReadiness() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestEndpointReconciler_IsNamespaceFiltered_ExcludeMode(t *testing.T) {
 	r := &EndpointReconciler{
 		ExcludeNamespaces: map[string]bool{"kube-system": true, "openshift-monitoring": true},

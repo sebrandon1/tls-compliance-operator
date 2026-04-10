@@ -40,6 +40,14 @@ var knownStatuses = []securityv1alpha1.ComplianceStatus{
 	securityv1alpha1.ComplianceStatusUnknown,
 }
 
+// knownPQCReadiness defines the deterministic order for PQC readiness output.
+var knownPQCReadiness = []securityv1alpha1.PQCReadiness{
+	securityv1alpha1.PQCReadinessPQCReady,
+	securityv1alpha1.PQCReadinessTLS13Capable,
+	securityv1alpha1.PQCReadinessLegacyTLS,
+	securityv1alpha1.PQCReadinessNoPQC,
+}
+
 // knownSourceKinds defines the deterministic order for source kind output.
 var knownSourceKinds = []securityv1alpha1.SourceKind{
 	securityv1alpha1.SourceKindService,
@@ -54,7 +62,9 @@ type Summary struct {
 	Total             int
 	ByStatus          map[securityv1alpha1.ComplianceStatus]int
 	BySourceKind      map[securityv1alpha1.SourceKind]int
+	ByPQCReadiness    map[securityv1alpha1.PQCReadiness]int
 	CompliancePercent float64
+	PQCReadyPercent   float64
 	CertExpired       int
 	CertExpiring7d    int
 	CertExpiring30d   int
@@ -65,15 +75,19 @@ type Summary struct {
 // The now parameter is used for certificate expiry calculations.
 func ComputeSummary(reports []securityv1alpha1.TLSComplianceReport, now time.Time) Summary {
 	s := Summary{
-		Total:        len(reports),
-		ByStatus:     make(map[securityv1alpha1.ComplianceStatus]int),
-		BySourceKind: make(map[securityv1alpha1.SourceKind]int),
+		Total:          len(reports),
+		ByStatus:       make(map[securityv1alpha1.ComplianceStatus]int),
+		BySourceKind:   make(map[securityv1alpha1.SourceKind]int),
+		ByPQCReadiness: make(map[securityv1alpha1.PQCReadiness]int),
 	}
 
 	for i := range reports {
 		r := &reports[i]
 		s.ByStatus[r.Status.ComplianceStatus]++
 		s.BySourceKind[r.Spec.SourceKind]++
+		if r.Status.PQCReadiness != "" {
+			s.ByPQCReadiness[r.Status.PQCReadiness]++
+		}
 
 		if r.Status.CertificateInfo != nil && r.Status.CertificateInfo.NotAfter != nil {
 			expiry := r.Status.CertificateInfo.NotAfter.Time
@@ -95,6 +109,8 @@ func ComputeSummary(reports []securityv1alpha1.TLSComplianceReport, now time.Tim
 	if s.Total > 0 {
 		compliant := s.ByStatus[securityv1alpha1.ComplianceStatusCompliant]
 		s.CompliancePercent = float64(compliant) / float64(s.Total) * 100
+		pqcReady := s.ByPQCReadiness[securityv1alpha1.PQCReadinessPQCReady]
+		s.PQCReadyPercent = float64(pqcReady) / float64(s.Total) * 100
 	}
 
 	return s
@@ -140,6 +156,18 @@ func WriteSummary(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) e
 		count := s.BySourceKind[kind]
 		if count > 0 {
 			ew.printf("  %s:\t%d\n", kind, count)
+		}
+	}
+
+	if len(s.ByPQCReadiness) > 0 {
+		ew.printf("\nPost-Quantum Cryptography Readiness\n")
+		ew.printf("------------------------------------\n")
+		ew.printf("PQC Ready Rate:\t%.1f%%\n", s.PQCReadyPercent)
+		for _, readiness := range knownPQCReadiness {
+			count := s.ByPQCReadiness[readiness]
+			if count > 0 {
+				ew.printf("  %s:\t%d\n", readiness, count)
+			}
 		}
 	}
 

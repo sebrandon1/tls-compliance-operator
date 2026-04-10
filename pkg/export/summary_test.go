@@ -212,6 +212,57 @@ func TestComputeSummary_NoCertInfo(t *testing.T) {
 	}
 }
 
+func TestComputeSummary_PQCReadiness(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				PQCReadiness:     securityv1alpha1.PQCReadinessPQCReady,
+			},
+		},
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				PQCReadiness:     securityv1alpha1.PQCReadinessTLS13Capable,
+			},
+		},
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				PQCReadiness:     securityv1alpha1.PQCReadinessLegacyTLS,
+			},
+		},
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusNoTLS,
+				PQCReadiness:     securityv1alpha1.PQCReadinessNoPQC,
+			},
+		},
+	}
+
+	s := ComputeSummary(reports, time.Now())
+
+	if s.ByPQCReadiness[securityv1alpha1.PQCReadinessPQCReady] != 1 {
+		t.Errorf("expected 1 PQCReady, got %d", s.ByPQCReadiness[securityv1alpha1.PQCReadinessPQCReady])
+	}
+	if s.ByPQCReadiness[securityv1alpha1.PQCReadinessTLS13Capable] != 1 {
+		t.Errorf("expected 1 TLS13Capable, got %d", s.ByPQCReadiness[securityv1alpha1.PQCReadinessTLS13Capable])
+	}
+	if s.ByPQCReadiness[securityv1alpha1.PQCReadinessLegacyTLS] != 1 {
+		t.Errorf("expected 1 LegacyTLS, got %d", s.ByPQCReadiness[securityv1alpha1.PQCReadinessLegacyTLS])
+	}
+	if s.ByPQCReadiness[securityv1alpha1.PQCReadinessNoPQC] != 1 {
+		t.Errorf("expected 1 NoPQC, got %d", s.ByPQCReadiness[securityv1alpha1.PQCReadinessNoPQC])
+	}
+	if s.PQCReadyPercent != 25 {
+		t.Errorf("expected 25%% PQC ready, got %f", s.PQCReadyPercent)
+	}
+}
+
 func TestWriteSummary_Output(t *testing.T) {
 	reports := []securityv1alpha1.TLSComplianceReport{
 		{
@@ -251,6 +302,44 @@ func TestWriteSummary_Output(t *testing.T) {
 	}
 	if !strings.Contains(output, "Ingress:") {
 		t.Error("expected output to contain 'Ingress:'")
+	}
+}
+
+func TestWriteSummary_PQCSection(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				PQCReadiness:     securityv1alpha1.PQCReadinessPQCReady,
+			},
+		},
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				PQCReadiness:     securityv1alpha1.PQCReadinessTLS13Capable,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteSummary(&buf, reports); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Post-Quantum Cryptography Readiness") {
+		t.Error("expected output to contain PQC readiness section")
+	}
+	if !strings.Contains(output, "PQC Ready Rate:") {
+		t.Error("expected output to contain 'PQC Ready Rate:'")
+	}
+	if !strings.Contains(output, "PQCReady:") {
+		t.Error("expected output to contain 'PQCReady:'")
+	}
+	if !strings.Contains(output, "TLS13Capable:") {
+		t.Error("expected output to contain 'TLS13Capable:'")
 	}
 }
 

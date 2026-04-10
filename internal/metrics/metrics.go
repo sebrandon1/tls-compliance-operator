@@ -19,6 +19,8 @@ package metrics
 import (
 	"github.com/prometheus/client_golang/prometheus"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
+
+	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 )
 
 const (
@@ -67,6 +69,16 @@ var (
 		[]string{"host", "port", "version"},
 	)
 
+	// PQCReadiness tracks PQC readiness status per endpoint (1=current status, 0=not)
+	PQCReadiness = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: MetricsNamespace,
+			Name:      "pqc_readiness",
+			Help:      "Post-quantum cryptography readiness (1=current status, 0=not)",
+		},
+		[]string{"host", "port", "readiness"},
+	)
+
 	// ReconcileTotal tracks reconciliation attempts
 	ReconcileTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -113,6 +125,7 @@ func init() {
 		CheckDurationSeconds,
 		CertificateExpiryDays,
 		VersionSupport,
+		PQCReadiness,
 		ReconcileTotal,
 		ScanCycleDurationSeconds,
 		CheckRetriesTotal,
@@ -142,6 +155,23 @@ func RecordVersionSupport(host, port, version string, supported bool) {
 		val = 1
 	}
 	VersionSupport.WithLabelValues(host, port, version).Set(val)
+}
+
+// RecordPQCReadiness records the PQC readiness status for an endpoint.
+// Sets the given readiness level to 1 and all others to 0.
+func RecordPQCReadiness(host, port string, readiness securityv1alpha1.PQCReadiness) {
+	for _, level := range []securityv1alpha1.PQCReadiness{
+		securityv1alpha1.PQCReadinessPQCReady,
+		securityv1alpha1.PQCReadinessTLS13Capable,
+		securityv1alpha1.PQCReadinessLegacyTLS,
+		securityv1alpha1.PQCReadinessNoPQC,
+	} {
+		val := float64(0)
+		if level == readiness {
+			val = 1
+		}
+		PQCReadiness.WithLabelValues(host, port, string(level)).Set(val)
+	}
 }
 
 // RecordScanCycleDuration records the duration of a full scan cycle
