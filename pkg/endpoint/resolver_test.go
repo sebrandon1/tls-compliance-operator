@@ -23,6 +23,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -595,6 +596,203 @@ func TestExtractFromPod_HostNetwork(t *testing.T) {
 	}
 	if endpoints[0].Host != "192.168.1.100" {
 		t.Errorf("host = %q, want 192.168.1.100 (node IP)", endpoints[0].Host)
+	}
+}
+
+func TestExtractFromPod_HTTPProbePortSkipped(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:  "app",
+					Ports: []corev1.ContainerPort{{ContainerPort: 8443, Protocol: corev1.ProtocolTCP}},
+					LivenessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							HTTPGet: &corev1.HTTPGetAction{
+								Port:   intstr.FromInt32(8443),
+								Scheme: corev1.URISchemeHTTP,
+							},
+						},
+					},
+				},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.5"},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 0 {
+		t.Fatalf("expected 0 endpoints (HTTP probe port skipped), got %d", len(endpoints))
+	}
+}
+
+func TestExtractFromPod_HTTPSProbePortKept(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:  "app",
+					Ports: []corev1.ContainerPort{{ContainerPort: 8443, Protocol: corev1.ProtocolTCP}},
+					ReadinessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							HTTPGet: &corev1.HTTPGetAction{
+								Port:   intstr.FromInt32(8443),
+								Scheme: corev1.URISchemeHTTPS,
+							},
+						},
+					},
+				},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.5"},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint (HTTPS probe port kept), got %d", len(endpoints))
+	}
+	if !endpoints[0].IsProbePort {
+		t.Error("expected IsProbePort=true for HTTPS probe port")
+	}
+}
+
+func TestExtractFromPod_TCPProbePortSkipped(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:  "app",
+					Ports: []corev1.ContainerPort{{ContainerPort: 443, Protocol: corev1.ProtocolTCP}},
+					LivenessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							TCPSocket: &corev1.TCPSocketAction{
+								Port: intstr.FromInt32(443),
+							},
+						},
+					},
+				},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.5"},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 0 {
+		t.Fatalf("expected 0 endpoints (TCP probe port skipped), got %d", len(endpoints))
+	}
+}
+
+func TestExtractFromPod_NonProbePortNotAffected(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:  "app",
+					Ports: []corev1.ContainerPort{{ContainerPort: 8443, Protocol: corev1.ProtocolTCP}},
+					LivenessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							HTTPGet: &corev1.HTTPGetAction{
+								Port:   intstr.FromInt32(9090),
+								Scheme: corev1.URISchemeHTTP,
+							},
+						},
+					},
+				},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.5"},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint (probe on different port), got %d", len(endpoints))
+	}
+	if endpoints[0].IsProbePort {
+		t.Error("expected IsProbePort=false when probe is on a different port")
+	}
+}
+
+func TestExtractFromPod_NamedProbePort(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name: "app",
+					Ports: []corev1.ContainerPort{
+						{Name: "https", ContainerPort: 8443, Protocol: corev1.ProtocolTCP},
+					},
+					ReadinessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							HTTPGet: &corev1.HTTPGetAction{
+								Port:   intstr.FromString("https"),
+								Scheme: corev1.URISchemeHTTPS,
+							},
+						},
+					},
+				},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.5"},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint (HTTPS named probe port), got %d", len(endpoints))
+	}
+	if !endpoints[0].IsProbePort {
+		t.Error("expected IsProbePort=true for named probe port")
+	}
+}
+
+func TestExtractFromPod_MultipleProbeTypes(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:  "app",
+					Ports: []corev1.ContainerPort{{ContainerPort: 8443, Protocol: corev1.ProtocolTCP}},
+					LivenessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							HTTPGet: &corev1.HTTPGetAction{
+								Port:   intstr.FromInt32(8443),
+								Scheme: corev1.URISchemeHTTPS,
+							},
+						},
+					},
+					ReadinessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							HTTPGet: &corev1.HTTPGetAction{
+								Port:   intstr.FromInt32(8443),
+								Scheme: corev1.URISchemeHTTPS,
+							},
+						},
+					},
+					StartupProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							HTTPGet: &corev1.HTTPGetAction{
+								Port:   intstr.FromInt32(8443),
+								Scheme: corev1.URISchemeHTTPS,
+							},
+						},
+					},
+				},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.5"},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(endpoints))
+	}
+	if !endpoints[0].IsProbePort {
+		t.Error("expected IsProbePort=true")
 	}
 }
 

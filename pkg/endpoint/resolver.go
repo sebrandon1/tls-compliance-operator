@@ -25,6 +25,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 // Endpoint represents a TLS endpoint to check
@@ -34,6 +35,7 @@ type Endpoint struct {
 	SourceKind      string
 	SourceNamespace string
 	SourceName      string
+	IsProbePort     bool
 }
 
 // MaxCRNameLength is the maximum length for a CR name
@@ -151,13 +153,90 @@ func GenerateCRName(ep Endpoint) string {
 	return name
 }
 
+// probePortInfo tracks whether a port is used by a health probe and its scheme.
+type probePortInfo struct {
+	isHTTPS bool
+}
+
+// collectProbePorts builds a map of port numbers used by health probes
+// (liveness, readiness, startup) across all containers in a pod.
+// Named ports in probes are resolved against the container's port declarations.
+func collectProbePorts(pod *corev1.Pod) map[int32]probePortInfo {
+	probePorts := make(map[int32]probePortInfo)
+
+	for i := range pod.Spec.Containers {
+		container := &pod.Spec.Containers[i]
+		portNames := buildPortNameMap(container)
+		probes := []*corev1.Probe{
+			container.LivenessProbe,
+			container.ReadinessProbe,
+			container.StartupProbe,
+		}
+
+		for _, probe := range probes {
+			if probe == nil {
+				continue
+			}
+
+			if probe.HTTPGet != nil {
+				port := resolveProbePort(probe.HTTPGet.Port, portNames)
+				if port > 0 {
+					info := probePorts[port]
+					if probe.HTTPGet.Scheme == corev1.URISchemeHTTPS {
+						info.isHTTPS = true
+					}
+					probePorts[port] = info
+				}
+			}
+
+			if probe.TCPSocket != nil {
+				port := resolveProbePort(probe.TCPSocket.Port, portNames)
+				if port > 0 {
+					if _, exists := probePorts[port]; !exists {
+						probePorts[port] = probePortInfo{}
+					}
+				}
+			}
+		}
+	}
+
+	return probePorts
+}
+
+// buildPortNameMap creates a name-to-number mapping from a container's declared ports.
+func buildPortNameMap(container *corev1.Container) map[string]int32 {
+	m := make(map[string]int32)
+	for _, p := range container.Ports {
+		if p.Name != "" {
+			m[p.Name] = p.ContainerPort
+		}
+	}
+	return m
+}
+
+// resolveProbePort converts an intstr.IntOrString port to a port number,
+// resolving named ports against the container's port declarations.
+func resolveProbePort(port intstr.IntOrString, portNames map[string]int32) int32 {
+	if port.Type == intstr.Int {
+		return port.IntVal
+	}
+	if resolved, ok := portNames[port.StrVal]; ok {
+		return resolved
+	}
+	return 0
+}
+
 // ExtractFromPod returns TLS endpoints from a Pod.
 // It inspects container ports for TLS-likely ports (443, 8443, or named https/https-*).
+// Ports used only by HTTP/TCP health probes are skipped (plaintext expected).
+// HTTPS health probe ports are still included but marked as probe ports.
 // Only Running pods with a PodIP are considered. Init containers are skipped.
 func ExtractFromPod(pod *corev1.Pod) []Endpoint {
 	if pod.Status.Phase != corev1.PodRunning || pod.Status.PodIP == "" {
 		return nil
 	}
+
+	probePorts := collectProbePorts(pod)
 
 	var endpoints []Endpoint
 	seen := make(map[int32]bool)
@@ -172,12 +251,19 @@ func ExtractFromPod(pod *corev1.Pod) []Endpoint {
 			}
 			if isTLSContainerPort(port) {
 				seen[port.ContainerPort] = true
+
+				probeInfo, isProbe := probePorts[port.ContainerPort]
+				if isProbe && !probeInfo.isHTTPS {
+					continue
+				}
+
 				endpoints = append(endpoints, Endpoint{
 					Host:            pod.Status.PodIP,
 					Port:            port.ContainerPort,
 					SourceKind:      "Pod",
 					SourceNamespace: pod.Namespace,
 					SourceName:      pod.Name,
+					IsProbePort:     isProbe,
 				})
 			}
 		}
