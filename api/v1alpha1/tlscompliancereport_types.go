@@ -79,8 +79,11 @@ const (
 	PQCReadinessNoPQC PQCReadiness = "NoPQC"
 )
 
-// TLSVersionSupport indicates which TLS versions an endpoint supports
+// TLSVersionSupport indicates which SSL/TLS versions an endpoint supports
 type TLSVersionSupport struct {
+	// SSL30 indicates if the deprecated SSLv3 protocol is supported
+	// +optional
+	SSL30 bool `json:"ssl30"`
 	// TLS10 indicates if TLS 1.0 is supported
 	TLS10 bool `json:"tls10"`
 	// TLS11 indicates if TLS 1.1 is supported
@@ -276,6 +279,7 @@ type TLSComplianceReportStatus struct {
 // +kubebuilder:printcolumn:name="TLS1.3",type=boolean,JSONPath=`.status.tlsVersions.tls13`
 // +kubebuilder:printcolumn:name="TLS1.2",type=boolean,JSONPath=`.status.tlsVersions.tls12`
 // +kubebuilder:printcolumn:name="TLS1.0",type=boolean,JSONPath=`.status.tlsVersions.tls10`
+// +kubebuilder:printcolumn:name="SSL3.0",type=boolean,JSONPath=`.status.tlsVersions.ssl30`,priority=1
 // +kubebuilder:printcolumn:name="PQC",type=string,JSONPath=`.status.pqcReadiness`
 // +kubebuilder:printcolumn:name="CertExpiry",type=integer,JSONPath=`.status.certificateInfo.daysUntilExpiry`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`

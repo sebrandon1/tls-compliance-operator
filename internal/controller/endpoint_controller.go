@@ -381,6 +381,7 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 
 	// Update TLS version support
 	cr.Status.TLSVersions = securityv1alpha1.TLSVersionSupport{
+		SSL30: result.SupportsSSL30,
 		TLS10: result.SupportsTLS10,
 		TLS11: result.SupportsTLS11,
 		TLS12: result.SupportsTLS12,
@@ -429,6 +430,7 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 
 	// Record metrics
 	metrics.RecordCheckDuration(result.CheckDuration.Seconds())
+	metrics.RecordVersionSupport(host, portStr, "ssl3.0", result.SupportsSSL30)
 	metrics.RecordVersionSupport(host, portStr, "1.0", result.SupportsTLS10)
 	metrics.RecordVersionSupport(host, portStr, "1.1", result.SupportsTLS11)
 	metrics.RecordVersionSupport(host, portStr, "1.2", result.SupportsTLS12)
@@ -479,8 +481,7 @@ func determineComplianceStatus(result *tlscheck.TLSCheckResult) securityv1alpha1
 	if result.SupportsTLS12 || result.SupportsTLS13 {
 		return securityv1alpha1.ComplianceStatusCompliant
 	}
-	if result.SupportsTLS10 || result.SupportsTLS11 {
-		// Only legacy TLS versions, no modern TLS support
+	if result.SupportsSSL30 || result.SupportsTLS10 || result.SupportsTLS11 {
 		return securityv1alpha1.ComplianceStatusNonCompliant
 	}
 	return securityv1alpha1.ComplianceStatusUnknown
