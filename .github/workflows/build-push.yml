@@ -68,18 +68,14 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # Set latest tag for main branch (built on every PR merge)
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            # Set stable tag for releases
-            type=raw,value=stable,enable=${{ github.event_name == 'release' }}
-            # Set version tags for releases (v0.1.0)
+            # Unstable tag: overwritten on every push to main
+            type=raw,value=unstable,enable=${{ github.ref == 'refs/heads/main' }}
+            # Latest tag: points to the most recent release
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            # Version tags for releases (v0.1.0, v0.1, v0)
             type=semver,pattern=v{{version}},enable=${{ github.event_name == 'release' }}
-            # Set minor version tag (v0.1)
             type=semver,pattern=v{{major}}.{{minor}},enable=${{ github.event_name == 'release' }}
-            # Set major version tag (v0)
             type=semver,pattern=v{{major}},enable=${{ github.event_name == 'release' }}
-            # Set SHA tag for traceability
-            type=sha,prefix=,format=short
 
       - name: Build and push multi-arch image
         id: build-push

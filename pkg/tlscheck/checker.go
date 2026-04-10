@@ -100,6 +100,11 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 		}
 	}
 
+	// Probe SSLv3 via raw socket (Go's crypto/tls removed SSLv3 support)
+	if ctx.Err() == nil {
+		result.SupportsSSL30 = c.ProbeSSL30(ctx, addr)
+	}
+
 	result.CheckDuration = time.Since(start)
 
 	if !anySuccess {

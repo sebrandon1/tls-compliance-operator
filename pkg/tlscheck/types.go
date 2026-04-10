@@ -55,7 +55,8 @@ func (f FailureReason) IsTransient() bool {
 
 // TLSCheckResult contains the results of a TLS endpoint check
 type TLSCheckResult struct {
-	// TLS version support
+	// SSL/TLS version support
+	SupportsSSL30 bool
 	SupportsTLS10 bool
 	SupportsTLS11 bool
 	SupportsTLS12 bool
