@@ -61,6 +61,24 @@ const (
 	ComplianceStatusUnknown ComplianceStatus = "Unknown"
 )
 
+// PQCReadiness indicates the post-quantum cryptography readiness level of an endpoint.
+// Modeled after the classification used by the upstream OpenShift tls-scanner.
+// +kubebuilder:validation:Enum=PQCReady;TLS13Capable;LegacyTLS;NoPQC
+type PQCReadiness string
+
+const (
+	// PQCReadinessPQCReady means the endpoint supports TLS 1.3 with a post-quantum
+	// key exchange algorithm (e.g. X25519MLKEM768)
+	PQCReadinessPQCReady PQCReadiness = "PQCReady"
+	// PQCReadinessTLS13Capable means the endpoint supports TLS 1.3 but has not
+	// negotiated a post-quantum key exchange algorithm
+	PQCReadinessTLS13Capable PQCReadiness = "TLS13Capable"
+	// PQCReadinessLegacyTLS means the endpoint only supports TLS 1.2 or older
+	PQCReadinessLegacyTLS PQCReadiness = "LegacyTLS"
+	// PQCReadinessNoPQC means no TLS was detected on the endpoint
+	PQCReadinessNoPQC PQCReadiness = "NoPQC"
+)
+
 // TLSVersionSupport indicates which TLS versions an endpoint supports
 type TLSVersionSupport struct {
 	// TLS10 indicates if TLS 1.0 is supported
@@ -172,6 +190,12 @@ type TLSComplianceReportStatus struct {
 	// +optional
 	QuantumReady bool `json:"quantumReady"`
 
+	// PQCReadiness classifies the endpoint's post-quantum cryptography readiness:
+	// PQCReady (TLS 1.3 + ML-KEM), TLS13Capable (TLS 1.3 without ML-KEM),
+	// LegacyTLS (TLS 1.2 or older only), or NoPQC (no TLS detected)
+	// +optional
+	PQCReadiness PQCReadiness `json:"pqcReadiness,omitempty"`
+
 	// CertificateInfo contains details about the TLS certificate
 	// +optional
 	CertificateInfo *CertificateInfo `json:"certificateInfo,omitempty"`
@@ -241,7 +265,7 @@ type TLSComplianceReportStatus struct {
 // +kubebuilder:printcolumn:name="TLS1.3",type=boolean,JSONPath=`.status.tlsVersions.tls13`
 // +kubebuilder:printcolumn:name="TLS1.2",type=boolean,JSONPath=`.status.tlsVersions.tls12`
 // +kubebuilder:printcolumn:name="TLS1.0",type=boolean,JSONPath=`.status.tlsVersions.tls10`
-// +kubebuilder:printcolumn:name="PQC",type=boolean,JSONPath=`.status.quantumReady`
+// +kubebuilder:printcolumn:name="PQC",type=string,JSONPath=`.status.pqcReadiness`
 // +kubebuilder:printcolumn:name="CertExpiry",type=integer,JSONPath=`.status.certificateInfo.daysUntilExpiry`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 

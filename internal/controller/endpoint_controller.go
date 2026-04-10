@@ -60,6 +60,8 @@ const (
 	EventReasonCertificateExpired  = "CertificateExpired"
 	EventReasonEndpointDiscovered  = "EndpointDiscovered"
 	EventReasonRetryExhausted      = "RetryExhausted"
+	EventReasonPQCReady            = "PQCReady"
+	EventReasonPQCNotReady         = "PQCNotReady"
 )
 
 // EndpointReconciler reconciles Service, Ingress, and Route resources
@@ -375,6 +377,7 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 
 	// Store old status for change detection
 	oldComplianceStatus := cr.Status.ComplianceStatus
+	oldPQCReadiness := cr.Status.PQCReadiness
 
 	// Update TLS version support
 	cr.Status.TLSVersions = securityv1alpha1.TLSVersionSupport{
@@ -390,9 +393,11 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	cr.Status.CipherStrengthGrades = cipherGrades
 	cr.Status.OverallCipherGrade = tlscheck.OverallGrade(result.CipherSuites, cipherGrades)
 
-	// Update negotiated curves and quantum readiness
+	// PQCReadiness supersedes QuantumReady with a richer classification;
+	// both are populated for backward compatibility.
 	cr.Status.NegotiatedCurves = result.NegotiatedCurves
-	cr.Status.QuantumReady = isQuantumReady(result.NegotiatedCurves)
+	cr.Status.PQCReadiness = determinePQCReadiness(result)
+	cr.Status.QuantumReady = cr.Status.PQCReadiness == securityv1alpha1.PQCReadinessPQCReady
 
 	// Update certificate info
 	if result.Certificate != nil {
@@ -425,6 +430,7 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	metrics.RecordVersionSupport(host, portStr, "1.1", result.SupportsTLS11)
 	metrics.RecordVersionSupport(host, portStr, "1.2", result.SupportsTLS12)
 	metrics.RecordVersionSupport(host, portStr, "1.3", result.SupportsTLS13)
+	metrics.RecordPQCReadiness(host, portStr, cr.Status.PQCReadiness)
 
 	// Update conditions
 	r.updateConditions(&cr, complianceStatus, result)
@@ -435,7 +441,7 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	}
 
 	// Emit events
-	r.emitComplianceEvents(&cr, oldComplianceStatus, result)
+	r.emitComplianceEvents(&cr, oldComplianceStatus, oldPQCReadiness, result)
 }
 
 // updateRetryStatus updates the CR with intermediate retry status information
@@ -485,6 +491,21 @@ func isQuantumReady(curves map[string]string) bool {
 		}
 	}
 	return false
+}
+
+// determinePQCReadiness classifies the post-quantum cryptography readiness of
+// an endpoint based on its TLS version support and negotiated key exchange curves.
+func determinePQCReadiness(result *tlscheck.TLSCheckResult) securityv1alpha1.PQCReadiness {
+	if !result.SupportsTLS10 && !result.SupportsTLS11 && !result.SupportsTLS12 && !result.SupportsTLS13 {
+		return securityv1alpha1.PQCReadinessNoPQC
+	}
+	if !result.SupportsTLS13 {
+		return securityv1alpha1.PQCReadinessLegacyTLS
+	}
+	if isQuantumReady(result.NegotiatedCurves) {
+		return securityv1alpha1.PQCReadinessPQCReady
+	}
+	return securityv1alpha1.PQCReadinessTLS13Capable
 }
 
 // checkProfileCompliance evaluates the endpoint against OpenShift TLS security
@@ -576,6 +597,33 @@ func (r *EndpointReconciler) updateConditions(cr *securityv1alpha1.TLSCompliance
 		setCondition(&cr.Status.Conditions, certCondition)
 	}
 
+	// PQC Compliant condition
+	pqcCondition := metav1.Condition{
+		Type:               "PQCCompliant",
+		LastTransitionTime: now,
+	}
+
+	switch cr.Status.PQCReadiness {
+	case securityv1alpha1.PQCReadinessPQCReady:
+		pqcCondition.Status = metav1.ConditionTrue
+		pqcCondition.Reason = "PQCReady"
+		pqcCondition.Message = "Endpoint supports TLS 1.3 with post-quantum key exchange (ML-KEM)"
+	case securityv1alpha1.PQCReadinessTLS13Capable:
+		pqcCondition.Status = metav1.ConditionFalse
+		pqcCondition.Reason = "TLS13Capable"
+		pqcCondition.Message = "Endpoint supports TLS 1.3 but has not negotiated a post-quantum key exchange"
+	case securityv1alpha1.PQCReadinessLegacyTLS:
+		pqcCondition.Status = metav1.ConditionFalse
+		pqcCondition.Reason = "LegacyTLS"
+		pqcCondition.Message = "Endpoint only supports TLS 1.2 or older, no path to post-quantum cryptography"
+	default:
+		pqcCondition.Status = metav1.ConditionUnknown
+		pqcCondition.Reason = "NoPQC"
+		pqcCondition.Message = "No TLS detected on endpoint"
+	}
+
+	setCondition(&cr.Status.Conditions, pqcCondition)
+
 	// TLS Profile Compliant condition (OpenShift only)
 	if r.ProfileFetcher != nil {
 		profileCondition := metav1.Condition{
@@ -620,7 +668,7 @@ func setCondition(conditions *[]metav1.Condition, condition metav1.Condition) {
 }
 
 // emitComplianceEvents emits Kubernetes events for compliance changes
-func (r *EndpointReconciler) emitComplianceEvents(cr *securityv1alpha1.TLSComplianceReport, oldStatus securityv1alpha1.ComplianceStatus, result *tlscheck.TLSCheckResult) {
+func (r *EndpointReconciler) emitComplianceEvents(cr *securityv1alpha1.TLSComplianceReport, oldStatus securityv1alpha1.ComplianceStatus, oldPQCReadiness securityv1alpha1.PQCReadiness, result *tlscheck.TLSCheckResult) {
 	if r.Recorder == nil {
 		return
 	}
@@ -636,6 +684,17 @@ func (r *EndpointReconciler) emitComplianceEvents(cr *securityv1alpha1.TLSCompli
 		oldStatus != securityv1alpha1.ComplianceStatusPending {
 		r.Recorder.Event(cr, corev1.EventTypeWarning, EventReasonComplianceChanged,
 			fmt.Sprintf("Compliance status changed from %s to %s for %s:%d", oldStatus, cr.Status.ComplianceStatus, cr.Spec.Host, cr.Spec.Port))
+	}
+
+	// PQC readiness changed
+	if oldPQCReadiness != "" && oldPQCReadiness != cr.Status.PQCReadiness {
+		if cr.Status.PQCReadiness == securityv1alpha1.PQCReadinessPQCReady {
+			r.Recorder.Event(cr, corev1.EventTypeNormal, EventReasonPQCReady,
+				fmt.Sprintf("Endpoint %s:%d is now post-quantum ready (TLS 1.3 + ML-KEM)", cr.Spec.Host, cr.Spec.Port))
+		} else {
+			r.Recorder.Event(cr, corev1.EventTypeWarning, EventReasonPQCNotReady,
+				fmt.Sprintf("PQC readiness changed from %s to %s for %s:%d", oldPQCReadiness, cr.Status.PQCReadiness, cr.Spec.Host, cr.Spec.Port))
+		}
 	}
 
 	// Certificate expiry warnings

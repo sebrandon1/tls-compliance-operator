@@ -26,9 +26,9 @@ The operator begins scanning immediately. Within a few minutes you'll see
 
 ```bash
 $ kubectl get tlsreport
-NAME                                                              HOST                                        PORT    SOURCE    COMPLIANCE   GRADE   TLS1.3   TLS1.2   TLS1.0   PQC     CERTEXPIRY   AGE
-kubernetes-default-443-d74c551f                                   kubernetes.default                           443     Service   Compliant    A       true     true     false    false   365d         5m
-console-openshift-console-apps-crc-testing-443-40b31eb3           console-openshift-console.apps-crc.testing   443     Route     Compliant    A       true     true     false    false   29d          5m
+NAME                                                              HOST                                        PORT    SOURCE    COMPLIANCE   GRADE   TLS1.3   TLS1.2   TLS1.0   PQC            CERTEXPIRY   AGE
+kubernetes-default-443-d74c551f                                   kubernetes.default                           443     Service   Compliant    A       true     true     false    TLS13Capable   365d         5m
+console-openshift-console-apps-crc-testing-443-40b31eb3           console-openshift-console.apps-crc.testing   443     Route     Compliant    A       true     true     false    TLS13Capable   29d          5m
 ```
 
 ## OpenShift Notes

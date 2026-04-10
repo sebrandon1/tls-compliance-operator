@@ -30,7 +30,7 @@ var CSVHeader = []string{
 	"Host", "Port", "Source", "Namespace", "Name",
 	"Compliance", "Grade",
 	"TLS1.3", "TLS1.2", "TLS1.1", "TLS1.0",
-	"QuantumReady",
+	"QuantumReady", "PQCReadiness",
 	"CertExpiry", "CertIssuer",
 }
 
@@ -80,6 +80,7 @@ func reportToCSVRow(r *securityv1alpha1.TLSComplianceReport) []string {
 		strconv.FormatBool(r.Status.TLSVersions.TLS11),
 		strconv.FormatBool(r.Status.TLSVersions.TLS10),
 		strconv.FormatBool(r.Status.QuantumReady),
+		string(r.Status.PQCReadiness),
 		certExpiry,
 		certIssuer,
 	}

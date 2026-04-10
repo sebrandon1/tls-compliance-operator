@@ -4,10 +4,10 @@
 
 ```bash
 $ kubectl get tlsreport
-NAME                                                           HOST                                                  PORT    SOURCE    COMPLIANCE   GRADE   TLS1.3   TLS1.2   TLS1.0   PQC     CERTEXPIRY   AGE
-rhcos4-moderate-master-rs-openshift-compliance-8443-03744f25   rhcos4-moderate-master-rs.openshift-compliance         8443    Service   Compliant    A       true     false    false    false   0            5m
-google-com-443-01d44386                                        google.com                                            443     Target    Compliant    B       true     true     true     true    53           2m
-ocp4-cis-rs-openshift-compliance-8443-aab74008                 ocp4-cis-rs.openshift-compliance                      8443    Service   Closed               false    false    false    false                6m
+NAME                                                           HOST                                                  PORT    SOURCE    COMPLIANCE   GRADE   TLS1.3   TLS1.2   TLS1.0   PQC            CERTEXPIRY   AGE
+rhcos4-moderate-master-rs-openshift-compliance-8443-03744f25   rhcos4-moderate-master-rs.openshift-compliance         8443    Service   Compliant    A       true     false    false    TLS13Capable   0            5m
+google-com-443-01d44386                                        google.com                                            443     Target    Compliant    B       true     true     true     PQCReady       53           2m
+ocp4-cis-rs-openshift-compliance-8443-aab74008                 ocp4-cis-rs.openshift-compliance                      8443    Service   Closed               false    false    false    NoPQC                       6m
 ```
 
 ### What the Columns Mean
@@ -17,7 +17,7 @@ ocp4-cis-rs-openshift-compliance-8443-aab74008                 ocp4-cis-rs.opens
 | **COMPLIANCE** | Overall status: Compliant, NonCompliant, Closed, Timeout, NoTLS, etc. |
 | **GRADE** | Cipher strength grade (A-F). A = strong ciphers only. |
 | **TLS1.3/1.2/1.0** | Whether each TLS version is supported. |
-| **PQC** | Post-quantum cryptography readiness (e.g. X25519MLKEM768). |
+| **PQC** | Post-quantum cryptography readiness: PQCReady (TLS 1.3 + ML-KEM), TLS13Capable (TLS 1.3 without ML-KEM), LegacyTLS (TLS 1.2 or older), NoPQC (no TLS). |
 | **CERTEXPIRY** | Days until certificate expiration. |
 | **SOURCE** | How the endpoint was discovered: Service, Ingress, Route, Pod, or Target. |
 
@@ -80,13 +80,14 @@ Certificate Info:
   Subject:     CN=*.google.com
 ```
 
-**Post-Quantum Readiness** — key exchange curves per TLS version:
+**Post-Quantum Readiness** — key exchange curves and PQC classification:
 
 ```
 Negotiated Curves:
   TLS 1.2:  X25519
   TLS 1.3:  X25519MLKEM768
-Quantum Ready:  true
+Quantum Ready:    true
+PQC Readiness:    PQCReady
 ```
 
 **OpenShift TLS Profile Compliance** (OpenShift clusters only):
@@ -104,6 +105,7 @@ API Server Profile Compliance:
 Conditions:
   Type: TLSCompliant      Status: True   Message: Endpoint supports modern TLS (1.2 or 1.3)
   Type: CertificateValid  Status: True   Message: TLS certificate is valid for 53 more days
+  Type: PQCCompliant      Status: True   Message: Endpoint supports TLS 1.3 with post-quantum key exchange (ML-KEM)
 ```
 
 ## Filtering Reports
