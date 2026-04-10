@@ -39,13 +39,12 @@ func GradeCipherSuite(name string) CipherGrade {
 		return GradeD
 	}
 
+	hasEphemeral := CipherHasForwardSecrecy(name)
+
 	// TLS 1.3 ciphers are all Grade A (AEAD with ephemeral key exchange)
 	if !strings.Contains(name, "_WITH_") {
 		return GradeA
 	}
-
-	// Check for ephemeral key exchange (ECDHE or DHE)
-	hasEphemeral := strings.HasPrefix(name, "TLS_ECDHE_") || strings.HasPrefix(name, "TLS_DHE_")
 
 	// Check for AEAD cipher (GCM or CHACHA20_POLY1305)
 	isAEAD := strings.Contains(name, "GCM") || strings.Contains(name, "CHACHA20_POLY1305")
