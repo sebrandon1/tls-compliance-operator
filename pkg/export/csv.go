@@ -67,14 +67,16 @@ func extractCertInfo(r *securityv1alpha1.TLSComplianceReport) (certExpiry, certI
 }
 
 // formatKeyExchangeTypes returns a compact string of unique key exchange types
-// sorted alphabetically (e.g. "ECDHE,TLS13").
+// across all TLS versions, sorted alphabetically (e.g. "ECDHE,TLS13").
 func formatKeyExchangeTypes(keTypes map[string]string) string {
 	if len(keTypes) == 0 {
 		return ""
 	}
 	seen := make(map[string]bool)
 	for _, ke := range keTypes {
-		seen[ke] = true
+		for _, part := range strings.Split(ke, ",") {
+			seen[part] = true
+		}
 	}
 	unique := make([]string, 0, len(seen))
 	for ke := range seen {

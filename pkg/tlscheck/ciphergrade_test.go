@@ -136,26 +136,54 @@ func TestKeyExchangeType(t *testing.T) {
 }
 
 func TestKeyExchangeTypes(t *testing.T) {
-	cipherSuites := map[string][]string{
-		"TLS 1.3": {"TLS_AES_128_GCM_SHA256"},
-		"TLS 1.2": {"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
-		"TLS 1.0": {"TLS_RSA_WITH_AES_128_CBC_SHA"},
+	tests := []struct {
+		name         string
+		cipherSuites map[string][]string
+		expected     map[string]string
+	}{
+		{
+			name: "single cipher per version",
+			cipherSuites: map[string][]string{
+				"TLS 1.3": {"TLS_AES_128_GCM_SHA256"},
+				"TLS 1.2": {"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
+				"TLS 1.0": {"TLS_RSA_WITH_AES_128_CBC_SHA"},
+			},
+			expected: map[string]string{
+				"TLS 1.3": "TLS13",
+				"TLS 1.2": "ECDHE",
+				"TLS 1.0": "RSA",
+			},
+		},
+		{
+			name: "mixed key exchange in same version",
+			cipherSuites: map[string][]string{
+				"TLS 1.2": {
+					"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+					"TLS_RSA_WITH_AES_128_CBC_SHA",
+				},
+			},
+			expected: map[string]string{
+				"TLS 1.2": "ECDHE,RSA",
+			},
+		},
+		{
+			name:         "empty",
+			cipherSuites: map[string][]string{},
+			expected:     map[string]string{},
+		},
 	}
 
-	result := KeyExchangeTypes(cipherSuites)
-
-	expected := map[string]string{
-		"TLS 1.3": "TLS13",
-		"TLS 1.2": "ECDHE",
-		"TLS 1.0": "RSA",
-	}
-
-	for version, expectedKE := range expected {
-		if got, ok := result[version]; !ok {
-			t.Errorf("missing key exchange for %q", version)
-		} else if got != expectedKE {
-			t.Errorf("KeyExchangeTypes[%q] = %q, want %q", version, got, expectedKE)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := KeyExchangeTypes(tt.cipherSuites)
+			for version, expectedKE := range tt.expected {
+				if got, ok := result[version]; !ok {
+					t.Errorf("missing key exchange for %q", version)
+				} else if got != expectedKE {
+					t.Errorf("KeyExchangeTypes[%q] = %q, want %q", version, got, expectedKE)
+				}
+			}
+		})
 	}
 }
 
