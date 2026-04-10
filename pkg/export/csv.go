@@ -20,7 +20,9 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
+	"strings"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 )
@@ -28,7 +30,7 @@ import (
 // CSVHeader is the header row for CSV exports.
 var CSVHeader = []string{
 	"Host", "Port", "Source", "Namespace", "Name",
-	"Compliance", "Grade", "ForwardSecrecy",
+	"Compliance", "Grade", "ForwardSecrecy", "KeyExchange",
 	"TLS1.3", "TLS1.2", "TLS1.1", "TLS1.0",
 	"QuantumReady", "PQCReadiness",
 	"CertExpiry", "CertIssuer",
@@ -64,6 +66,24 @@ func extractCertInfo(r *securityv1alpha1.TLSComplianceReport) (certExpiry, certI
 	return
 }
 
+// formatKeyExchangeTypes returns a compact string of unique key exchange types
+// sorted alphabetically (e.g. "ECDHE,TLS13").
+func formatKeyExchangeTypes(keTypes map[string]string) string {
+	if len(keTypes) == 0 {
+		return ""
+	}
+	seen := make(map[string]bool)
+	for _, ke := range keTypes {
+		seen[ke] = true
+	}
+	unique := make([]string, 0, len(seen))
+	for ke := range seen {
+		unique = append(unique, ke)
+	}
+	sort.Strings(unique)
+	return strings.Join(unique, ",")
+}
+
 func reportToCSVRow(r *securityv1alpha1.TLSComplianceReport) []string {
 	certExpiry, certIssuer := extractCertInfo(r)
 
@@ -76,6 +96,7 @@ func reportToCSVRow(r *securityv1alpha1.TLSComplianceReport) []string {
 		string(r.Status.ComplianceStatus),
 		r.Status.OverallCipherGrade,
 		strconv.FormatBool(r.Status.ForwardSecrecy),
+		formatKeyExchangeTypes(r.Status.KeyExchangeTypes),
 		strconv.FormatBool(r.Status.TLSVersions.TLS13),
 		strconv.FormatBool(r.Status.TLSVersions.TLS12),
 		strconv.FormatBool(r.Status.TLSVersions.TLS11),

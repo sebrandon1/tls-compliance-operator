@@ -85,6 +85,32 @@ func AllCiphersHaveForwardSecrecy(cipherSuites map[string][]string) bool {
 	return found
 }
 
+// KeyExchangeType extracts the key exchange algorithm from an IANA cipher suite name.
+// Returns "ECDHE", "DHE", "RSA", or "TLS13" (TLS 1.3 uses implicit ephemeral exchange).
+func KeyExchangeType(name string) string {
+	if !strings.Contains(name, "_WITH_") {
+		return "TLS13"
+	}
+	if strings.HasPrefix(name, "TLS_ECDHE_") {
+		return "ECDHE"
+	}
+	if strings.HasPrefix(name, "TLS_DHE_") {
+		return "DHE"
+	}
+	return "RSA"
+}
+
+// KeyExchangeTypes returns the key exchange type used per TLS version.
+func KeyExchangeTypes(cipherSuites map[string][]string) map[string]string {
+	result := make(map[string]string, len(cipherSuites))
+	for version, suites := range cipherSuites {
+		if len(suites) > 0 {
+			result[version] = KeyExchangeType(suites[0])
+		}
+	}
+	return result
+}
+
 // GradeCipherSuites returns per-cipher grades for a map of TLS version to cipher suite names.
 func GradeCipherSuites(cipherSuites map[string][]string) map[string]string {
 	grades := make(map[string]string)

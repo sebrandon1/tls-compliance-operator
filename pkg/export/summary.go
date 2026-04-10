@@ -59,18 +59,18 @@ var knownSourceKinds = []securityv1alpha1.SourceKind{
 
 // Summary holds aggregated statistics for a set of TLS compliance reports.
 type Summary struct {
-	Total               int
-	ByStatus            map[securityv1alpha1.ComplianceStatus]int
-	BySourceKind        map[securityv1alpha1.SourceKind]int
-	ByPQCReadiness      map[securityv1alpha1.PQCReadiness]int
+	Total                 int
+	ByStatus              map[securityv1alpha1.ComplianceStatus]int
+	BySourceKind          map[securityv1alpha1.SourceKind]int
+	ByPQCReadiness        map[securityv1alpha1.PQCReadiness]int
 	ForwardSecrecyCount   int
 	CompliancePercent     float64
 	ForwardSecrecyPercent float64
 	PQCReadyPercent       float64
-	CertExpired         int
-	CertExpiring7d      int
-	CertExpiring30d     int
-	CertExpiring90d     int
+	CertExpired           int
+	CertExpiring7d        int
+	CertExpiring30d       int
+	CertExpiring90d       int
 }
 
 // ComputeSummary calculates summary statistics from a slice of reports.
