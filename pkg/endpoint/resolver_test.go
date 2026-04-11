@@ -862,6 +862,87 @@ func TestExtractFromPod_GRPCProbePortSkipped(t *testing.T) {
 	}
 }
 
+func TestExtractFromPod_IPv6PodIP(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "app", Ports: []corev1.ContainerPort{{ContainerPort: 443}}},
+			},
+		},
+		Status: corev1.PodStatus{
+			Phase:  corev1.PodRunning,
+			PodIP:  "fd00::1",
+			PodIPs: []corev1.PodIP{{IP: "fd00::1"}},
+		},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint for IPv6 pod, got %d", len(endpoints))
+	}
+	if endpoints[0].Host != "fd00::1" {
+		t.Errorf("host = %q, want fd00::1", endpoints[0].Host)
+	}
+}
+
+func TestExtractFromPod_DualStack(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "app", Ports: []corev1.ContainerPort{{ContainerPort: 443}}},
+			},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			PodIP: "10.244.1.5",
+			PodIPs: []corev1.PodIP{
+				{IP: "10.244.1.5"},
+				{IP: "fd00::5"},
+			},
+		},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 2 {
+		t.Fatalf("expected 2 endpoints for dual-stack pod, got %d", len(endpoints))
+	}
+
+	hosts := map[string]bool{}
+	for _, ep := range endpoints {
+		hosts[ep.Host] = true
+	}
+	if !hosts["10.244.1.5"] {
+		t.Error("missing IPv4 endpoint")
+	}
+	if !hosts["fd00::5"] {
+		t.Error("missing IPv6 endpoint")
+	}
+}
+
+func TestGenerateCRName_IPv6(t *testing.T) {
+	ep := Endpoint{
+		Host:            "2001:db8::1",
+		Port:            443,
+		SourceKind:      "Pod",
+		SourceNamespace: "default",
+		SourceName:      "my-pod",
+	}
+
+	name := GenerateCRName(ep)
+
+	if len(name) > MaxCRNameLength {
+		t.Errorf("name too long: %d > %d", len(name), MaxCRNameLength)
+	}
+	if strings.Contains(name, ":") {
+		t.Errorf("name contains colon: %q", name)
+	}
+	if !strings.Contains(name, "2001-db8--1") {
+		t.Errorf("expected readable IPv6 in name, got: %q", name)
+	}
+}
+
 func TestExtractFromPod_DefaultProtocol(t *testing.T) {
 	// When protocol is not specified, it defaults to TCP
 	pod := &corev1.Pod{

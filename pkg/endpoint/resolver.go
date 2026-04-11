@@ -127,9 +127,10 @@ func GenerateCRName(ep Endpoint) string {
 	identity := fmt.Sprintf("%s/%s/%s/%s/%d", ep.SourceKind, ep.SourceNamespace, ep.SourceName, ep.Host, ep.Port)
 	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(identity)))[:8]
 
-	// Sanitize host for use in K8s name
+	// Sanitize host for use in K8s name (dots and colons become hyphens)
 	sanitized := strings.ToLower(ep.Host)
 	sanitized = strings.ReplaceAll(sanitized, ".", "-")
+	sanitized = strings.ReplaceAll(sanitized, ":", "-")
 	sanitized = sanitizeRegex.ReplaceAllString(sanitized, "")
 
 	// Trim trailing hyphens
@@ -232,13 +233,39 @@ func resolveProbePort(port intstr.IntOrString, portNames map[string]int32) int32
 	return 0
 }
 
+// podIPs returns all IP addresses for a pod, supporting dual-stack clusters.
+// Falls back to the singular PodIP field for older clusters.
+func podIPs(pod *corev1.Pod) []string {
+	if len(pod.Status.PodIPs) > 0 {
+		ips := make([]string, 0, len(pod.Status.PodIPs))
+		for _, pip := range pod.Status.PodIPs {
+			if pip.IP != "" {
+				ips = append(ips, pip.IP)
+			}
+		}
+		if len(ips) > 0 {
+			return ips
+		}
+	}
+	if pod.Status.PodIP != "" {
+		return []string{pod.Status.PodIP}
+	}
+	return nil
+}
+
 // ExtractFromPod returns TLS endpoints from a Pod.
 // It inspects container ports for TLS-likely ports (443, 8443, or named https/https-*).
+// On dual-stack clusters, endpoints are created for each pod IP (IPv4 and IPv6).
 // Ports used only by HTTP/TCP health probes are skipped (plaintext expected).
 // HTTPS health probe ports are still included but marked as probe ports.
 // Only Running pods with a PodIP are considered. Init containers are skipped.
 func ExtractFromPod(pod *corev1.Pod) []Endpoint {
-	if pod.Status.Phase != corev1.PodRunning || pod.Status.PodIP == "" {
+	if pod.Status.Phase != corev1.PodRunning {
+		return nil
+	}
+
+	ips := podIPs(pod)
+	if len(ips) == 0 {
 		return nil
 	}
 
@@ -263,14 +290,16 @@ func ExtractFromPod(pod *corev1.Pod) []Endpoint {
 					continue
 				}
 
-				endpoints = append(endpoints, Endpoint{
-					Host:            pod.Status.PodIP,
-					Port:            port.ContainerPort,
-					SourceKind:      "Pod",
-					SourceNamespace: pod.Namespace,
-					SourceName:      pod.Name,
-					IsProbePort:     isProbe,
-				})
+				for _, ip := range ips {
+					endpoints = append(endpoints, Endpoint{
+						Host:            ip,
+						Port:            port.ContainerPort,
+						SourceKind:      "Pod",
+						SourceNamespace: pod.Namespace,
+						SourceName:      pod.Name,
+						IsProbePort:     isProbe,
+					})
+				}
 			}
 		}
 	}

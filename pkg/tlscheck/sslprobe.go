@@ -149,4 +149,3 @@ func isSSL30ServerHello(conn net.Conn) bool {
 	// Server version in the ServerHello body must be SSL 3.0
 	return handshakeHeader[4] == sslVersionSSL30Major && handshakeHeader[5] == sslVersionSSL30Minor
 }
-
