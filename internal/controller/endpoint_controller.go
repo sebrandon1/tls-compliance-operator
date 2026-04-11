@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -248,7 +249,7 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep endpoint.En
 					Status:             metav1.ConditionTrue,
 					LastTransitionTime: now,
 					Reason:             "EndpointDiscovered",
-					Message:            fmt.Sprintf("Endpoint %s:%d discovered from %s/%s", ep.Host, ep.Port, ep.SourceNamespace, ep.SourceName),
+					Message:            fmt.Sprintf("Endpoint %s discovered from %s/%s", hostPort(ep.Host, ep.Port), ep.SourceNamespace, ep.SourceName),
 				},
 			},
 		}
@@ -261,7 +262,7 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep endpoint.En
 
 		if r.Recorder != nil {
 			r.Recorder.Event(cr, corev1.EventTypeNormal, EventReasonEndpointDiscovered,
-				fmt.Sprintf("Discovered TLS endpoint %s:%d from %s %s/%s", ep.Host, ep.Port, ep.SourceKind, ep.SourceNamespace, ep.SourceName))
+				fmt.Sprintf("Discovered TLS endpoint %s from %s %s/%s", hostPort(ep.Host, ep.Port), ep.SourceKind, ep.SourceNamespace, ep.SourceName))
 		}
 
 		// Launch async TLS check using the caller's context for cancellation
@@ -364,8 +365,8 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 			metrics.RecordRetriesExhausted()
 			if r.Recorder != nil {
 				r.Recorder.Event(&cr, corev1.EventTypeWarning, EventReasonRetryExhausted,
-					fmt.Sprintf("TLS check retries exhausted for %s:%d after %d attempts: %s",
-						host, port, maxAttempts, result.FailureReason))
+					fmt.Sprintf("TLS check retries exhausted for %s after %d attempts: %s",
+						hostPort(host, int32(port)), maxAttempts, result.FailureReason))
 			}
 		}
 		return
@@ -681,24 +682,24 @@ func (r *EndpointReconciler) emitComplianceEvents(cr *securityv1alpha1.TLSCompli
 	// Non-compliance detected — only legacy TLS, no modern TLS support
 	if cr.Status.ComplianceStatus == securityv1alpha1.ComplianceStatusNonCompliant {
 		r.Recorder.Event(cr, corev1.EventTypeWarning, EventReasonTLSNonCompliant,
-			fmt.Sprintf("Endpoint %s:%d only supports legacy TLS versions (no TLS 1.2 or 1.3)", cr.Spec.Host, cr.Spec.Port))
+			fmt.Sprintf("Endpoint %s only supports legacy TLS versions (no TLS 1.2 or 1.3)", hostPort(cr.Spec.Host, cr.Spec.Port)))
 	}
 
 	// Compliance status changed
 	if oldStatus != "" && oldStatus != cr.Status.ComplianceStatus &&
 		oldStatus != securityv1alpha1.ComplianceStatusPending {
 		r.Recorder.Event(cr, corev1.EventTypeWarning, EventReasonComplianceChanged,
-			fmt.Sprintf("Compliance status changed from %s to %s for %s:%d", oldStatus, cr.Status.ComplianceStatus, cr.Spec.Host, cr.Spec.Port))
+			fmt.Sprintf("Compliance status changed from %s to %s for %s", oldStatus, cr.Status.ComplianceStatus, hostPort(cr.Spec.Host, cr.Spec.Port)))
 	}
 
 	// PQC readiness changed
 	if oldPQCReadiness != "" && oldPQCReadiness != cr.Status.PQCReadiness {
 		if cr.Status.PQCReadiness == securityv1alpha1.PQCReadinessPQCReady {
 			r.Recorder.Event(cr, corev1.EventTypeNormal, EventReasonPQCReady,
-				fmt.Sprintf("Endpoint %s:%d is now post-quantum ready (TLS 1.3 + ML-KEM)", cr.Spec.Host, cr.Spec.Port))
+				fmt.Sprintf("Endpoint %s is now post-quantum ready (TLS 1.3 + ML-KEM)", hostPort(cr.Spec.Host, cr.Spec.Port)))
 		} else {
 			r.Recorder.Event(cr, corev1.EventTypeWarning, EventReasonPQCNotReady,
-				fmt.Sprintf("PQC readiness changed from %s to %s for %s:%d", oldPQCReadiness, cr.Status.PQCReadiness, cr.Spec.Host, cr.Spec.Port))
+				fmt.Sprintf("PQC readiness changed from %s to %s for %s", oldPQCReadiness, cr.Status.PQCReadiness, hostPort(cr.Spec.Host, cr.Spec.Port)))
 		}
 	}
 
@@ -706,10 +707,10 @@ func (r *EndpointReconciler) emitComplianceEvents(cr *securityv1alpha1.TLSCompli
 	if result.Certificate != nil {
 		if result.Certificate.IsExpired {
 			r.Recorder.Event(cr, corev1.EventTypeWarning, EventReasonCertificateExpired,
-				fmt.Sprintf("TLS certificate has expired for %s:%d", cr.Spec.Host, cr.Spec.Port))
+				fmt.Sprintf("TLS certificate has expired for %s", hostPort(cr.Spec.Host, cr.Spec.Port)))
 		} else if result.Certificate.DaysUntilExpiry <= r.CertExpiryDays {
 			r.Recorder.Event(cr, corev1.EventTypeWarning, EventReasonCertificateExpiring,
-				fmt.Sprintf("TLS certificate for %s:%d expires in %d days", cr.Spec.Host, cr.Spec.Port, result.Certificate.DaysUntilExpiry))
+				fmt.Sprintf("TLS certificate for %s expires in %d days", hostPort(cr.Spec.Host, cr.Spec.Port), result.Certificate.DaysUntilExpiry))
 		}
 	}
 }
@@ -1097,6 +1098,12 @@ func failureReasonToComplianceStatus(reason tlscheck.FailureReason) securityv1al
 	default:
 		return securityv1alpha1.ComplianceStatusUnreachable
 	}
+}
+
+// hostPort formats a host and port for display, using net.JoinHostPort to
+// correctly bracket IPv6 addresses (e.g. "[::1]:443").
+func hostPort(host string, port int32) string {
+	return net.JoinHostPort(host, fmt.Sprintf("%d", port))
 }
 
 // ParseNamespaceList parses a comma-separated namespace string into a map for O(1) lookups.
