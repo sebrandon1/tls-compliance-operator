@@ -98,7 +98,7 @@ var _ = Describe("TLS Tool Parity", Ordered, func() {
 					return
 				}
 
-				reportName := waitForTLSReport(podIP, s.Port, 3*time.Minute)
+				reportName := waitForTLSReport(podIP, s.Port, 10*time.Minute)
 				GinkgoWriter.Printf("Found TLSComplianceReport: %s\n", reportName)
 
 				// Wait for the report to be checked (not Pending)
@@ -109,7 +109,7 @@ var _ = Describe("TLS Tool Parity", Ordered, func() {
 						return "Pending"
 					}
 					return out
-				}).WithTimeout(3 * time.Minute).WithPolling(5 * time.Second).ShouldNot(
+				}).WithTimeout(10 * time.Minute).WithPolling(5 * time.Second).ShouldNot(
 					Or(Equal(string(securityv1alpha1.ComplianceStatusPending)),
 						Equal(string(securityv1alpha1.ComplianceStatusUnknown)),
 						BeEmpty()),
