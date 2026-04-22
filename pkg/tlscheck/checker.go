@@ -95,6 +95,10 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 			if cert != nil && result.Certificate == nil {
 				result.Certificate = cert
 			}
+		} else if supported && err != nil {
+			// mTLS: version is supported but handshake failed due to client cert requirement
+			anySuccess = true
+			lastErrors = append(lastErrors, err)
 		} else if err != nil {
 			lastErrors = append(lastErrors, err)
 		}
@@ -110,6 +114,12 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 	if !anySuccess {
 		result.FailureReason = classifyFailure(lastErrors)
 		return result, fmt.Errorf("could not establish TLS connection to %s on any TLS version", addr)
+	}
+
+	// mTLS: we detected supported versions but no connection fully succeeded
+	if len(lastErrors) > 0 && classifyFailure(lastErrors) == FailureReasonMutualTLSRequired {
+		result.FailureReason = FailureReasonMutualTLSRequired
+		return result, fmt.Errorf("endpoint %s requires mutual TLS (client certificate)", addr)
 	}
 
 	return result, nil
@@ -174,6 +184,12 @@ func classifyFailure(errs []error) FailureReason {
 	return FailureReasonUnreachable
 }
 
+func isMTLSError(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "certificate required") ||
+		strings.Contains(msg, "bad certificate")
+}
+
 // tryTLSVersion attempts to connect with a specific TLS version
 func (c *TLSChecker) tryTLSVersion(ctx context.Context, addr, serverName string, version uint16) (supported bool, cipherSuite string, curveName string, cert *CertificateDetails, err error) {
 	dialer := &net.Dialer{
@@ -189,6 +205,10 @@ func (c *TLSChecker) tryTLSVersion(ctx context.Context, addr, serverName string,
 
 	conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
 	if err != nil {
+		// mTLS: server requires a client certificate but we proved it speaks this TLS version
+		if isMTLSError(err) {
+			return true, "", "", nil, err
+		}
 		return false, "", "", nil, err
 	}
 	defer conn.Close() //nolint:errcheck
