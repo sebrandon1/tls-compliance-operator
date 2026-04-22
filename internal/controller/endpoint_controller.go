@@ -309,7 +309,7 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 		}
 
 		// Non-transient failure — no retry
-		if !result.FailureReason.IsTransient() {
+		if result == nil || !result.FailureReason.IsTransient() {
 			break
 		}
 
@@ -352,7 +352,12 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	portStr := fmt.Sprintf("%d", port)
 
 	if checkErr != nil {
-		cr.Status.ComplianceStatus = failureReasonToComplianceStatus(result.FailureReason)
+		var failReason tlscheck.FailureReason
+		if result != nil {
+			failReason = result.FailureReason
+		}
+
+		cr.Status.ComplianceStatus = failureReasonToComplianceStatus(failReason)
 		cr.Status.ConsecutiveErrors++
 		cr.Status.LastError = checkErr.Error()
 
@@ -360,13 +365,12 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 			logger.Error(err, "failed to update TLSComplianceReport after check error")
 		}
 
-		// Emit retry exhausted event if retries were attempted on a transient failure
-		if result.FailureReason.IsTransient() && r.MaxRetries > 0 {
+		if failReason.IsTransient() && r.MaxRetries > 0 {
 			metrics.RecordRetriesExhausted()
 			if r.Recorder != nil {
 				r.Recorder.Event(&cr, corev1.EventTypeWarning, EventReasonRetryExhausted,
 					fmt.Sprintf("TLS check retries exhausted for %s after %d attempts: %s",
-						hostPort(host, int32(port)), maxAttempts, result.FailureReason))
+						hostPort(host, int32(port)), maxAttempts, failReason))
 			}
 		}
 		return
