@@ -1,0 +1,51 @@
+name: Build Test Server Image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'test/testserver/**'
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+permissions: read-all
+
+env:
+  REGISTRY: quay.io
+  IMAGE_NAME: bapalm/tls-test-server
+
+jobs:
+  build:
+    name: Build and Push Test Server
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to Quay.io
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v7
+        with:
+          context: test/testserver
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha,scope=testserver
+          cache-to: type=gha,mode=max,scope=testserver
