@@ -88,6 +88,20 @@ test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expect
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
 
+TEST_SERVER_IMG ?= quay.io/bapalm/tls-test-server:latest
+
+.PHONY: test-parity
+test-parity: manifests generate fmt vet ## Run TLS parity tests comparing operator results with tls-scanner.
+	go test -tags=parity ./test/parity/ -v -ginkgo.v -timeout 30m
+
+.PHONY: docker-build-testserver
+docker-build-testserver: ## Build the TLS test server image.
+	$(CONTAINER_TOOL) build -t $(TEST_SERVER_IMG) -f test/testserver/Dockerfile test/testserver/
+
+.PHONY: docker-push-testserver
+docker-push-testserver: ## Push the TLS test server image.
+	$(CONTAINER_TOOL) push $(TEST_SERVER_IMG)
+
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
 	"$(GOLANGCI_LINT)" run
