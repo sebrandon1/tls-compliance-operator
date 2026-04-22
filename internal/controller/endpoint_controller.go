@@ -355,6 +355,15 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 		var failReason tlscheck.FailureReason
 		if result != nil {
 			failReason = result.FailureReason
+
+			// Populate TLS version info even on error (e.g. mTLS detected versions)
+			cr.Status.TLSVersions = securityv1alpha1.TLSVersionSupport{
+				SSL30: result.SupportsSSL30,
+				TLS10: result.SupportsTLS10,
+				TLS11: result.SupportsTLS11,
+				TLS12: result.SupportsTLS12,
+				TLS13: result.SupportsTLS13,
+			}
 		}
 
 		cr.Status.ComplianceStatus = failureReasonToComplianceStatus(failReason)
