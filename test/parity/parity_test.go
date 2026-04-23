@@ -101,19 +101,19 @@ var _ = Describe("TLS Tool Parity", Ordered, func() {
 				reportName := waitForTLSReport(s.PodName, podIP, s.Port, 10*time.Minute)
 				GinkgoWriter.Printf("Found TLSComplianceReport: %s\n", reportName)
 
-				// Wait for the report to be checked (not Pending)
-				Eventually(func() string {
-					out, err := kubectl("get", "tlsreport", reportName,
+				// Wait for the report to be fully checked (not Pending and no retries in progress)
+				Eventually(func() bool {
+					status, err := kubectl("get", "tlsreport", reportName,
 						"-o", "jsonpath={.status.complianceStatus}")
-					if err != nil {
-						return "Pending"
+					if err != nil || status == "" ||
+						status == string(securityv1alpha1.ComplianceStatusPending) ||
+						status == string(securityv1alpha1.ComplianceStatusUnknown) {
+						return false
 					}
-					return out
-				}).WithTimeout(10 * time.Minute).WithPolling(5 * time.Second).ShouldNot(
-					Or(Equal(string(securityv1alpha1.ComplianceStatusPending)),
-						Equal(string(securityv1alpha1.ComplianceStatusUnknown)),
-						BeEmpty()),
-				)
+					retryCount, _ := kubectl("get", "tlsreport", reportName,
+						"-o", "jsonpath={.status.retryCount}")
+					return retryCount == "" || retryCount == "0"
+				}).WithTimeout(10 * time.Minute).WithPolling(5 * time.Second).Should(BeTrue())
 
 				operatorResult = getOperatorResult(reportName)
 				GinkgoWriter.Printf("Operator result: TLS=%v versions=[1.0=%v 1.1=%v 1.2=%v 1.3=%v] mTLS=%v\n",
