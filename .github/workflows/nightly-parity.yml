@@ -71,5 +71,9 @@ jobs:
           kubectl get events -n tls-compliance-operator-system --sort-by=.lastTimestamp || true
           echo "=== Parity Test Namespace ==="
           kubectl get all -n parity-test || true
+          echo "=== Parity Test Pod Details ==="
+          kubectl describe pods -n parity-test || true
+          echo "=== Parity Test Events ==="
+          kubectl get events -n parity-test --sort-by=.lastTimestamp || true
           echo "=== TLSComplianceReport Resources ==="
           kubectl get tlscompliancereports -A -o yaml || true

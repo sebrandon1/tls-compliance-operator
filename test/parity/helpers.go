@@ -71,6 +71,7 @@ metadata:
 spec:
   securityContext:
     runAsNonRoot: true
+    runAsUser: 65534
     seccompProfile:
       type: RuntimeDefault
   containers:
