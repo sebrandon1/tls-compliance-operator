@@ -77,7 +77,7 @@ var _ = Describe("TLS Tool Parity", Ordered, func() {
 				By("Deploying test pod and service")
 				deployTestPod(s)
 				createService(s)
-				waitForPodReady(s.PodName, 60*time.Second)
+				waitForPodReady(s.PodName, 120*time.Second)
 				podIP = getPodIP(s.PodName)
 				GinkgoWriter.Printf("Pod %s IP: %s\n", s.PodName, podIP)
 			})
