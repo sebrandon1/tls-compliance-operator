@@ -8,26 +8,10 @@ on:
 permissions: read-all
 
 jobs:
-  parity-openshift:
-    name: TLS Parity Tests on OpenShift
+  parity-kubernetes:
+    name: TLS Parity Tests on Kubernetes
     runs-on: ubuntu-latest
     steps:
-      - name: Check Red Hat Status
-        uses: palmsoftware/redhat-status@v0
-        with:
-          components: |
-            api.openshift.com
-            developers.redhat.com
-
-      - name: Check for PULL_SECRET
-        env:
-          PULL_SECRET: ${{ secrets.PULL_SECRET }}
-        run: |
-          if [ -z "$PULL_SECRET" ]; then
-            echo "::error::PULL_SECRET not configured, cannot run parity tests"
-            exit 1
-          fi
-
       - name: Clone the code
         uses: actions/checkout@v6
 
@@ -36,50 +20,43 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Create OpenShift cluster
-        uses: palmsoftware/quick-ocp@v0.0.32
+      - name: Create Kubernetes cluster
+        uses: palmsoftware/quick-k8s@v0.0.62
         with:
-          ocpPullSecret: $OCP_PULL_SECRET
-          bundleCache: true
-          desiredOCPVersion: "4.20"
-          waitForOperatorsReady: true
-        env:
-          OCP_PULL_SECRET: ${{ secrets.PULL_SECRET }}
+          numControlPlaneNodes: 1
+          numWorkerNodes: 1
+          installLocalRegistry: 'true'
+          localRegistryPort: '5001'
 
-      - name: Setup OpenShift internal registry access
+      - name: Configure containerd for local registry
         run: |
-          # Expose the internal registry
-          oc patch configs.imageregistry.operator.openshift.io/cluster --type merge -p '{"spec":{"defaultRoute":true}}'
-          # Wait for the route to be available
-          sleep 15
-          # Get the registry route
-          REGISTRY_HOST=$(oc get route default-route -n openshift-image-registry --template='{{ .spec.host }}')
-          echo "REGISTRY_HOST=${REGISTRY_HOST}" >> $GITHUB_ENV
-          # Configure Docker to trust the insecure registry
-          echo "{\"insecure-registries\": [\"${REGISTRY_HOST}\"]}" | sudo tee /etc/docker/daemon.json
-          sudo systemctl restart docker
-          sleep 5
-          # Login to the internal registry
-          oc whoami -t | docker login ${REGISTRY_HOST} -u $(oc whoami) --password-stdin
+          # Configure Kind nodes to redirect localhost:5001 to registry container via HTTP
+          REGISTRY_DIR="/etc/containerd/certs.d/localhost:5001"
+          for node in $(kind get nodes --name kind); do
+            docker exec "${node}" mkdir -p "${REGISTRY_DIR}"
+            cat <<EOF | docker exec -i "${node}" cp /dev/stdin "${REGISTRY_DIR}/hosts.toml"
+          server = "http://quick-k8s-registry:5000"
+
+          [host."http://quick-k8s-registry:5000"]
+            capabilities = ["pull", "resolve", "push"]
+          EOF
+          done
 
       - name: Build operator image
         run: |
-          make docker-build IMG=${REGISTRY_HOST}/tls-compliance-operator-system/tls-compliance-operator:test
+          make docker-build IMG=localhost:5001/tls-compliance-operator:test
 
-      - name: Push to OpenShift registry
+      - name: Push to local registry
         run: |
-          # Create the namespace first so we can push to it
-          oc create namespace tls-compliance-operator-system --dry-run=client -o yaml | oc apply -f -
-          docker push ${REGISTRY_HOST}/tls-compliance-operator-system/tls-compliance-operator:test
+          docker push localhost:5001/tls-compliance-operator:test
 
       - name: Deploy operator
         run: |
-          # Use the internal registry reference for the deployment
-          make deploy IMG=image-registry.openshift-image-registry.svc:5000/tls-compliance-operator-system/tls-compliance-operator:test
+          make deploy IMG=localhost:5001/tls-compliance-operator:test
 
       - name: Wait for operator readiness
         run: |
-          kubectl wait --for=condition=available --timeout=180s deployment/tls-compliance-operator-controller-manager -n tls-compliance-operator-system
+          kubectl wait --for=condition=available --timeout=120s deployment/tls-compliance-operator-controller-manager -n tls-compliance-operator-system
 
       - name: Run parity tests
         run: |
