@@ -39,8 +39,12 @@ jobs:
       - name: Create OpenShift cluster
         uses: palmsoftware/quick-ocp@v0.0.32
         with:
-          ocpPullSecret: ${{ secrets.PULL_SECRET }}
+          ocpPullSecret: $OCP_PULL_SECRET
+          bundleCache: true
           desiredOCPVersion: "4.20"
+          waitForOperatorsReady: true
+        env:
+          OCP_PULL_SECRET: ${{ secrets.PULL_SECRET }}
 
       - name: Setup OpenShift internal registry access
         run: |
