@@ -224,13 +224,11 @@ spec:
       - name: tls-scanner
         image: %s
         imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "-c"]
         args:
-        - "--targets"
-        - "%s"
-        - "--json-file"
-        - "/tmp/results.json"
-        - "-j"
-        - "1"
+        - |
+          /usr/local/bin/tls-scanner --targets %s --json-file /tmp/results.json -j 1 >&2
+          cat /tmp/results.json
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -251,18 +249,13 @@ func getScannerResults() *ScanResults {
 		"-o", "jsonpath={.items[0].metadata.name}")
 	Expect(err).NotTo(HaveOccurred())
 
-	tmpFile := fmt.Sprintf("/tmp/parity-scanner-results-%d.json", time.Now().UnixNano())
-	_, err = kubectl("cp",
-		fmt.Sprintf("%s/%s:/tmp/results.json", parityNamespace, podName),
-		tmpFile)
-	Expect(err).NotTo(HaveOccurred(), "failed to copy results.json from scanner pod")
+	logs, err := kubectl("logs", "-n", parityNamespace, podName)
+	Expect(err).NotTo(HaveOccurred(), "failed to get scanner pod logs")
 
-	data, err := os.ReadFile(tmpFile)
-	Expect(err).NotTo(HaveOccurred())
-	os.Remove(tmpFile)
-
+	// The scanner outputs JSON to stdout; extract it from the logs
 	var results ScanResults
-	Expect(json.Unmarshal(data, &results)).To(Succeed())
+	Expect(json.Unmarshal([]byte(logs), &results)).To(Succeed(),
+		"failed to parse scanner JSON output; logs:\n%s", logs)
 	return &results
 }
 
