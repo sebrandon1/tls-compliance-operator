@@ -227,8 +227,10 @@ spec:
         command: ["/bin/sh", "-c"]
         args:
         - |
-          /usr/local/bin/tls-scanner --targets %s --json-file /tmp/results.json -j 1 >&2
+          /usr/local/bin/tls-scanner --targets %s --json-file /tmp/results.json -j 1 >/dev/null 2>&1 || true
+          echo "---JSON_START---"
           cat /tmp/results.json
+          echo "---JSON_END---"
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -252,10 +254,18 @@ func getScannerResults() *ScanResults {
 	logs, err := kubectl("logs", "-n", parityNamespace, podName)
 	Expect(err).NotTo(HaveOccurred(), "failed to get scanner pod logs")
 
-	// The scanner outputs JSON to stdout; extract it from the logs
+	const startMarker = "---JSON_START---"
+	const endMarker = "---JSON_END---"
+	startIdx := strings.Index(logs, startMarker)
+	endIdx := strings.Index(logs, endMarker)
+	Expect(startIdx).NotTo(Equal(-1), "JSON start marker not found in scanner logs:\n%s", logs)
+	Expect(endIdx).NotTo(Equal(-1), "JSON end marker not found in scanner logs:\n%s", logs)
+
+	jsonData := strings.TrimSpace(logs[startIdx+len(startMarker) : endIdx])
+
 	var results ScanResults
-	Expect(json.Unmarshal([]byte(logs), &results)).To(Succeed(),
-		"failed to parse scanner JSON output; logs:\n%s", logs)
+	Expect(json.Unmarshal([]byte(jsonData), &results)).To(Succeed(),
+		"failed to parse scanner JSON output:\n%s", jsonData)
 	return &results
 }
 
