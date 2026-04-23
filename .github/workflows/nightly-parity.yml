@@ -37,7 +37,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Create OpenShift cluster
-        uses: palmsoftware/quick-ocp@v0.0.31
+        uses: palmsoftware/quick-ocp@v0.0.32
         with:
           ocpPullSecret: ${{ secrets.PULL_SECRET }}
           desiredOCPVersion: "4.20"
