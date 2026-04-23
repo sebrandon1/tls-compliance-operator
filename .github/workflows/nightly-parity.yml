@@ -1,0 +1,94 @@
+name: Nightly TLS Parity Tests
+
+on:
+  schedule:
+    - cron: '0 3 * * *'  # 3 AM UTC daily
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  parity-openshift:
+    name: TLS Parity Tests on OpenShift
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Red Hat Status
+        uses: palmsoftware/redhat-status@v0
+        with:
+          components: |
+            api.openshift.com
+            developers.redhat.com
+
+      - name: Check for PULL_SECRET
+        env:
+          PULL_SECRET: ${{ secrets.PULL_SECRET }}
+        run: |
+          if [ -z "$PULL_SECRET" ]; then
+            echo "::error::PULL_SECRET not configured, cannot run parity tests"
+            exit 1
+          fi
+
+      - name: Clone the code
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Create OpenShift cluster
+        uses: palmsoftware/quick-ocp@v0.0.31
+        with:
+          ocpPullSecret: ${{ secrets.PULL_SECRET }}
+          desiredOCPVersion: "4.20"
+
+      - name: Setup OpenShift internal registry access
+        run: |
+          # Expose the internal registry
+          oc patch configs.imageregistry.operator.openshift.io/cluster --type merge -p '{"spec":{"defaultRoute":true}}'
+          # Wait for the route to be available
+          sleep 15
+          # Get the registry route
+          REGISTRY_HOST=$(oc get route default-route -n openshift-image-registry --template='{{ .spec.host }}')
+          echo "REGISTRY_HOST=${REGISTRY_HOST}" >> $GITHUB_ENV
+          # Configure Docker to trust the insecure registry
+          echo "{\"insecure-registries\": [\"${REGISTRY_HOST}\"]}" | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+          sleep 5
+          # Login to the internal registry
+          oc whoami -t | docker login ${REGISTRY_HOST} -u $(oc whoami) --password-stdin
+
+      - name: Build operator image
+        run: |
+          make docker-build IMG=${REGISTRY_HOST}/tls-compliance-operator-system/tls-compliance-operator:test
+
+      - name: Push to OpenShift registry
+        run: |
+          # Create the namespace first so we can push to it
+          oc create namespace tls-compliance-operator-system --dry-run=client -o yaml | oc apply -f -
+          docker push ${REGISTRY_HOST}/tls-compliance-operator-system/tls-compliance-operator:test
+
+      - name: Deploy operator
+        run: |
+          # Use the internal registry reference for the deployment
+          make deploy IMG=image-registry.openshift-image-registry.svc:5000/tls-compliance-operator-system/tls-compliance-operator:test
+
+      - name: Wait for operator readiness
+        run: |
+          kubectl wait --for=condition=available --timeout=180s deployment/tls-compliance-operator-controller-manager -n tls-compliance-operator-system
+
+      - name: Run parity tests
+        run: |
+          make test-parity
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Controller Manager Logs ==="
+          kubectl logs -n tls-compliance-operator-system -l control-plane=controller-manager --tail=200 || true
+          echo "=== Events ==="
+          kubectl get events -n tls-compliance-operator-system --sort-by=.lastTimestamp || true
+          echo "=== Parity Test Namespace ==="
+          kubectl get all -n parity-test || true
+          echo "=== TLSComplianceReport Resources ==="
+          kubectl get tlscompliancereports -A -o yaml || true
