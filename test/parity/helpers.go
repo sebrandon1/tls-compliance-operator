@@ -313,7 +313,7 @@ func normalizeScannerResult(ip string, port int, results *ScanResults) Normalize
 	return nr
 }
 
-func compareResults(scenario string, operator, scanner NormalizedResult) ParityComparison {
+func compareResults(scenario string, operator, scanner NormalizedResult, skipVersions bool) ParityComparison {
 	c := ParityComparison{Scenario: scenario}
 
 	checkBool := func(name string, op, sc bool) {
@@ -326,10 +326,13 @@ func compareResults(scenario string, operator, scanner NormalizedResult) ParityC
 	}
 
 	checkBool("TLS Detected", operator.TLSDetected, scanner.TLSDetected)
-	checkBool("TLS 1.0", operator.TLS10, scanner.TLS10)
-	checkBool("TLS 1.1", operator.TLS11, scanner.TLS11)
-	checkBool("TLS 1.2", operator.TLS12, scanner.TLS12)
-	checkBool("TLS 1.3", operator.TLS13, scanner.TLS13)
+
+	if !skipVersions {
+		checkBool("TLS 1.0", operator.TLS10, scanner.TLS10)
+		checkBool("TLS 1.1", operator.TLS11, scanner.TLS11)
+		checkBool("TLS 1.2", operator.TLS12, scanner.TLS12)
+		checkBool("TLS 1.3", operator.TLS13, scanner.TLS13)
+	}
 
 	if operator.ForwardSecrecy != nil {
 		c.OperatorOnly = append(c.OperatorOnly, fmt.Sprintf("ForwardSecrecy=%v", *operator.ForwardSecrecy))

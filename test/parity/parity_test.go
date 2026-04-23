@@ -157,7 +157,7 @@ var _ = Describe("TLS Tool Parity", Ordered, func() {
 			})
 
 			It("should produce a parity comparison", func() {
-				comparison := compareResults(s.Name, operatorResult, scannerResult)
+				comparison := compareResults(s.Name, operatorResult, scannerResult, s.ExpectMTLS)
 				allComparisons = append(allComparisons, comparison)
 
 				if len(comparison.Mismatches) > 0 {
