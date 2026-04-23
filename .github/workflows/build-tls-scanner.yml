@@ -29,9 +29,12 @@ jobs:
           GO_VERSION=$(grep '^go ' go.mod | awk '{print $2}')
           sed -i "s|golang:1\.[0-9]*|golang:${GO_VERSION}|" Dockerfile.local
           sed -i 's|registry.access.redhat.com/ubi9/ubi:latest|registry.fedoraproject.org/fedora:latest|' Dockerfile.local
+          # Add util-linux (provides hexdump, required by testssl.sh)
+          sed -i 's|dnf install -y --allowerasing|dnf install -y --allowerasing util-linux|' Dockerfile.local
           grep -q 'registry.fedoraproject.org/fedora:latest' Dockerfile.local || { echo "FATAL: Fedora base image sed failed"; exit 1; }
           grep -q "golang:${GO_VERSION}" Dockerfile.local || { echo "FATAL: Go version sed failed"; exit 1; }
-          echo "Patched Dockerfile.local: Go ${GO_VERSION}, Fedora base"
+          grep -q 'util-linux' Dockerfile.local || { echo "FATAL: util-linux sed failed"; exit 1; }
+          echo "Patched Dockerfile.local: Go ${GO_VERSION}, Fedora base, util-linux added"
           head -5 Dockerfile.local
 
       - name: Set up QEMU
