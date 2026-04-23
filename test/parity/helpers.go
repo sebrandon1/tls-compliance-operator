@@ -122,11 +122,12 @@ func getPodIP(podName string) string {
 	return ip
 }
 
-func waitForTLSReport(podIP string, port int, timeout time.Duration) string {
-	// CR names use the pattern: <sanitized-ip>-<port>-<hash>
-	// The sanitized IP replaces dots with dashes.
+func waitForTLSReport(serviceName string, podIP string, port int, timeout time.Duration) string {
+	// The operator names CRs using the service DNS name (e.g. tls13-only-parity-test-8443-<hash>)
+	// or pod IP (e.g. 10-217-0-77-8443-<hash>). Search for both patterns.
+	servicePrefix := fmt.Sprintf("%s-%s-%d-", serviceName, parityNamespace, port)
 	sanitizedIP := strings.ReplaceAll(podIP, ".", "-")
-	prefix := fmt.Sprintf("%s-%d-", sanitizedIP, port)
+	ipPrefix := fmt.Sprintf("%s-%d-", sanitizedIP, port)
 
 	var reportName string
 	Eventually(func() error {
@@ -136,12 +137,12 @@ func waitForTLSReport(podIP string, port int, timeout time.Duration) string {
 			return err
 		}
 		for _, name := range strings.Fields(out) {
-			if strings.HasPrefix(name, prefix) {
+			if strings.HasPrefix(name, servicePrefix) || strings.HasPrefix(name, ipPrefix) {
 				reportName = name
 				return nil
 			}
 		}
-		return fmt.Errorf("no TLSComplianceReport found matching prefix %s", prefix)
+		return fmt.Errorf("no TLSComplianceReport found matching prefix %s or %s", servicePrefix, ipPrefix)
 	}).WithTimeout(timeout).WithPolling(5 * time.Second).Should(Succeed())
 
 	return reportName
