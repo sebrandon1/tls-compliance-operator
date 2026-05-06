@@ -306,7 +306,3 @@ type TLSComplianceReportList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []TLSComplianceReport `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&TLSComplianceReport{}, &TLSComplianceReportList{})
-}
