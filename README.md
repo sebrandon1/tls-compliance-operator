@@ -56,6 +56,12 @@ To deploy a specific version:
 kubectl apply -f https://github.com/sebrandon1/tls-compliance-operator/releases/download/v0.0.1/install.yaml
 ```
 
+To run the latest unreleased code from `main`, use the `unstable` image tag:
+
+```bash
+IMG=quay.io/bapalm/tls-compliance-operator:unstable make deploy
+```
+
 To uninstall:
 
 ```bash
