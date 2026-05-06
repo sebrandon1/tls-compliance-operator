@@ -1,5 +1,7 @@
 # TLS Compliance Operator
 
+> **See also:** [openshift/tls-scanner](https://github.com/openshift/tls-scanner) — a batch Job-based TLS auditing tool from the OpenShift team. If you want a one-shot scan or are looking for alternatives, check it out.
+>
 > **See also:** [tls-config-lint](https://github.com/sebrandon1/tls-config-lint) — a GitHub Action that scans source code for TLS configuration anti-patterns (shift-left). Use **tls-config-lint** to catch issues during development and **tls-compliance-operator** to verify runtime compliance in your cluster.
 
 ![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
@@ -392,6 +394,10 @@ make test-e2e       # Creates Kind cluster, runs tests, cleans up
 # Multi-arch build
 make docker-buildx IMG=quay.io/bapalm/tls-compliance-operator:latest
 ```
+
+## Blog Posts
+
+- [See What Your Cluster Is Really Serving: TLS Visibility with the tls-compliance-operator](https://blog.palmsoftware.org/2026/05/06/see-what-your-cluster-is-really-serving-tls-visibility-with-the-tls-compliance-operator/)
 
 ## Contributing
 
