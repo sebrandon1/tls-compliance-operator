@@ -59,7 +59,3 @@ type TLSComplianceTargetList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []TLSComplianceTarget `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&TLSComplianceTarget{}, &TLSComplianceTargetList{})
-}
