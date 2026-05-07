@@ -269,6 +269,9 @@ func main() {
 		"maxRetries", maxRetries,
 		"retryBackoff", retryBackoff)
 
+	// Set up signal-aware context for the operator lifecycle
+	ctx := ctrl.SetupSignalHandler()
+
 	// Set up the endpoint controller
 	endpointReconciler := &controller.EndpointReconciler{
 		Client:            mgr.GetClient(),
@@ -283,6 +286,7 @@ func main() {
 		Workers:           workers,
 		MaxRetries:        maxRetries,
 		RetryBackoff:      retryBackoff,
+		ManagerCtx:        ctx,
 	}
 
 	if err = endpointReconciler.SetupWithManager(mgr); err != nil {
@@ -291,7 +295,6 @@ func main() {
 	}
 
 	// Start background loops
-	ctx := ctrl.SetupSignalHandler()
 	endpointReconciler.StartPeriodicScan(ctx, scanInterval)
 	endpointReconciler.StartCleanupLoop(ctx, cleanupInterval)
 	if profileFetcher != nil {
