@@ -63,6 +63,9 @@ Supported formats: csv (default), json, junit`,
 	rootCmd.PersistentFlags().StringVarP(&filterOpts.Namespace, "namespace", "n", "", "Filter by source namespace")
 	rootCmd.PersistentFlags().StringVar(&filterOpts.Status, "status", "", "Filter by compliance status (e.g. Compliant, NonCompliant)")
 	rootCmd.PersistentFlags().StringVar(&filterOpts.Source, "source", "", "Filter by source kind (e.g. Service, Ingress, Route, Pod)")
+	rootCmd.PersistentFlags().StringVar(&filterOpts.PQCStatus, "pqc-status", "", "Filter by PQC readiness (PQCReady, TLS13Capable, LegacyTLS, NoPQC)")
+	rootCmd.PersistentFlags().StringVar(&filterOpts.ExpiresWithin, "expires-within", "", "Show certs expiring within duration (e.g. 30d, 7d, 90d)")
+	rootCmd.PersistentFlags().BoolVar(&filterOpts.Expired, "expired", false, "Show only expired certificates")
 
 	rootCmd.AddCommand(newSummaryCmd())
 
@@ -94,7 +97,10 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	reports = export.FilterReports(reports, filterOpts)
+	reports, err = export.FilterReports(reports, filterOpts)
+	if err != nil {
+		return err
+	}
 
 	switch format {
 	case "csv":
@@ -114,7 +120,10 @@ func runSummary(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
-	reports = export.FilterReports(reports, filterOpts)
+	reports, err = export.FilterReports(reports, filterOpts)
+	if err != nil {
+		return err
+	}
 
 	return export.WriteSummary(os.Stdout, reports)
 }

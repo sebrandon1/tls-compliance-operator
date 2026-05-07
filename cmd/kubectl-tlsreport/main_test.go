@@ -56,6 +56,9 @@ func TestNewRootCmd_Flags(t *testing.T) {
 		{"namespace", "n"},
 		{"status", ""},
 		{"source", ""},
+		{"pqc-status", ""},
+		{"expires-within", ""},
+		{"expired", ""},
 	}
 
 	for _, tt := range tests {

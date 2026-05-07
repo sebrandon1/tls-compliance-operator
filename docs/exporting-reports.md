@@ -36,7 +36,7 @@ kubectl tlsreport junit
 
 ## Filtering
 
-Filter by namespace, compliance status, or source kind:
+Filter by namespace, compliance status, source kind, PQC readiness, or certificate expiry:
 
 ```bash
 # Only reports from a specific namespace
@@ -47,7 +47,23 @@ kubectl tlsreport csv --status NonCompliant
 
 # Only Route-sourced endpoints
 kubectl tlsreport csv --source Route
+
+# Only endpoints not yet PQC-ready
+kubectl tlsreport csv --pqc-status LegacyTLS
+
+# Certificates expiring within 30 days
+kubectl tlsreport csv --expires-within 30d
+
+# Only expired certificates
+kubectl tlsreport csv --expired
+
+# Combine filters: non-PQC-ready services in production
+kubectl tlsreport json --source Service -n production --pqc-status TLS13Capable
 ```
+
+All filters use AND logic. PQC status values: `PQCReady`, `TLS13Capable`, `LegacyTLS`, `NoPQC`.
+The `--expires-within` flag accepts day-based durations (e.g. `7d`, `30d`, `90d`) or Go durations (e.g. `24h`).
+The `--expired` flag excludes endpoints without certificates.
 
 ## Summary View
 

@@ -17,7 +17,10 @@ limitations under the License.
 package export
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 )
@@ -30,26 +33,67 @@ type FilterOptions struct {
 	Status string
 	// Source filters by source kind (case-insensitive).
 	Source string
+	// PQCStatus filters by PQC readiness level (case-insensitive).
+	PQCStatus string
+	// ExpiresWithin filters to certificates expiring within a duration (e.g. "30d", "7d").
+	ExpiresWithin string
+	// Expired filters to only expired certificates.
+	Expired bool
+}
+
+// IsEmpty returns true if no filters are set.
+func (o FilterOptions) IsEmpty() bool {
+	return o.Namespace == "" && o.Status == "" && o.Source == "" &&
+		o.PQCStatus == "" && o.ExpiresWithin == "" && !o.Expired
 }
 
 // FilterReports returns the subset of reports matching all non-empty filter criteria.
 // Filters are combined with AND logic. Empty filters are pass-through.
-func FilterReports(reports []securityv1alpha1.TLSComplianceReport, opts FilterOptions) []securityv1alpha1.TLSComplianceReport {
-	if opts.Namespace == "" && opts.Status == "" && opts.Source == "" {
-		return reports
+// Returns an error if ExpiresWithin contains an unparseable duration.
+func FilterReports(reports []securityv1alpha1.TLSComplianceReport, opts FilterOptions) ([]securityv1alpha1.TLSComplianceReport, error) {
+	if opts.IsEmpty() {
+		return reports, nil
 	}
 
+	var expiresWithin time.Duration
+	if opts.ExpiresWithin != "" {
+		var err error
+		expiresWithin, err = ParseExpiresWithin(opts.ExpiresWithin)
+		if err != nil {
+			return nil, fmt.Errorf("invalid --expires-within value %q: %w", opts.ExpiresWithin, err)
+		}
+	}
+
+	now := time.Now()
 	filtered := make([]securityv1alpha1.TLSComplianceReport, 0, len(reports))
 	for i := range reports {
-		if matchesFilter(&reports[i], opts) {
+		if matchesFilter(&reports[i], opts, now, expiresWithin) {
 			filtered = append(filtered, reports[i])
 		}
 	}
 
-	return filtered
+	return filtered, nil
 }
 
-func matchesFilter(r *securityv1alpha1.TLSComplianceReport, opts FilterOptions) bool {
+// ParseExpiresWithin parses a duration string like "30d", "7d", or "90d" into a time.Duration.
+func ParseExpiresWithin(s string) (time.Duration, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty duration")
+	}
+
+	if strings.HasSuffix(s, "d") {
+		days, err := strconv.Atoi(strings.TrimSuffix(s, "d"))
+		if err != nil {
+			return 0, fmt.Errorf("invalid day count: %w", err)
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+
+	return time.ParseDuration(s)
+}
+
+func matchesFilter(r *securityv1alpha1.TLSComplianceReport, opts FilterOptions, now time.Time, expiresWithin time.Duration) bool {
 	if opts.Namespace != "" && r.Spec.SourceNamespace != opts.Namespace {
 		return false
 	}
@@ -58,6 +102,23 @@ func matchesFilter(r *securityv1alpha1.TLSComplianceReport, opts FilterOptions) 
 	}
 	if opts.Source != "" && !strings.EqualFold(string(r.Spec.SourceKind), opts.Source) {
 		return false
+	}
+	if opts.PQCStatus != "" && !strings.EqualFold(string(r.Status.PQCReadiness), opts.PQCStatus) {
+		return false
+	}
+	if opts.Expired {
+		if r.Status.CertificateInfo == nil || !r.Status.CertificateInfo.IsExpired {
+			return false
+		}
+	}
+	if opts.ExpiresWithin != "" {
+		if r.Status.CertificateInfo == nil || r.Status.CertificateInfo.NotAfter == nil {
+			return false
+		}
+		expiry := r.Status.CertificateInfo.NotAfter.Time
+		if expiry.Before(now) || expiry.After(now.Add(expiresWithin)) {
+			return false
+		}
 	}
 
 	return true
