@@ -19,6 +19,7 @@ package export
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -273,5 +274,138 @@ func TestWriteJSON_RoundTrip(t *testing.T) {
 	}
 	if reparsed[0].Grade != "B" {
 		t.Errorf("grade mismatch after round-trip: %s", reparsed[0].Grade)
+	}
+}
+
+func TestWriteJSON_AllComplianceStatuses(t *testing.T) {
+	statuses := []securityv1alpha1.ComplianceStatus{
+		securityv1alpha1.ComplianceStatusCompliant,
+		securityv1alpha1.ComplianceStatusNonCompliant,
+		securityv1alpha1.ComplianceStatusWarning,
+		securityv1alpha1.ComplianceStatusUnreachable,
+		securityv1alpha1.ComplianceStatusTimeout,
+		securityv1alpha1.ComplianceStatusClosed,
+		securityv1alpha1.ComplianceStatusFiltered,
+		securityv1alpha1.ComplianceStatusNoTLS,
+		securityv1alpha1.ComplianceStatusMutualTLSRequired,
+		securityv1alpha1.ComplianceStatusPending,
+		securityv1alpha1.ComplianceStatusUnknown,
+	}
+
+	var reports []securityv1alpha1.TLSComplianceReport
+	for i, s := range statuses {
+		reports = append(reports, securityv1alpha1.TLSComplianceReport{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:            fmt.Sprintf("svc%d.test", i),
+				Port:            443,
+				SourceKind:      securityv1alpha1.SourceKindService,
+				SourceNamespace: "test",
+				SourceName:      fmt.Sprintf("svc%d", i),
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: s,
+			},
+		})
+	}
+
+	var buf bytes.Buffer
+	if err := WriteJSON(&buf, reports); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var result []JSONReport
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	if len(result) != len(statuses) {
+		t.Fatalf("expected %d items, got %d", len(statuses), len(result))
+	}
+
+	for i, s := range statuses {
+		if result[i].Compliance != string(s) {
+			t.Errorf("item %d: expected compliance %q, got %q", i, s, result[i].Compliance)
+		}
+	}
+}
+
+func TestWriteJSON_KeyExchangeTypes(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:            "multi-ke.test",
+				Port:            443,
+				SourceKind:      securityv1alpha1.SourceKindService,
+				SourceNamespace: "test",
+				SourceName:      "multi-ke",
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				KeyExchangeTypes: map[string]string{
+					"TLS 1.2": "ECDHE",
+					"TLS 1.3": "TLS13",
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteJSON(&buf, reports); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var result []JSONReport
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	ke := result[0].KeyExchangeTypes
+	if ke["TLS 1.2"] != "ECDHE" {
+		t.Errorf("expected TLS 1.2 key exchange ECDHE, got %s", ke["TLS 1.2"])
+	}
+	if ke["TLS 1.3"] != "TLS13" {
+		t.Errorf("expected TLS 1.3 key exchange TLS13, got %s", ke["TLS 1.3"])
+	}
+}
+
+func TestWriteJSON_PQCReadinessValues(t *testing.T) {
+	pqcValues := []securityv1alpha1.PQCReadiness{
+		securityv1alpha1.PQCReadinessPQCReady,
+		securityv1alpha1.PQCReadinessTLS13Capable,
+		securityv1alpha1.PQCReadinessLegacyTLS,
+		securityv1alpha1.PQCReadinessNoPQC,
+	}
+
+	var reports []securityv1alpha1.TLSComplianceReport
+	for i, pqc := range pqcValues {
+		reports = append(reports, securityv1alpha1.TLSComplianceReport{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:            fmt.Sprintf("pqc%d.test", i),
+				Port:            443,
+				SourceKind:      securityv1alpha1.SourceKindService,
+				SourceNamespace: "test",
+				SourceName:      fmt.Sprintf("pqc%d", i),
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				PQCReadiness:     pqc,
+			},
+		})
+	}
+
+	var buf bytes.Buffer
+	if err := WriteJSON(&buf, reports); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var result []JSONReport
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	for i, pqc := range pqcValues {
+		if result[i].PQCReadiness != string(pqc) {
+			t.Errorf("item %d: expected PQCReadiness %q, got %q", i, pqc, result[i].PQCReadiness)
+		}
 	}
 }

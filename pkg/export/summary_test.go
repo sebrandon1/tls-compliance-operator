@@ -357,3 +357,63 @@ func TestWriteSummary_Empty(t *testing.T) {
 		t.Error("expected 0.0% compliance rate")
 	}
 }
+
+func TestComputeSummary_CertExpiryBoundaries(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+
+	makeReport := func(daysFromNow int) securityv1alpha1.TLSComplianceReport {
+		expiry := metav1.NewTime(now.AddDate(0, 0, daysFromNow))
+		return securityv1alpha1.TLSComplianceReport{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:       "test.example",
+				Port:       443,
+				SourceKind: securityv1alpha1.SourceKindService,
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				CertificateInfo: &securityv1alpha1.CertificateInfo{
+					NotAfter: &expiry,
+				},
+			},
+		}
+	}
+
+	tests := []struct {
+		name            string
+		daysFromNow     int
+		wantExpired     int
+		wantExpiring7d  int
+		wantExpiring30d int
+		wantExpiring90d int
+	}{
+		{"expired yesterday", -1, 1, 0, 0, 0},
+		{"expires today", 0, 0, 1, 0, 0},
+		{"expires in 1 day", 1, 0, 1, 0, 0},
+		{"expires in 6 days", 6, 0, 1, 0, 0},
+		{"expires in 8 days", 8, 0, 0, 1, 0},
+		{"expires in 29 days", 29, 0, 0, 1, 0},
+		{"expires in 31 days", 31, 0, 0, 0, 1},
+		{"expires in 89 days", 89, 0, 0, 0, 1},
+		{"expires in 91 days", 91, 0, 0, 0, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reports := []securityv1alpha1.TLSComplianceReport{makeReport(tt.daysFromNow)}
+			summary := ComputeSummary(reports, now)
+
+			if summary.CertExpired != tt.wantExpired {
+				t.Errorf("CertExpired: got %d, want %d", summary.CertExpired, tt.wantExpired)
+			}
+			if summary.CertExpiring7d != tt.wantExpiring7d {
+				t.Errorf("CertExpiring7d: got %d, want %d", summary.CertExpiring7d, tt.wantExpiring7d)
+			}
+			if summary.CertExpiring30d != tt.wantExpiring30d {
+				t.Errorf("CertExpiring30d: got %d, want %d", summary.CertExpiring30d, tt.wantExpiring30d)
+			}
+			if summary.CertExpiring90d != tt.wantExpiring90d {
+				t.Errorf("CertExpiring90d: got %d, want %d", summary.CertExpiring90d, tt.wantExpiring90d)
+			}
+		})
+	}
+}

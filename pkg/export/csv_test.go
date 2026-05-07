@@ -18,6 +18,7 @@ package export
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -164,5 +165,206 @@ func TestWriteCSV_MultipleReports(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	if len(lines) != 3 {
 		t.Fatalf("expected 3 lines (header + 2 rows), got %d", len(lines))
+	}
+}
+
+func TestWriteCSV_AllComplianceStatuses(t *testing.T) {
+	statuses := []securityv1alpha1.ComplianceStatus{
+		securityv1alpha1.ComplianceStatusCompliant,
+		securityv1alpha1.ComplianceStatusNonCompliant,
+		securityv1alpha1.ComplianceStatusWarning,
+		securityv1alpha1.ComplianceStatusUnreachable,
+		securityv1alpha1.ComplianceStatusTimeout,
+		securityv1alpha1.ComplianceStatusClosed,
+		securityv1alpha1.ComplianceStatusFiltered,
+		securityv1alpha1.ComplianceStatusNoTLS,
+		securityv1alpha1.ComplianceStatusMutualTLSRequired,
+		securityv1alpha1.ComplianceStatusPending,
+		securityv1alpha1.ComplianceStatusUnknown,
+	}
+
+	var reports []securityv1alpha1.TLSComplianceReport
+	for i, s := range statuses {
+		reports = append(reports, securityv1alpha1.TLSComplianceReport{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:            fmt.Sprintf("svc%d.test", i),
+				Port:            443,
+				SourceKind:      securityv1alpha1.SourceKindService,
+				SourceNamespace: "test",
+				SourceName:      fmt.Sprintf("svc%d", i),
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: s,
+			},
+		})
+	}
+
+	var buf bytes.Buffer
+	err := WriteCSV(&buf, reports)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	for _, s := range statuses {
+		if !strings.Contains(output, string(s)) {
+			t.Errorf("expected CSV to contain status %q", s)
+		}
+	}
+
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) != len(statuses)+1 {
+		t.Fatalf("expected %d lines, got %d", len(statuses)+1, len(lines))
+	}
+}
+
+func TestWriteCSV_AllSourceKinds(t *testing.T) {
+	kinds := []securityv1alpha1.SourceKind{
+		securityv1alpha1.SourceKindService,
+		securityv1alpha1.SourceKindIngress,
+		securityv1alpha1.SourceKindRoute,
+		securityv1alpha1.SourceKindTarget,
+		securityv1alpha1.SourceKindPod,
+	}
+
+	var reports []securityv1alpha1.TLSComplianceReport
+	for i, k := range kinds {
+		reports = append(reports, securityv1alpha1.TLSComplianceReport{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:            fmt.Sprintf("ep%d.test", i),
+				Port:            443,
+				SourceKind:      k,
+				SourceNamespace: "test",
+				SourceName:      fmt.Sprintf("ep%d", i),
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+			},
+		})
+	}
+
+	var buf bytes.Buffer
+	if err := WriteCSV(&buf, reports); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	for _, k := range kinds {
+		if !strings.Contains(output, string(k)) {
+			t.Errorf("expected CSV to contain source kind %q", k)
+		}
+	}
+}
+
+func TestWriteCSV_KeyExchangeTypes(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:            "multi-ke.test",
+				Port:            443,
+				SourceKind:      securityv1alpha1.SourceKindService,
+				SourceNamespace: "test",
+				SourceName:      "multi-ke",
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				KeyExchangeTypes: map[string]string{
+					"TLS 1.2": "ECDHE",
+					"TLS 1.3": "TLS13",
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteCSV(&buf, reports); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "ECDHE") {
+		t.Error("expected CSV to contain ECDHE")
+	}
+	if !strings.Contains(output, "TLS13") {
+		t.Error("expected CSV to contain TLS13")
+	}
+}
+
+func TestWriteCSV_SpecialCharacters(t *testing.T) {
+	expiry := metav1.NewTime(time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC))
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:            "svc-with-special.ns-with-dash",
+				Port:            8443,
+				SourceKind:      securityv1alpha1.SourceKindService,
+				SourceNamespace: "ns-with-dash",
+				SourceName:      "svc-with-special",
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				CertificateInfo: &securityv1alpha1.CertificateInfo{
+					Issuer:   "CN=Let's Encrypt Authority X3,O=Let's Encrypt,C=US",
+					NotAfter: &expiry,
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteCSV(&buf, reports); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Let's Encrypt") {
+		t.Error("expected CSV to handle apostrophe in issuer")
+	}
+	if !strings.Contains(output, "ns-with-dash") {
+		t.Error("expected CSV to handle dashes in namespace")
+	}
+}
+
+func TestWriteCSV_AllTLSVersionCombinations(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:            "all-versions.test",
+				Port:            443,
+				SourceKind:      securityv1alpha1.SourceKindService,
+				SourceNamespace: "test",
+				SourceName:      "all-versions",
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusNonCompliant,
+				TLSVersions: securityv1alpha1.TLSVersionSupport{
+					SSL30: true,
+					TLS10: true,
+					TLS11: true,
+					TLS12: true,
+					TLS13: true,
+				},
+				ForwardSecrecy: true,
+				QuantumReady:   true,
+				PQCReadiness:   securityv1alpha1.PQCReadinessPQCReady,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteCSV(&buf, reports); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d", len(lines))
+	}
+
+	row := lines[1]
+	for _, field := range []string{"true", "NonCompliant", "PQCReady"} {
+		if !strings.Contains(row, field) {
+			t.Errorf("expected row to contain %q", field)
+		}
 	}
 }
