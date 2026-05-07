@@ -59,6 +59,7 @@ func TestNewRootCmd_Flags(t *testing.T) {
 		{"pqc-status", ""},
 		{"expires-within", ""},
 		{"expired", ""},
+		{"sort-by", ""},
 	}
 
 	for _, tt := range tests {

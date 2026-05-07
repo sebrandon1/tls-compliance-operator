@@ -346,4 +346,71 @@ spec:
 			}).WithTimeout(30 * time.Second).WithPolling(5 * time.Second).Should(Succeed())
 		})
 	})
+
+	Context("kubectl-tlsreport plugin", func() {
+		var pluginBinary string
+
+		BeforeAll(func() {
+			By("building the kubectl-tlsreport plugin")
+			cmd := exec.Command("go", "build", "-o", "/tmp/kubectl-tlsreport", "./cmd/kubectl-tlsreport/")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to build kubectl-tlsreport plugin")
+			pluginBinary = "/tmp/kubectl-tlsreport"
+
+			By("creating test services for sort validation")
+			for _, name := range []string{"zulu-svc", "alpha-svc", "mike-svc"} {
+				cmd := exec.Command("kubectl", "create", "service", "clusterip", name,
+					"--tcp=443:443", "-n", "default")
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create service "+name)
+			}
+
+			By("waiting for TLSComplianceReports to be created for all test services")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					"jsonpath={range .items[*]}{.spec.host}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("alpha-svc"))
+				g.Expect(output).To(ContainSubstring("mike-svc"))
+				g.Expect(output).To(ContainSubstring("zulu-svc"))
+			}).Should(Succeed())
+		})
+
+		AfterAll(func() {
+			for _, name := range []string{"zulu-svc", "alpha-svc", "mike-svc"} {
+				cmd := exec.Command("kubectl", "delete", "service", name, "-n", "default", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			}
+		})
+
+		It("should sort reports by host", func() {
+			cmd := exec.Command(pluginBinary, "csv", "--sort-by", "host")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to run kubectl-tlsreport csv --sort-by host")
+
+			lines := strings.Split(strings.TrimSpace(output), "\n")
+			Expect(len(lines)).To(BeNumerically(">=", 4), "expected header + at least 3 data rows")
+
+			var hosts []string
+			for _, line := range lines[1:] {
+				fields := strings.Split(line, ",")
+				if len(fields) > 0 {
+					hosts = append(hosts, fields[0])
+				}
+			}
+
+			for i := 1; i < len(hosts); i++ {
+				Expect(hosts[i] >= hosts[i-1]).To(BeTrue(),
+					fmt.Sprintf("hosts not sorted: %q should come after %q", hosts[i], hosts[i-1]))
+			}
+		})
+
+		It("should produce valid JSON with --sort-by", func() {
+			cmd := exec.Command(pluginBinary, "json", "--sort-by", "host")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to run kubectl-tlsreport json --sort-by host")
+			Expect(output).To(HavePrefix("["), "expected JSON array output")
+		})
+	})
 })

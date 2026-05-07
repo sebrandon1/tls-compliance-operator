@@ -65,6 +65,30 @@ All filters use AND logic. PQC status values: `PQCReady`, `TLS13Capable`, `Legac
 The `--expires-within` flag accepts day-based durations (e.g. `7d`, `30d`, `90d`) or Go durations (e.g. `24h`).
 The `--expired` flag excludes endpoints without certificates.
 
+## Sorting
+
+Sort results with `--sort-by`:
+
+```bash
+# Sort by hostname
+kubectl tlsreport csv --sort-by host
+
+# Sort by certificate expiry (soonest first)
+kubectl tlsreport csv --sort-by expiry
+
+# Sort by cipher grade
+kubectl tlsreport csv --sort-by grade
+
+# Sort by PQC readiness
+kubectl tlsreport csv --sort-by pqc
+
+# Combine with filters: non-compliant endpoints sorted by expiry
+kubectl tlsreport csv --status NonCompliant --sort-by expiry
+```
+
+Supported sort keys: `host`, `port`, `compliance`, `expiry`, `grade`, `pqc`.
+Endpoints without certificates sort to the end when sorting by `expiry`.
+
 ## Summary View
 
 Get an at-a-glance compliance summary:
