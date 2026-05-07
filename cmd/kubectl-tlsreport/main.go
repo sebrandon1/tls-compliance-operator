@@ -52,11 +52,11 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:   "kubectl-tlsreport [csv|json|junit]",
+		Use:   "kubectl-tlsreport [csv|json|junit|markdown|md]",
 		Short: "Export TLS compliance reports from the cluster",
 		Long: `Export TLS compliance reports from the cluster in various formats.
 
-Supported formats: csv (default), json, junit`,
+Supported formats: csv (default), json, junit, markdown (or md)`,
 		Args:          cobra.MaximumNArgs(1),
 		RunE:          runExport,
 		SilenceUsage:  true,
@@ -91,9 +91,9 @@ func runExport(cmd *cobra.Command, args []string) error {
 	}
 
 	switch format {
-	case "csv", "json", "junit":
+	case "csv", "json", "junit", "markdown", "md":
 	default:
-		return fmt.Errorf("unknown format: %s (supported: csv, json, junit)", format)
+		return fmt.Errorf("unknown format: %s (supported: csv, json, junit, markdown, md)", format)
 	}
 
 	reports, err := fetchReports()
@@ -115,6 +115,8 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return export.WriteJSON(os.Stdout, reports)
 	case "junit":
 		return export.WriteJUnit(os.Stdout, reports)
+	case "markdown", "md":
+		return export.WriteMarkdown(os.Stdout, reports)
 	}
 
 	return nil

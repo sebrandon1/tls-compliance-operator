@@ -412,5 +412,21 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to run kubectl-tlsreport json --sort-by host")
 			Expect(output).To(HavePrefix("["), "expected JSON array output")
 		})
+
+		It("should produce a valid Markdown table", func() {
+			cmd := exec.Command(pluginBinary, "md")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to run kubectl-tlsreport md")
+
+			lines := strings.Split(strings.TrimSpace(output), "\n")
+			Expect(len(lines)).To(BeNumerically(">=", 3), "expected header + separator + at least 1 data row")
+			Expect(lines[0]).To(HavePrefix("| Host"))
+			Expect(lines[1]).To(ContainSubstring("---"))
+
+			for _, line := range lines {
+				Expect(line).To(HavePrefix("|"), "each line should start with pipe")
+				Expect(line).To(HaveSuffix("|"), "each line should end with pipe")
+			}
+		})
 	})
 })

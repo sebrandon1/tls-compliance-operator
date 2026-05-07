@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"strings"
 	"testing"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
@@ -25,7 +26,7 @@ import (
 func TestNewRootCmd_Structure(t *testing.T) {
 	cmd := newRootCmd()
 
-	if cmd.Use != "kubectl-tlsreport [csv|json|junit]" {
+	if cmd.Use != "kubectl-tlsreport [csv|json|junit|markdown|md]" {
 		t.Errorf("unexpected Use: %s", cmd.Use)
 	}
 
@@ -82,13 +83,13 @@ func TestRunExport_InvalidFormat(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid format")
 	}
-	if err.Error() != "unknown format: xml (supported: csv, json, junit)" {
+	if err.Error() != "unknown format: xml (supported: csv, json, junit, markdown, md)" {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
 
 func TestRunExport_ValidFormats(t *testing.T) {
-	for _, format := range []string{"csv", "json", "junit"} {
+	for _, format := range []string{"csv", "json", "junit", "markdown", "md"} {
 		cmd := newRootCmd()
 		cmd.SetArgs([]string{format})
 
@@ -96,8 +97,8 @@ func TestRunExport_ValidFormats(t *testing.T) {
 		if err == nil {
 			t.Skipf("format %q: skipping (no kubeconfig available)", format)
 		}
-		if err.Error() == "unknown format: "+format+" (supported: csv, json, junit)" {
-			t.Errorf("format %q should be valid but was rejected", format)
+		if strings.HasPrefix(err.Error(), "unknown format:") {
+			t.Errorf("format %q should be valid but was rejected: %v", format, err)
 		}
 	}
 }
