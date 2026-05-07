@@ -79,6 +79,7 @@ type EndpointReconciler struct {
 	Workers           int
 	MaxRetries        int
 	RetryBackoff      time.Duration
+	ManagerCtx        context.Context
 }
 
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
@@ -265,8 +266,11 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep endpoint.En
 				fmt.Sprintf("Discovered TLS endpoint %s from %s %s/%s", hostPort(ep.Host, ep.Port), ep.SourceKind, ep.SourceNamespace, ep.SourceName))
 		}
 
-		// Launch async TLS check using the caller's context for cancellation
-		go r.performTLSCheck(ctx, crName, ep.Host, int(ep.Port))
+		checkCtx := r.ManagerCtx
+		if checkCtx == nil {
+			checkCtx = context.Background()
+		}
+		go r.performTLSCheck(checkCtx, crName, ep.Host, int(ep.Port))
 
 		return nil
 	} else if err != nil {
