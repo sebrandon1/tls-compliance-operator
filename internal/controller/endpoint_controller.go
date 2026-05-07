@@ -425,6 +425,7 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	if result.Certificate != nil {
 		notBefore := metav1.NewTime(result.Certificate.NotBefore)
 		notAfter := metav1.NewTime(result.Certificate.NotAfter)
+		hostnameMatch := result.Certificate.HostnameMatch
 		cr.Status.CertificateInfo = &securityv1alpha1.CertificateInfo{
 			Issuer:          result.Certificate.Issuer,
 			Subject:         result.Certificate.Subject,
@@ -433,6 +434,7 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 			DNSNames:        result.Certificate.DNSNames,
 			IsExpired:       result.Certificate.IsExpired,
 			DaysUntilExpiry: result.Certificate.DaysUntilExpiry,
+			HostnameMatch:   &hostnameMatch,
 		}
 
 		// Record cert expiry metric
