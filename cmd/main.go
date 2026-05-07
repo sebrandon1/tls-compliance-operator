@@ -325,10 +325,17 @@ var envFlagMapping = []struct {
 	flagName string
 }{
 	{"TLS_COMPLIANCE_SCAN_INTERVAL", "scan-interval"},
+	{"TLS_COMPLIANCE_CLEANUP_INTERVAL", "cleanup-interval"},
 	{"TLS_COMPLIANCE_CHECK_TIMEOUT", "tls-check-timeout"},
 	{"TLS_COMPLIANCE_RATE_LIMIT", "rate-limit"},
+	{"TLS_COMPLIANCE_RATE_BURST", "rate-burst"},
 	{"TLS_COMPLIANCE_WORKERS", "workers"},
+	{"TLS_COMPLIANCE_INCLUDE_NAMESPACES", "include-namespaces"},
 	{"TLS_COMPLIANCE_EXCLUDE_NAMESPACES", "exclude-namespaces"},
+	{"TLS_COMPLIANCE_CERT_EXPIRY_WARNING_DAYS", "cert-expiry-warning-days"},
+	{"TLS_COMPLIANCE_PROFILE_REFRESH_INTERVAL", "profile-refresh-interval"},
+	{"TLS_COMPLIANCE_MAX_RETRIES", "max-retries"},
+	{"TLS_COMPLIANCE_RETRY_BACKOFF", "retry-backoff"},
 }
 
 // resolveEnvConfig applies environment variable overrides to flags that were not
@@ -380,7 +387,7 @@ func resolveEnvConfig(fs *flag.FlagSet, lookupEnv func(string) (string, bool)) [
 // validateEnvValue performs type-appropriate validation for known flag types.
 func validateEnvValue(flagName, value string) error {
 	switch flagName {
-	case "scan-interval", "tls-check-timeout":
+	case "scan-interval", "cleanup-interval", "tls-check-timeout", "profile-refresh-interval", "retry-backoff":
 		if _, err := time.ParseDuration(value); err != nil {
 			return fmt.Errorf("invalid duration: %w", err)
 		}
@@ -388,14 +395,25 @@ func validateEnvValue(flagName, value string) error {
 		if _, err := strconv.ParseFloat(value, 64); err != nil {
 			return fmt.Errorf("invalid float: %w", err)
 		}
+	case "rate-burst":
+		return validateIntRange(value, 1, 1000)
+	case "cert-expiry-warning-days":
+		return validateIntRange(value, 1, 365)
 	case "workers":
-		v, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid integer: %w", err)
-		}
-		if v < 1 || v > 50 {
-			return fmt.Errorf("must be between 1 and 50, got %d", v)
-		}
+		return validateIntRange(value, 1, 50)
+	case "max-retries":
+		return validateIntRange(value, 0, 10)
+	}
+	return nil
+}
+
+func validateIntRange(value string, min, max int) error {
+	v, err := strconv.Atoi(value)
+	if err != nil {
+		return fmt.Errorf("invalid integer: %w", err)
+	}
+	if v < min || v > max {
+		return fmt.Errorf("must be between %d and %d, got %d", min, max, v)
 	}
 	return nil
 }

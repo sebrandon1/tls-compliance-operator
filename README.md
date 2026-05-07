@@ -93,6 +93,7 @@ kubectl apply -f dist/install.yaml
 | Guide | Description |
 |-------|-------------|
 | [Installation](docs/installation.md) | Deploy to your cluster in one command |
+| [Configuration](docs/configuration.md) | All flags, environment variables, defaults, and tuning guidance |
 | [Viewing Reports](docs/viewing-reports.md) | Understand compliance status, cipher grades, and certificate info |
 | [Custom Targets](docs/custom-targets.md) | Scan arbitrary external hosts with `TLSComplianceTarget` |
 | [Exporting Reports](docs/exporting-reports.md) | CSV, JSON, and JUnit XML export for CI/CD |
@@ -226,10 +227,17 @@ container args is inconvenient.
 | Environment Variable | Flag | Default |
 |---------------------|------|---------|
 | `TLS_COMPLIANCE_SCAN_INTERVAL` | `--scan-interval` | `1h` |
+| `TLS_COMPLIANCE_CLEANUP_INTERVAL` | `--cleanup-interval` | `5m` |
 | `TLS_COMPLIANCE_CHECK_TIMEOUT` | `--tls-check-timeout` | `5s` |
 | `TLS_COMPLIANCE_RATE_LIMIT` | `--rate-limit` | `10` |
+| `TLS_COMPLIANCE_RATE_BURST` | `--rate-burst` | `20` |
 | `TLS_COMPLIANCE_WORKERS` | `--workers` | `5` |
+| `TLS_COMPLIANCE_INCLUDE_NAMESPACES` | `--include-namespaces` | `""` |
 | `TLS_COMPLIANCE_EXCLUDE_NAMESPACES` | `--exclude-namespaces` | `""` |
+| `TLS_COMPLIANCE_CERT_EXPIRY_WARNING_DAYS` | `--cert-expiry-warning-days` | `30` |
+| `TLS_COMPLIANCE_PROFILE_REFRESH_INTERVAL` | `--profile-refresh-interval` | `5m` |
+| `TLS_COMPLIANCE_MAX_RETRIES` | `--max-retries` | `3` |
+| `TLS_COMPLIANCE_RETRY_BACKOFF` | `--retry-backoff` | `30s` |
 
 Example: set scan interval via environment variable in a Deployment:
 
