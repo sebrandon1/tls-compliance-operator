@@ -736,7 +736,7 @@ func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Service{}).
 		Named("endpoint").
-		WithOptions(controller.Options{}).
+		WithOptions(controller.Options{MaxConcurrentReconciles: r.Workers}).
 		Watches(&networkingv1.Ingress{}, handler.EnqueueRequestsFromMapFunc(
 			func(ctx context.Context, obj client.Object) []ctrl.Request {
 				ing, ok := obj.(*networkingv1.Ingress)
