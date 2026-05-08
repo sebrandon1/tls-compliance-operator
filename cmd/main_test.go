@@ -233,6 +233,13 @@ func TestValidateEnvValue(t *testing.T) {
 		{"workers too high", "workers", "51", true},
 		{"invalid workers", "workers", "abc", true},
 		{"unknown flag passes", "exclude-namespaces", "anything", false},
+		{"valid extra-tls-ports", "extra-tls-ports", "9443,6380,5671", false},
+		{"invalid extra-tls-ports non-number", "extra-tls-ports", "abc", true},
+		{"invalid extra-tls-ports out of range", "extra-tls-ports", "70000", true},
+		{"invalid extra-tls-ports zero", "extra-tls-ports", "0", true},
+		{"valid log-format text", "log-format", "text", false},
+		{"valid log-format json", "log-format", "json", false},
+		{"invalid log-format", "log-format", "xml", true},
 	}
 
 	for _, tc := range tests {
@@ -242,5 +249,79 @@ func TestValidateEnvValue(t *testing.T) {
 				t.Errorf("validateEnvValue(%s, %s) error = %v, wantErr = %v", tc.flag, tc.value, err, tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestParsePortList(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    int
+		wantErr bool
+	}{
+		{"single port", "9443", 1, false},
+		{"multiple ports", "9443,6380,5671", 3, false},
+		{"spaces trimmed", " 9443 , 6380 ", 2, false},
+		{"empty string", "", 0, false},
+		{"trailing comma", "9443,", 1, false},
+		{"non-number", "abc", 0, true},
+		{"port zero", "0", 0, true},
+		{"port too high", "65536", 0, true},
+		{"negative port", "-1", 0, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ports, err := parsePortList(tc.input)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("parsePortList(%q) error = %v, wantErr = %v", tc.input, err, tc.wantErr)
+				return
+			}
+			if !tc.wantErr && len(ports) != tc.want {
+				t.Errorf("parsePortList(%q) returned %d ports, want %d", tc.input, len(ports), tc.want)
+			}
+		})
+	}
+}
+
+func TestResolveEnvConfig_ExtraTLSPorts(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("extra-tls-ports", "", "")
+	_ = fs.Parse([]string{})
+
+	env := map[string]string{
+		"TLS_COMPLIANCE_EXTRA_TLS_PORTS": "9443,6380",
+	}
+	lookup := func(key string) (string, bool) {
+		v, ok := env[key]
+		return v, ok
+	}
+
+	_ = resolveEnvConfig(fs, lookup)
+
+	val := fs.Lookup("extra-tls-ports").Value.String()
+	if val != "9443,6380" {
+		t.Errorf("expected extra-tls-ports=9443,6380, got %s", val)
+	}
+}
+
+func TestResolveEnvConfig_LogFormat(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("log-format", "text", "")
+	_ = fs.Parse([]string{})
+
+	env := map[string]string{
+		"TLS_COMPLIANCE_LOG_FORMAT": "json",
+	}
+	lookup := func(key string) (string, bool) {
+		v, ok := env[key]
+		return v, ok
+	}
+
+	_ = resolveEnvConfig(fs, lookup)
+
+	val := fs.Lookup("log-format").Value.String()
+	if val != "json" {
+		t.Errorf("expected log-format=json, got %s", val)
 	}
 }

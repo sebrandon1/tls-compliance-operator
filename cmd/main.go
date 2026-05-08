@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -41,6 +42,7 @@ import (
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 	"github.com/sebrandon1/tls-compliance-operator/internal/controller"
+	"github.com/sebrandon1/tls-compliance-operator/pkg/endpoint"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlscheck"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlsprofile"
 	// +kubebuilder:scaffold:imports
@@ -82,6 +84,8 @@ func main() {
 	var workers int
 	var maxRetries int
 	var retryBackoff time.Duration
+	var extraTLSPortsStr string
+	var logFormat string
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -126,6 +130,10 @@ func main() {
 		"Maximum number of retries for transient TLS check failures (0-10)")
 	flag.DurationVar(&retryBackoff, "retry-backoff", 30*time.Second,
 		"Base backoff duration between retries (exponential: base * 2^attempt)")
+	flag.StringVar(&extraTLSPortsStr, "extra-tls-ports", "",
+		"Comma-separated list of additional port numbers to treat as TLS endpoints (e.g., 9443,6380,5671)")
+	flag.StringVar(&logFormat, "log-format", "text",
+		"Log output format: text or json")
 
 	opts := zap.Options{
 		Development: true,
@@ -133,12 +141,34 @@ func main() {
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
+	// Apply environment variable overrides before logger creation so that
+	// TLS_COMPLIANCE_LOG_FORMAT=json takes effect on the logger.
+	envOverrides := resolveEnvConfig(flag.CommandLine, os.LookupEnv)
+
+	// Validate log format (after env overrides may have changed it)
+	if logFormat != "text" && logFormat != "json" {
+		fmt.Fprintf(os.Stderr, "invalid --log-format value, must be text or json, got %q\n", logFormat)
+		os.Exit(1)
+	}
+
+	if logFormat == "json" {
+		opts.Development = false
+	}
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	// Apply environment variable overrides for flags not explicitly set on the command line
-	envOverrides := resolveEnvConfig(flag.CommandLine, os.LookupEnv)
 	for _, msg := range envOverrides {
 		setupLog.Info(msg)
+	}
+
+	// Parse and apply extra TLS ports
+	if extraTLSPortsStr != "" {
+		ports, err := parsePortList(extraTLSPortsStr)
+		if err != nil {
+			setupLog.Error(err, "invalid --extra-tls-ports value")
+			os.Exit(1)
+		}
+		endpoint.SetExtraTLSPorts(ports)
+		setupLog.Info("extra TLS ports configured", "ports", extraTLSPortsStr)
 	}
 
 	// Validate workers flag
@@ -336,6 +366,8 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_PROFILE_REFRESH_INTERVAL", "profile-refresh-interval"},
 	{"TLS_COMPLIANCE_MAX_RETRIES", "max-retries"},
 	{"TLS_COMPLIANCE_RETRY_BACKOFF", "retry-backoff"},
+	{"TLS_COMPLIANCE_EXTRA_TLS_PORTS", "extra-tls-ports"},
+	{"TLS_COMPLIANCE_LOG_FORMAT", "log-format"},
 }
 
 // resolveEnvConfig applies environment variable overrides to flags that were not
@@ -403,6 +435,13 @@ func validateEnvValue(flagName, value string) error {
 		return validateIntRange(value, 1, 50)
 	case "max-retries":
 		return validateIntRange(value, 0, 10)
+	case "extra-tls-ports":
+		_, err := parsePortList(value)
+		return err
+	case "log-format":
+		if value != "text" && value != "json" {
+			return fmt.Errorf("must be text or json, got %q", value)
+		}
 	}
 	return nil
 }
@@ -416,4 +455,23 @@ func validateIntRange(value string, min, max int) error {
 		return fmt.Errorf("must be between %d and %d, got %d", min, max, v)
 	}
 	return nil
+}
+
+func parsePortList(value string) (map[int32]bool, error) {
+	ports := map[int32]bool{}
+	for _, s := range strings.Split(value, ",") {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		p, err := strconv.Atoi(s)
+		if err != nil {
+			return nil, fmt.Errorf("invalid port %q: %w", s, err)
+		}
+		if p < 1 || p > 65535 {
+			return nil, fmt.Errorf("port %d out of range (1-65535)", p)
+		}
+		ports[int32(p)] = true
+	}
+	return ports, nil
 }

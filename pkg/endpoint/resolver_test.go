@@ -329,8 +329,13 @@ func TestIsTLSPort(t *testing.T) {
 	}{
 		{"port 443", corev1.ServicePort{Port: 443}, true},
 		{"port 8443", corev1.ServicePort{Port: 8443}, true},
+		{"port 9443 (webhooks)", corev1.ServicePort{Port: 9443}, true},
+		{"port 2379 (etcd)", corev1.ServicePort{Port: 2379}, true},
+		{"port 5671 (AMQP TLS)", corev1.ServicePort{Port: 5671}, true},
+		{"port 6380 (Redis TLS)", corev1.ServicePort{Port: 6380}, true},
+		{"port 9200 (Elasticsearch)", corev1.ServicePort{Port: 9200}, true},
 		{"named https", corev1.ServicePort{Name: "https", Port: 9090}, true},
-		{"named https-metrics", corev1.ServicePort{Name: "https-metrics", Port: 9443}, true},
+		{"named https-metrics", corev1.ServicePort{Name: "https-metrics", Port: 7777}, true},
 		{"port 80", corev1.ServicePort{Port: 80}, false},
 		{"named http", corev1.ServicePort{Name: "http", Port: 80}, false},
 		{"named grpc", corev1.ServicePort{Name: "grpc", Port: 9090}, false},
@@ -354,8 +359,13 @@ func TestIsTLSContainerPort(t *testing.T) {
 	}{
 		{"port 443", corev1.ContainerPort{ContainerPort: 443}, true},
 		{"port 8443", corev1.ContainerPort{ContainerPort: 8443}, true},
-		{"named https", corev1.ContainerPort{Name: "https", ContainerPort: 9090}, true},
-		{"named https-metrics", corev1.ContainerPort{Name: "https-metrics", ContainerPort: 9443}, true},
+		{"port 9443 (webhooks)", corev1.ContainerPort{ContainerPort: 9443}, true},
+		{"port 2379 (etcd)", corev1.ContainerPort{ContainerPort: 2379}, true},
+		{"port 5671 (AMQP TLS)", corev1.ContainerPort{ContainerPort: 5671}, true},
+		{"port 6380 (Redis TLS)", corev1.ContainerPort{ContainerPort: 6380}, true},
+		{"port 9200 (Elasticsearch)", corev1.ContainerPort{ContainerPort: 9200}, true},
+		{"named https", corev1.ContainerPort{Name: "https", ContainerPort: 7777}, true},
+		{"named https-metrics", corev1.ContainerPort{Name: "https-metrics", ContainerPort: 7777}, true},
 		{"port 80", corev1.ContainerPort{ContainerPort: 80}, false},
 		{"named http", corev1.ContainerPort{Name: "http", ContainerPort: 80}, false},
 		{"named grpc", corev1.ContainerPort{Name: "grpc", ContainerPort: 9090}, false},
@@ -960,5 +970,47 @@ func TestExtractFromPod_DefaultProtocol(t *testing.T) {
 	endpoints := ExtractFromPod(pod)
 	if len(endpoints) != 1 {
 		t.Fatalf("expected 1 endpoint for port with default protocol, got %d", len(endpoints))
+	}
+}
+
+func TestSetExtraTLSPorts(t *testing.T) {
+	defer SetExtraTLSPorts(map[int32]bool{})
+
+	SetExtraTLSPorts(map[int32]bool{12345: true, 54321: true})
+
+	if !isTLSPort(corev1.ServicePort{Port: 12345}) {
+		t.Error("expected port 12345 to be detected as TLS after SetExtraTLSPorts")
+	}
+	if !isTLSContainerPort(corev1.ContainerPort{ContainerPort: 54321}) {
+		t.Error("expected port 54321 to be detected as TLS after SetExtraTLSPorts")
+	}
+	if isTLSPort(corev1.ServicePort{Port: 99999}) {
+		t.Error("unexpected TLS detection for port 99999")
+	}
+}
+
+func TestExtraTLSPorts_PodExtraction(t *testing.T) {
+	defer SetExtraTLSPorts(map[int32]bool{})
+
+	SetExtraTLSPorts(map[int32]bool{7777: true})
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "custom-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "app", Ports: []corev1.ContainerPort{
+					{ContainerPort: 7777, Protocol: corev1.ProtocolTCP},
+				}},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.5"},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint for extra TLS port, got %d", len(endpoints))
+	}
+	if endpoints[0].Port != 7777 {
+		t.Errorf("port = %d, want 7777", endpoints[0].Port)
 	}
 }

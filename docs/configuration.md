@@ -16,6 +16,7 @@ If a flag is set on the command line, its environment variable is ignored.
 | `--cleanup-interval` | `TLS_COMPLIANCE_CLEANUP_INTERVAL` | duration | `5m` | How often the operator removes TLSComplianceReport CRs whose source resource (Service, Ingress, Route) has been deleted. |
 | `--tls-check-timeout` | `TLS_COMPLIANCE_CHECK_TIMEOUT` | duration | `5s` | Timeout for each individual TLS connection attempt. The operator probes TLS 1.0, 1.1, 1.2, 1.3, and SSLv3 sequentially, so worst-case time per endpoint is roughly 5x this value. Increase on high-latency networks. |
 | `--workers` | `TLS_COMPLIANCE_WORKERS` | int | `5` | Number of concurrent goroutines used during periodic scans. Range: 1-50. Higher values scan faster but use more CPU and network. This also controls `MaxConcurrentReconciles` for the controller work queue. |
+| `--extra-tls-ports` | `TLS_COMPLIANCE_EXTRA_TLS_PORTS` | string | `""` | Comma-separated list of additional port numbers to treat as TLS endpoints (e.g., `12345,54321`). These are checked in addition to the built-in defaults (443, 8443, 9443, 2379, 5671, 6380, 9200) and any port named `https` or `https-*`. |
 
 ## Rate Limiting
 
@@ -52,6 +53,12 @@ If neither flag is set, all namespaces are scanned.
 |------|---------|------|---------|-------------|
 | `--profile-refresh-interval` | `TLS_COMPLIANCE_PROFILE_REFRESH_INTERVAL` | duration | `5m` | How often to re-fetch OpenShift TLS security profile configuration (APIServer, IngressController, KubeletConfig). Only used when running on OpenShift. Ignored on vanilla Kubernetes. |
 
+## Logging
+
+| Flag | Env Var | Type | Default | Description |
+|------|---------|------|---------|-------------|
+| `--log-format` | `TLS_COMPLIANCE_LOG_FORMAT` | string | `text` | Log output format. Use `text` for human-readable development logs or `json` for structured logs suitable for log aggregation pipelines (ELK, Splunk, CloudWatch). |
+
 ## Infrastructure
 
 These flags are standard controller-runtime/kubebuilder flags. They do not have
@@ -85,6 +92,10 @@ env:
   value: "kube-system,openshift-monitoring"
 - name: TLS_COMPLIANCE_CERT_EXPIRY_WARNING_DAYS
   value: "14"
+- name: TLS_COMPLIANCE_EXTRA_TLS_PORTS
+  value: "12345,54321"
+- name: TLS_COMPLIANCE_LOG_FORMAT
+  value: "json"
 ```
 
 ### CLI flags in container args
@@ -95,5 +106,7 @@ args:
 - --workers=10
 - --exclude-namespaces=kube-system,openshift-monitoring
 - --cert-expiry-warning-days=14
+- --extra-tls-ports=12345,54321
+- --log-format=json
 - --leader-elect
 ```

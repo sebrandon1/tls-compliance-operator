@@ -347,6 +347,56 @@ spec:
 		})
 	})
 
+	Context("Expanded TLS Port Detection", func() {
+		It("should detect a service on port 9443 as TLS by default", func() {
+			By("creating a service on port 9443 with a non-HTTPS name")
+			cmd := exec.Command("kubectl", "create", "service", "clusterip", "test-webhook-svc",
+				"--tcp=9443:9443", "-n", "default")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "service", "test-webhook-svc",
+					"-n", "default", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+
+			By("waiting for TLSComplianceReport to be created for port 9443")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					"jsonpath={range .items[*]}{.spec.host},{.spec.port}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("test-webhook-svc.default,9443"),
+					"expected TLSComplianceReport for service on port 9443")
+			}).Should(Succeed())
+		})
+
+		It("should detect a service on port 2379 as TLS by default", func() {
+			By("creating a service on port 2379 (etcd)")
+			cmd := exec.Command("kubectl", "create", "service", "clusterip", "test-etcd-svc",
+				"--tcp=2379:2379", "-n", "default")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "service", "test-etcd-svc",
+					"-n", "default", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+
+			By("waiting for TLSComplianceReport to be created for port 2379")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					"jsonpath={range .items[*]}{.spec.host},{.spec.port}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("test-etcd-svc.default,2379"),
+					"expected TLSComplianceReport for service on port 2379")
+			}).Should(Succeed())
+		})
+	})
+
 	Context("kubectl-tlsreport plugin", func() {
 		var pluginBinary string
 
