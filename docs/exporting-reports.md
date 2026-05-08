@@ -34,6 +34,21 @@ kubectl tlsreport json
 kubectl tlsreport junit
 ```
 
+**Markdown** (for GitHub issues, wikis, and documentation):
+
+```bash
+kubectl tlsreport markdown
+kubectl tlsreport md  # shorthand
+```
+
+Produces a Markdown table matching `kubectl get tlsreport` columns:
+
+```
+| Host | Port | Source | Compliance | Grade | FS | TLS1.3 | TLS1.2 | TLS1.0 | PQC | CertExpiry | Age |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| my-service.default | 443 | Service | Compliant | A | true | true | true | false | PQCReady | 364 | 5m |
+```
+
 ## Filtering
 
 Filter by namespace, compliance status, source kind, PQC readiness, or certificate expiry:
