@@ -307,10 +307,22 @@ func ExtractFromPod(pod *corev1.Pod) []Endpoint {
 	return endpoints
 }
 
+var defaultTLSPorts = map[int32]bool{
+	443: true, 8443: true, 9443: true,
+	2379: true, 5671: true, 6380: true, 9200: true,
+}
+
+var extraTLSPorts = map[int32]bool{}
+
+// SetExtraTLSPorts configures additional port numbers to treat as TLS endpoints.
+func SetExtraTLSPorts(ports map[int32]bool) {
+	extraTLSPorts = ports
+}
+
 // isTLSPortByNumberAndName checks if a port number and name indicate a TLS port.
 // Shared logic for both ServicePort and ContainerPort classification.
 func isTLSPortByNumberAndName(portNumber int32, portName string) bool {
-	if portNumber == 443 || portNumber == 8443 {
+	if defaultTLSPorts[portNumber] || extraTLSPorts[portNumber] {
 		return true
 	}
 
