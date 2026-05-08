@@ -355,7 +355,7 @@ func TestRateLimitedChecker(t *testing.T) {
 func TestParseCertificate(t *testing.T) {
 	_, cert := generateTestCert(t)
 
-	details := ParseCertificate(cert)
+	details := ParseCertificate(cert, "localhost")
 	if details.Subject == "" {
 		t.Error("expected subject to be populated")
 	}

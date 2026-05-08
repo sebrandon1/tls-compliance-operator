@@ -124,7 +124,7 @@ func BenchmarkParseCertificate(b *testing.B) {
 
 	b.ResetTimer()
 	for b.Loop() {
-		_ = ParseCertificate(cert)
+		_ = ParseCertificate(cert, "localhost")
 	}
 }
 

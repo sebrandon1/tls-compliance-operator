@@ -87,12 +87,16 @@ type CertificateDetails struct {
 	DNSNames        []string
 	IsExpired       bool
 	DaysUntilExpiry int
+	HostnameMatch   bool
 }
 
-// ParseCertificate extracts CertificateDetails from an x509 certificate
-func ParseCertificate(cert *x509.Certificate) *CertificateDetails {
+// ParseCertificate extracts CertificateDetails from an x509 certificate.
+// The hostname parameter is used to check if the certificate is valid for the tested endpoint.
+func ParseCertificate(cert *x509.Certificate, hostname string) *CertificateDetails {
 	now := time.Now()
 	daysUntilExpiry := int(cert.NotAfter.Sub(now).Hours() / 24)
+
+	hostnameMatch := cert.VerifyHostname(hostname) == nil
 
 	return &CertificateDetails{
 		Issuer:          cert.Issuer.String(),
@@ -102,5 +106,6 @@ func ParseCertificate(cert *x509.Certificate) *CertificateDetails {
 		DNSNames:        cert.DNSNames,
 		IsExpired:       now.After(cert.NotAfter),
 		DaysUntilExpiry: daysUntilExpiry,
+		HostnameMatch:   hostnameMatch,
 	}
 }

@@ -117,6 +117,9 @@ type CertificateInfo struct {
 	// DaysUntilExpiry is the number of days until the certificate expires
 	// +optional
 	DaysUntilExpiry int `json:"daysUntilExpiry"`
+	// HostnameMatch indicates whether the certificate is valid for the tested endpoint hostname
+	// +optional
+	HostnameMatch *bool `json:"hostnameMatch,omitempty"`
 }
 
 // TLSProfileComplianceResult contains the result of checking an endpoint

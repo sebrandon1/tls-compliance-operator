@@ -162,6 +162,10 @@ spec:
                     items:
                       type: string
                     type: array
+                  hostnameMatch:
+                    description: HostnameMatch indicates whether the certificate is
+                      valid for the tested endpoint hostname
+                    type: boolean
                   isExpired:
                     description: IsExpired indicates if the certificate has expired
                     type: boolean
