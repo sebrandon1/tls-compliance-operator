@@ -60,6 +60,14 @@ func kubectlApplyManifest(manifest, description string) {
 	Expect(err).NotTo(HaveOccurred(), "Failed to apply %s", description)
 }
 
+var testServerImage = "quay.io/bapalm/tls-test-server:latest"
+
+func init() {
+	if img := os.Getenv("TEST_SERVER_IMG"); img != "" {
+		testServerImage = img
+	}
+}
+
 // namespace where the project is deployed in
 const namespace = "tls-compliance-operator-system"
 
@@ -97,10 +105,10 @@ var _ = Describe("Manager", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 
-		By("patching scan interval for faster pod scanning in E2E")
+		By("patching scan and cleanup intervals for faster E2E execution")
 		cmd = exec.Command("kubectl", "patch", "deployment",
 			"tls-compliance-operator-controller-manager", "-n", namespace,
-			"--type=json", `-p=[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--scan-interval=30s"}]`)
+			"--type=json", `-p=[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--scan-interval=30s"},{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--cleanup-interval=30s"}]`)
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to patch scan interval")
 
@@ -155,7 +163,7 @@ var _ = Describe("Manager", Ordered, func() {
 	SetDefaultEventuallyTimeout(5 * time.Minute)
 	SetDefaultEventuallyPollingInterval(time.Second)
 
-	Context("Manager", func() {
+	Context("Manager", Label("manager"), func() {
 		It("should run successfully", func() {
 			By("validating that the controller-manager pod is running as expected")
 			verifyControllerUp := func(g Gomega) {
@@ -183,7 +191,7 @@ var _ = Describe("Manager", Ordered, func() {
 	// POSITIVE TESTS — verify reports ARE created for valid TLS resources
 	// =========================================================================
 
-	Context("Positive: Service Detection", func() {
+	Context("Positive: Service Detection", Label("service-detection"), func() {
 		It("should create report for a Service on port 443", func() {
 			cmd := exec.Command("kubectl", "create", "service", "clusterip", "test-https",
 				"--tcp=443:443", "-n", "default")
@@ -244,7 +252,7 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 	})
 
-	Context("Positive: Pod Detection", func() {
+	Context("Positive: Pod Detection", Label("pod-detection"), func() {
 		const agnhostImage = "registry.k8s.io/e2e-test-images/agnhost:2.53"
 
 		It("should create report for a pod with TLS port", func() {
@@ -313,7 +321,7 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 	})
 
-	Context("Positive: Ingress Detection", func() {
+	Context("Positive: Ingress Detection", Label("ingress-detection"), func() {
 		It("should create report for an Ingress with TLS", func() {
 			kubectlApplyManifest(loadManifest("tls-ingress.yaml"), "TLS Ingress")
 
@@ -333,7 +341,7 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 	})
 
-	Context("Positive: TLSComplianceTarget", func() {
+	Context("Positive: TLSComplianceTarget", Label("target-detection"), func() {
 		It("should create report for a custom target", func() {
 			kubectlApplyManifest(loadManifest("tlscompliancetarget.yaml"), "TLSComplianceTarget")
 
@@ -352,8 +360,7 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 	})
 
-	Context("Positive: Compliance Status Validation", Ordered, func() {
-		const testServerImage = "quay.io/bapalm/tls-test-server:latest"
+	Context("Positive: Compliance Status Validation", Label("compliance-validation"), Ordered, func() {
 		const testNS = "tls-e2e-validation"
 
 		BeforeAll(func() {
@@ -473,7 +480,7 @@ var _ = Describe("Manager", Ordered, func() {
 	// NEGATIVE TESTS — verify reports are NOT created or are cleaned up
 	// =========================================================================
 
-	Context("Negative: Non-TLS Resources Ignored", func() {
+	Context("Negative: Non-TLS Resources Ignored", Label("non-tls-ignored"), func() {
 		const agnhostImage = "registry.k8s.io/e2e-test-images/agnhost:2.53"
 
 		It("should not create report for a pod on port 80", func() {
@@ -576,8 +583,7 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 	})
 
-	Context("Negative: Compliance Status Detection", Ordered, func() {
-		const testServerImage = "quay.io/bapalm/tls-test-server:latest"
+	Context("Negative: Compliance Status Detection", Label("compliance-detection"), Ordered, func() {
 		const testNS = "tls-e2e-validation"
 
 		BeforeAll(func() {
@@ -644,7 +650,7 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 	})
 
-	Context("Negative: Cleanup", func() {
+	Context("Negative: Cleanup", Label("cleanup"), func() {
 		const agnhostImage = "registry.k8s.io/e2e-test-images/agnhost:2.53"
 
 		It("should remove report when source pod is deleted", func() {
@@ -680,7 +686,7 @@ var _ = Describe("Manager", Ordered, func() {
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).NotTo(ContainSubstring("test-cleanup-pod"))
-			}).WithTimeout(6 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+			}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
 		})
 
 		It("should remove report when source Service is deleted", func() {
@@ -707,11 +713,11 @@ var _ = Describe("Manager", Ordered, func() {
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).NotTo(ContainSubstring("test-cleanup-svc"))
-			}).WithTimeout(6 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+			}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
 		})
 	})
 
-	Context("kubectl-tlsreport plugin", func() {
+	Context("kubectl-tlsreport plugin", Label("plugin"), func() {
 		var pluginBinary string
 
 		BeforeAll(func() {
