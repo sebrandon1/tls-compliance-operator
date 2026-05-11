@@ -34,12 +34,14 @@ func main() {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"status":      "ok",
-			"tls_enabled": cfg.tlsEnabled,
-			"min_version": cfg.minVersion,
-			"max_version": cfg.maxVersion,
-			"mtls":        cfg.mtlsRequired,
-			"port":        cfg.port,
+			"status":       "ok",
+			"tls_enabled":  cfg.tlsEnabled,
+			"min_version":  cfg.minVersion,
+			"max_version":  cfg.maxVersion,
+			"mtls":         cfg.mtlsRequired,
+			"port":         cfg.port,
+			"cert_expired": cfg.certExpired,
+			"cert_cn":      cfg.certCN,
 		})
 	})
 
@@ -62,16 +64,19 @@ func main() {
 		TLSConfig: tlsCfg,
 	}
 
-	log.Printf("Serving TLS on %s (min=%s max=%s mtls=%v)", addr, cfg.minVersion, cfg.maxVersion, cfg.mtlsRequired)
+	log.Printf("Serving TLS on %s (min=%s max=%s mtls=%v expired=%v cn=%s)", addr, cfg.minVersion, cfg.maxVersion, cfg.mtlsRequired, cfg.certExpired, cfg.certCN)
 	log.Fatal(server.ListenAndServeTLS("", ""))
 }
 
 type config struct {
-	minVersion   string
-	maxVersion   string
-	tlsEnabled   bool
-	mtlsRequired bool
-	port         int
+	minVersion      string
+	maxVersion      string
+	tlsEnabled      bool
+	mtlsRequired    bool
+	port            int
+	certExpired     bool
+	certExpiryHours int
+	certCN          string
 }
 
 func loadConfig() config {
@@ -80,6 +85,16 @@ func loadConfig() config {
 		maxVersion:   envOrDefault("TLS_MAX_VERSION", "1.3"),
 		tlsEnabled:   envOrDefault("TLS_ENABLED", "true") == "true",
 		mtlsRequired: envOrDefault("MTLS_REQUIRED", "false") == "true",
+		certExpired:  envOrDefault("CERT_EXPIRED", "false") == "true",
+		certCN:       envOrDefault("CERT_CN", "tls-test-server"),
+	}
+
+	if h := os.Getenv("CERT_EXPIRY_HOURS"); h != "" {
+		v, err := strconv.Atoi(h)
+		if err != nil {
+			log.Fatalf("Invalid CERT_EXPIRY_HOURS: %s", h)
+		}
+		cfg.certExpiryHours = v
 	}
 
 	portStr := os.Getenv("LISTEN_PORT")
@@ -115,7 +130,7 @@ func buildTLSConfig(cfg config) (*tls.Config, error) {
 		return nil, fmt.Errorf("unknown TLS max version: %s", cfg.maxVersion)
 	}
 
-	serverCert, err := generateSelfSignedCert()
+	serverCert, err := generateSelfSignedCert(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("generating server cert: %w", err)
 	}
@@ -174,7 +189,7 @@ func generateCA(cn string) (*caBundle, error) {
 	return &caBundle{cert: cert, key: key}, nil
 }
 
-func generateSelfSignedCert() (tls.Certificate, error) {
+func generateSelfSignedCert(cfg config) (tls.Certificate, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return tls.Certificate{}, err
@@ -186,11 +201,21 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 		"*.parity-test.svc",
 	}
 
+	notBefore := time.Now().Add(-1 * time.Hour)
+	notAfter := time.Now().Add(10 * 365 * 24 * time.Hour)
+
+	if cfg.certExpired {
+		notBefore = time.Now().Add(-48 * time.Hour)
+		notAfter = time.Now().Add(-1 * time.Hour)
+	} else if cfg.certExpiryHours > 0 {
+		notAfter = time.Now().Add(time.Duration(cfg.certExpiryHours) * time.Hour)
+	}
+
 	template := &x509.Certificate{
 		SerialNumber: newSerial(),
-		Subject:      pkix.Name{CommonName: "tls-test-server"},
-		NotBefore:    time.Now().Add(-1 * time.Hour),
-		NotAfter:     time.Now().Add(10 * 365 * 24 * time.Hour),
+		Subject:      pkix.Name{CommonName: cfg.certCN},
+		NotBefore:    notBefore,
+		NotAfter:     notAfter,
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},

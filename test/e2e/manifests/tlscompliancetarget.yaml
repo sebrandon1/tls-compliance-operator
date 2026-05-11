@@ -1,0 +1,7 @@
+apiVersion: security.telco.openshift.io/v1alpha1
+kind: TLSComplianceTarget
+metadata:
+  name: test-k8s-api
+spec:
+  host: kubernetes.default.svc
+  port: 443

@@ -20,9 +20,13 @@ limitations under the License.
 package e2e
 
 import (
+	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"text/template"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -30,6 +34,31 @@ import (
 
 	"github.com/sebrandon1/tls-compliance-operator/test/utils"
 )
+
+func manifestPath(name string) string {
+	return filepath.Join(projectRoot(), "test", "e2e", "manifests", name)
+}
+
+func loadManifest(name string) string {
+	data, err := os.ReadFile(manifestPath(name))
+	Expect(err).NotTo(HaveOccurred(), "Failed to read manifest %s", name)
+	return string(data)
+}
+
+func renderManifest(name string, data any) string {
+	tmpl, err := template.ParseFiles(manifestPath(name))
+	Expect(err).NotTo(HaveOccurred(), "Failed to parse template %s", name)
+	var buf bytes.Buffer
+	Expect(tmpl.Execute(&buf, data)).To(Succeed(), "Failed to render template %s", name)
+	return buf.String()
+}
+
+func kubectlApplyManifest(manifest, description string) {
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(manifest)
+	_, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to apply %s", description)
+}
 
 // namespace where the project is deployed in
 const namespace = "tls-compliance-operator-system"
@@ -148,36 +177,79 @@ var _ = Describe("Manager", Ordered, func() {
 			}
 			Eventually(verifyControllerUp).Should(Succeed())
 		})
+	})
 
-		It("should create TLSComplianceReport for HTTPS services", func() {
-			By("creating a test service with HTTPS port")
+	// =========================================================================
+	// POSITIVE TESTS — verify reports ARE created for valid TLS resources
+	// =========================================================================
+
+	Context("Positive: Service Detection", func() {
+		It("should create report for a Service on port 443", func() {
 			cmd := exec.Command("kubectl", "create", "service", "clusterip", "test-https",
 				"--tcp=443:443", "-n", "default")
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("waiting for TLSComplianceReport to be created")
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "service", "test-https", "-n", "default", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+
 			Eventually(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "tlsreport", "-o", "name")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).NotTo(BeEmpty(), "expected at least one TLSComplianceReport")
+				g.Expect(output).NotTo(BeEmpty())
 			}).Should(Succeed())
+		})
 
-			By("cleaning up test service")
-			cmd = exec.Command("kubectl", "delete", "service", "test-https", "-n", "default")
-			_, _ = utils.Run(cmd)
+		It("should create report for a Service on port 9443", func() {
+			cmd := exec.Command("kubectl", "create", "service", "clusterip", "test-webhook-svc",
+				"--tcp=9443:9443", "-n", "default")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "service", "test-webhook-svc", "-n", "default", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					"jsonpath={range .items[*]}{.spec.host},{.spec.port}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("test-webhook-svc.default,9443"))
+			}).Should(Succeed())
+		})
+
+		It("should create report for a Service on port 2379", func() {
+			cmd := exec.Command("kubectl", "create", "service", "clusterip", "test-etcd-svc",
+				"--tcp=2379:2379", "-n", "default")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "service", "test-etcd-svc", "-n", "default", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					"jsonpath={range .items[*]}{.spec.host},{.spec.port}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("test-etcd-svc.default,2379"))
+			}).Should(Succeed())
 		})
 	})
 
-	Context("Pod Scanning", func() {
+	Context("Positive: Pod Detection", func() {
 		const agnhostImage = "registry.k8s.io/e2e-test-images/agnhost:2.53"
 
-		It("should create TLSComplianceReport for a pod with TLS port", func() {
-			By("creating a pod with port 443")
+		It("should create report for a pod with TLS port", func() {
 			cmd := exec.Command("kubectl", "run", "test-tls-pod",
-				"--image="+agnhostImage,
-				"--port=443",
+				"--image="+agnhostImage, "--port=443",
 				"--command", "--", "sleep", "3600")
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
@@ -188,7 +260,6 @@ var _ = Describe("Manager", Ordered, func() {
 				_, _ = utils.Run(cmd)
 			})
 
-			By("waiting for the pod to be running")
 			Eventually(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "pod", "test-tls-pod",
 					"-o", "jsonpath={.status.phase}")
@@ -197,125 +268,217 @@ var _ = Describe("Manager", Ordered, func() {
 				g.Expect(strings.TrimSpace(output)).To(Equal("Running"))
 			}).Should(Succeed())
 
-			By("waiting for TLSComplianceReport CR with sourceKind=Pod")
 			Eventually(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
 					"jsonpath={range .items[*]}{.spec.sourceKind},{.spec.sourceName}{\"\\n\"}{end}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(ContainSubstring("Pod,test-tls-pod"),
-					"expected a TLSComplianceReport with sourceKind=Pod for test-tls-pod")
+				g.Expect(output).To(ContainSubstring("Pod,test-tls-pod"))
 			}).Should(Succeed())
 		})
 
 		It("should label hostNetwork pod CR with host-network=true", func() {
-			By("creating a hostNetwork pod with port 8443")
-			cmd := exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(`
-apiVersion: v1
-kind: Pod
-metadata:
-  name: test-hostnet-pod
-  namespace: default
-spec:
-  hostNetwork: true
-  containers:
-  - name: agnhost
-    image: ` + agnhostImage + `
-    command: ["sleep", "3600"]
-    ports:
-    - containerPort: 8443
-`)
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
+			manifest := renderManifest("hostnetwork-pod.yaml", map[string]string{"Image": agnhostImage})
+			kubectlApplyManifest(manifest, "hostNetwork pod")
 
-			// Always clean up the pod, even if the test skips
 			DeferCleanup(func() {
 				cmd := exec.Command("kubectl", "delete", "pod", "test-hostnet-pod",
 					"--grace-period=0", "--force", "--ignore-not-found")
 				_, _ = utils.Run(cmd)
 			})
 
-			By("checking if pod can run on Kind")
 			Eventually(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "pod", "test-hostnet-pod",
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				phase := strings.TrimSpace(output)
-				// hostNetwork pods may fail to run on Kind; treat non-Running as eventual success
-				// so we can check the phase outside Eventually
-				g.Expect(phase).NotTo(BeEmpty())
+				g.Expect(strings.TrimSpace(output)).NotTo(BeEmpty())
 			}).WithTimeout(30 * time.Second).Should(Succeed())
 
-			cmd = exec.Command("kubectl", "get", "pod", "test-hostnet-pod",
+			phaseCmd := exec.Command("kubectl", "get", "pod", "test-hostnet-pod",
 				"-o", "jsonpath={.status.phase}")
-			phaseOut, err := utils.Run(cmd)
+			phaseOut, err := utils.Run(phaseCmd)
 			Expect(err).NotTo(HaveOccurred())
 			if strings.TrimSpace(phaseOut) != "Running" {
-				Skip("hostNetwork pod cannot run on Kind cluster — skipping")
+				Skip("hostNetwork pod cannot run on Kind cluster")
 			}
 
-			By("waiting for TLSComplianceReport CR with host-network label")
 			Eventually(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "tlsreport",
-					"-l", "tls-compliance.telco.openshift.io/host-network=true",
-					"-o", "name")
+					"-l", "tls-compliance.telco.openshift.io/host-network=true", "-o", "name")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).NotTo(BeEmpty(),
-					"expected a TLSComplianceReport with host-network=true label")
+				g.Expect(output).NotTo(BeEmpty())
 			}).Should(Succeed())
 		})
+	})
 
-		It("should remove TLSComplianceReport when source pod is deleted", func() {
-			By("creating a pod with port 443")
-			cmd := exec.Command("kubectl", "run", "test-cleanup-pod",
-				"--image="+agnhostImage,
-				"--port=443",
-				"--command", "--", "sleep", "3600")
+	Context("Positive: Ingress Detection", func() {
+		It("should create report for an Ingress with TLS", func() {
+			kubectlApplyManifest(loadManifest("tls-ingress.yaml"), "TLS Ingress")
+
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "ingress", "test-tls-ingress",
+					"-n", "default", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					"jsonpath={range .items[*]}{.spec.sourceKind},{.spec.host}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("Ingress,test-app.example.com"))
+			}).Should(Succeed())
+		})
+	})
+
+	Context("Positive: TLSComplianceTarget", func() {
+		It("should create report for a custom target", func() {
+			kubectlApplyManifest(loadManifest("tlscompliancetarget.yaml"), "TLSComplianceTarget")
+
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "tlstarget", "test-k8s-api", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					"jsonpath={range .items[*]}{.spec.sourceKind},{.spec.host}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("Target,kubernetes.default.svc"))
+			}).Should(Succeed())
+		})
+	})
+
+	Context("Positive: Compliance Status Validation", Ordered, func() {
+		const testServerImage = "quay.io/bapalm/tls-test-server:latest"
+		const testNS = "tls-e2e-validation"
+
+		BeforeAll(func() {
+			cmd := exec.Command("kubectl", "create", "ns", testNS)
+			_, _ = utils.Run(cmd)
+			cmd = exec.Command("kubectl", "label", "--overwrite", "ns", testNS,
+				"pod-security.kubernetes.io/enforce=privileged")
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
+		})
 
-			By("waiting for the pod to be running")
+		AfterAll(func() {
+			cmd := exec.Command("kubectl", "delete", "ns", testNS, "--ignore-not-found", "--timeout=60s")
+			_, _ = utils.Run(cmd)
+		})
+
+		deployTestServer := func(name string, port int, env map[string]string) {
+			manifest := renderManifest("testserver-pod.yaml", struct {
+				Name, Namespace, Image string
+				Port                  int
+				Env                   map[string]string
+			}{name, testNS, testServerImage, port, env})
+			kubectlApplyManifest(manifest, "test server pod "+name)
+		}
+
+		createTestService := func(name string, port int) {
+			manifest := renderManifest("testserver-service.yaml", struct {
+				Name, Namespace string
+				Port            int
+			}{name, testNS, port})
+			kubectlApplyManifest(manifest, "test server service "+name)
+		}
+
+		waitForPodRunning := func(name string) {
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "pod", "test-cleanup-pod",
+				cmd := exec.Command("kubectl", "get", "pod", name, "-n", testNS,
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(strings.TrimSpace(output)).To(Equal("Running"))
-			}).Should(Succeed())
+			}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+		}
 
-			By("waiting for TLSComplianceReport CR to appear")
+		waitForReportWithStatus := func(host string, port int, expectedStatus string) {
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
-					"jsonpath={range .items[*]}{.spec.sourceName}{\"\\n\"}{end}")
+				cmd := exec.Command("kubectl", "get", "tlsreport",
+					"-o", "jsonpath={range .items[*]}{.spec.host},{.spec.port},{.status.complianceStatus}{\"\\n\"}{end}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(ContainSubstring("test-cleanup-pod"))
-			}).Should(Succeed())
+				g.Expect(output).To(ContainSubstring(
+					fmt.Sprintf("%s.%s,%d,%s", host, testNS, port, expectedStatus)))
+			}).WithTimeout(5 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
+		}
 
-			By("deleting the source pod")
-			cmd = exec.Command("kubectl", "delete", "pod", "test-cleanup-pod", "--grace-period=0", "--force")
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("waiting for the TLSComplianceReport CR to be removed by cleanup loop")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
-					"jsonpath={range .items[*]}{.spec.sourceName}{\"\\n\"}{end}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).NotTo(ContainSubstring("test-cleanup-pod"),
-					"expected TLSComplianceReport for test-cleanup-pod to be removed")
-			}).WithTimeout(6 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+		It("should report Compliant for a TLS 1.2+1.3 endpoint", func() {
+			name := "test-compliant"
+			deployTestServer(name, 8443, map[string]string{
+				"TLS_MIN_VERSION": "1.2", "TLS_MAX_VERSION": "1.3",
+			})
+			createTestService(name, 8443)
+			waitForPodRunning(name)
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "pod,svc", name, "-n", testNS, "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+			waitForReportWithStatus(name, 8443, "Compliant")
 		})
 
-		It("should not create TLSComplianceReport for a non-TLS pod", func() {
-			By("creating a pod with only port 80 (non-TLS)")
+		It("should create report for mTLS endpoint", func() {
+			name := "test-mtls"
+			deployTestServer(name, 8443, map[string]string{"MTLS_REQUIRED": "true"})
+			createTestService(name, 8443)
+			waitForPodRunning(name)
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "pod,svc", name, "-n", testNS, "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport",
+					"-o", "jsonpath={range .items[*]}{.spec.host},{.spec.port}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring(name+"."+testNS+",8443"))
+			}).WithTimeout(5 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
+		})
+
+		It("should detect near-expiry certificate and emit warning event", func() {
+			name := "test-expiring-cert"
+			deployTestServer(name, 8443, map[string]string{"CERT_EXPIRY_HOURS": "1"})
+			createTestService(name, 8443)
+			waitForPodRunning(name)
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "pod,svc", name, "-n", testNS, "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport",
+					"-o", "jsonpath={range .items[*]}{.spec.host},{.status.certificateInfo.daysUntilExpiry}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring(name+"."+testNS+",0"))
+			}).WithTimeout(5 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "events",
+					"--field-selector", "reason=CertificateExpiring",
+					"-o", "jsonpath={.items[*].reason}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("CertificateExpiring"))
+			}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+		})
+	})
+
+	// =========================================================================
+	// NEGATIVE TESTS — verify reports are NOT created or are cleaned up
+	// =========================================================================
+
+	Context("Negative: Non-TLS Resources Ignored", func() {
+		const agnhostImage = "registry.k8s.io/e2e-test-images/agnhost:2.53"
+
+		It("should not create report for a pod on port 80", func() {
 			cmd := exec.Command("kubectl", "run", "test-notls-pod",
-				"--image="+agnhostImage,
-				"--port=80",
+				"--image="+agnhostImage, "--port=80",
 				"--command", "--", "sleep", "3600")
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
@@ -326,7 +489,6 @@ spec:
 				_, _ = utils.Run(cmd)
 			})
 
-			By("waiting for the pod to be running")
 			Eventually(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "pod", "test-notls-pod",
 					"-o", "jsonpath={.status.phase}")
@@ -335,65 +497,217 @@ spec:
 				g.Expect(strings.TrimSpace(output)).To(Equal("Running"))
 			}).Should(Succeed())
 
-			By("verifying no TLSComplianceReport is created for the non-TLS pod")
 			Consistently(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
 					"jsonpath={range .items[*]}{.spec.sourceName}{\"\\n\"}{end}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).NotTo(ContainSubstring("test-notls-pod"),
-					"expected no TLSComplianceReport for non-TLS pod")
+				g.Expect(output).NotTo(ContainSubstring("test-notls-pod"))
+			}).WithTimeout(30 * time.Second).WithPolling(5 * time.Second).Should(Succeed())
+		})
+
+		It("should not create report for a Service on non-TLS port 9090", func() {
+			cmd := exec.Command("kubectl", "create", "service", "clusterip", "test-grpc-svc",
+				"--tcp=9090:9090", "-n", "default")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "service", "test-grpc-svc",
+					"-n", "default", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+
+			Consistently(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					"jsonpath={range .items[*]}{.spec.host}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).NotTo(ContainSubstring("test-grpc-svc"))
+			}).WithTimeout(30 * time.Second).WithPolling(5 * time.Second).Should(Succeed())
+		})
+
+		It("should not create report for an Ingress without TLS", func() {
+			kubectlApplyManifest(loadManifest("non-tls-ingress.yaml"), "non-TLS Ingress")
+
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "ingress", "test-notls-ingress",
+					"-n", "default", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+
+			Consistently(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					"jsonpath={range .items[*]}{.spec.host}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).NotTo(ContainSubstring("test-plain.example.com"))
+			}).WithTimeout(30 * time.Second).WithPolling(5 * time.Second).Should(Succeed())
+		})
+
+		It("should not create report for a pod on port 3000", func() {
+			cmd := exec.Command("kubectl", "run", "test-app-pod",
+				"--image="+agnhostImage, "--port=3000",
+				"--command", "--", "sleep", "3600")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "pod", "test-app-pod",
+					"--grace-period=0", "--force", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "pod", "test-app-pod",
+					"-o", "jsonpath={.status.phase}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(output)).To(Equal("Running"))
+			}).Should(Succeed())
+
+			Consistently(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					"jsonpath={range .items[*]}{.spec.sourceName}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).NotTo(ContainSubstring("test-app-pod"))
 			}).WithTimeout(30 * time.Second).WithPolling(5 * time.Second).Should(Succeed())
 		})
 	})
 
-	Context("Expanded TLS Port Detection", func() {
-		It("should detect a service on port 9443 as TLS by default", func() {
-			By("creating a service on port 9443 with a non-HTTPS name")
-			cmd := exec.Command("kubectl", "create", "service", "clusterip", "test-webhook-svc",
-				"--tcp=9443:9443", "-n", "default")
+	Context("Negative: Compliance Status Detection", Ordered, func() {
+		const testServerImage = "quay.io/bapalm/tls-test-server:latest"
+		const testNS = "tls-e2e-validation"
+
+		BeforeAll(func() {
+			cmd := exec.Command("kubectl", "create", "ns", testNS)
+			_, _ = utils.Run(cmd)
+			cmd = exec.Command("kubectl", "label", "--overwrite", "ns", testNS,
+				"pod-security.kubernetes.io/enforce=privileged")
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
-
-			DeferCleanup(func() {
-				cmd := exec.Command("kubectl", "delete", "service", "test-webhook-svc",
-					"-n", "default", "--ignore-not-found")
-				_, _ = utils.Run(cmd)
-			})
-
-			By("waiting for TLSComplianceReport to be created for port 9443")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
-					"jsonpath={range .items[*]}{.spec.host},{.spec.port}{\"\\n\"}{end}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(ContainSubstring("test-webhook-svc.default,9443"),
-					"expected TLSComplianceReport for service on port 9443")
-			}).Should(Succeed())
 		})
 
-		It("should detect a service on port 2379 as TLS by default", func() {
-			By("creating a service on port 2379 (etcd)")
-			cmd := exec.Command("kubectl", "create", "service", "clusterip", "test-etcd-svc",
-				"--tcp=2379:2379", "-n", "default")
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
+		AfterAll(func() {
+			cmd := exec.Command("kubectl", "delete", "ns", testNS, "--ignore-not-found", "--timeout=60s")
+			_, _ = utils.Run(cmd)
+		})
 
+		deployTestServer := func(name string, port int, env map[string]string) {
+			manifest := renderManifest("testserver-pod.yaml", struct {
+				Name, Namespace, Image string
+				Port                  int
+				Env                   map[string]string
+			}{name, testNS, testServerImage, port, env})
+			kubectlApplyManifest(manifest, "test server pod "+name)
+		}
+
+		createTestService := func(name string, port int) {
+			manifest := renderManifest("testserver-service.yaml", struct {
+				Name, Namespace string
+				Port            int
+			}{name, testNS, port})
+			kubectlApplyManifest(manifest, "test server service "+name)
+		}
+
+		waitForPodRunning := func(name string) {
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "pod", name, "-n", testNS,
+					"-o", "jsonpath={.status.phase}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(output)).To(Equal("Running"))
+			}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+		}
+
+		It("should report NoTLS for plain HTTP on a TLS port", func() {
+			name := "test-notls-http"
+			deployTestServer(name, 8443, map[string]string{
+				"TLS_ENABLED": "false", "LISTEN_PORT": "8443",
+			})
+			createTestService(name, 8443)
+			waitForPodRunning(name)
 			DeferCleanup(func() {
-				cmd := exec.Command("kubectl", "delete", "service", "test-etcd-svc",
-					"-n", "default", "--ignore-not-found")
+				cmd := exec.Command("kubectl", "delete", "pod,svc", name, "-n", testNS, "--ignore-not-found")
 				_, _ = utils.Run(cmd)
 			})
 
-			By("waiting for TLSComplianceReport to be created for port 2379")
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
-					"jsonpath={range .items[*]}{.spec.host},{.spec.port}{\"\\n\"}{end}")
+				cmd := exec.Command("kubectl", "get", "tlsreport",
+					"-o", "jsonpath={range .items[*]}{.spec.host},{.spec.port},{.status.complianceStatus}{\"\\n\"}{end}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(ContainSubstring("test-etcd-svc.default,2379"),
-					"expected TLSComplianceReport for service on port 2379")
+				g.Expect(output).To(ContainSubstring(
+					fmt.Sprintf("%s.%s,%d,%s", name, testNS, 8443, "NoTLS")))
+			}).WithTimeout(5 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
+		})
+	})
+
+	Context("Negative: Cleanup", func() {
+		const agnhostImage = "registry.k8s.io/e2e-test-images/agnhost:2.53"
+
+		It("should remove report when source pod is deleted", func() {
+			cmd := exec.Command("kubectl", "run", "test-cleanup-pod",
+				"--image="+agnhostImage, "--port=443",
+				"--command", "--", "sleep", "3600")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "pod", "test-cleanup-pod",
+					"-o", "jsonpath={.status.phase}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(output)).To(Equal("Running"))
 			}).Should(Succeed())
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					"jsonpath={range .items[*]}{.spec.sourceName}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("test-cleanup-pod"))
+			}).Should(Succeed())
+
+			cmd = exec.Command("kubectl", "delete", "pod", "test-cleanup-pod", "--grace-period=0", "--force")
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					"jsonpath={range .items[*]}{.spec.sourceName}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).NotTo(ContainSubstring("test-cleanup-pod"))
+			}).WithTimeout(6 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+		})
+
+		It("should remove report when source Service is deleted", func() {
+			cmd := exec.Command("kubectl", "create", "service", "clusterip", "test-cleanup-svc",
+				"--tcp=443:443", "-n", "default")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					"jsonpath={range .items[*]}{.spec.host}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("test-cleanup-svc"))
+			}).Should(Succeed())
+
+			cmd = exec.Command("kubectl", "delete", "service", "test-cleanup-svc", "-n", "default")
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					"jsonpath={range .items[*]}{.spec.host}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).NotTo(ContainSubstring("test-cleanup-svc"))
+			}).WithTimeout(6 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
 		})
 	})
 
