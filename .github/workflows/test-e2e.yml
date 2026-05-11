@@ -8,8 +8,8 @@ on:
 permissions: read-all
 
 jobs:
-  test-e2e:
-    name: Run on Ubuntu
+  build:
+    name: Build E2E Images
     runs-on: ubuntu-latest
     steps:
       - name: Clone the code
@@ -20,13 +20,78 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Build operator image
+        run: make docker-build IMG=tls-compliance-operator:test
+
+      - name: Build test server image
+        run: docker build -t tls-test-server:test test/testserver/
+
+      - name: Save images as artifact
+        run: |
+          docker save tls-compliance-operator:test tls-test-server:test > /tmp/e2e-images.tar
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-images
+          path: /tmp/e2e-images.tar
+          retention-days: 1
+
+  e2e:
+    name: "E2E: ${{ matrix.suite.name }}"
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - name: core
+            label: "manager || service-detection || pod-detection"
+          - name: resources
+            label: "ingress-detection || target-detection || plugin"
+          - name: compliance-positive
+            label: "compliance-validation"
+          - name: compliance-negative
+            label: "non-tls-ignored || compliance-detection || cleanup"
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Download image artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: e2e-images
+          path: ${{ github.workspace }}
+
       - name: Create Kubernetes cluster
         uses: palmsoftware/quick-k8s@v0.0.66
         with:
           numControlPlaneNodes: 1
           numWorkerNodes: 1
 
-      - name: Running Test e2e
+      - name: Load images into Kind
         run: |
-          go mod tidy
-          make test-e2e
+          kind load image-archive ${{ github.workspace }}/e2e-images.tar --name kind
+
+      - name: Run E2E tests
+        env:
+          TEST_SERVER_IMG: tls-test-server:test
+        run: |
+          KIND_CLUSTER=kind make test-e2e IMG=tls-compliance-operator:test E2E_LABEL_FILTER="${{ matrix.suite.label }}"
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Controller Manager Logs ==="
+          kubectl logs -n tls-compliance-operator-system -l control-plane=controller-manager --tail=200 || true
+          echo "=== Events ==="
+          kubectl get events -n tls-compliance-operator-system --sort-by=.lastTimestamp || true
+          echo "=== All Pods ==="
+          kubectl get pods -A || true
+          echo "=== TLSComplianceReport Resources ==="
+          kubectl get tlscompliancereports -A -o yaml || true

@@ -67,25 +67,27 @@ func TestE2E(t *testing.T) {
 		}
 	}
 
-	// Build and load the test server image for TLS compliance validation tests
-	testServerImage := "quay.io/bapalm/tls-test-server:latest"
-	tsCmd := exec.Command("docker", "build", "-t", testServerImage, filepath.Join(projectRoot(), "test", "testserver"))
-	tsOutput, tsErr := tsCmd.CombinedOutput()
-	if tsErr != nil {
-		t.Logf("WARNING: Failed to build test server image (TLS validation tests may fail): %v\nOutput: %s", tsErr, tsOutput)
-	} else {
-		kindCluster := os.Getenv("KIND_CLUSTER")
-		if kindCluster == "" {
-			kindCluster = "tls-compliance-operator-test-e2e"
-		}
-		kindBin := os.Getenv("KIND")
-		if kindBin == "" {
-			kindBin = "kind"
-		}
-		loadCmd := exec.Command(kindBin, "load", "docker-image", testServerImage, "--name", kindCluster)
-		loadOutput, loadErr := loadCmd.CombinedOutput()
-		if loadErr != nil {
-			t.Logf("WARNING: Failed to load test server image into Kind: %v\nOutput: %s", loadErr, loadOutput)
+	// Build and load the test server image if not pre-loaded by CI
+	if os.Getenv("TEST_SERVER_IMG") == "" {
+		testServerImage := "quay.io/bapalm/tls-test-server:latest"
+		tsCmd := exec.Command("docker", "build", "-t", testServerImage, filepath.Join(projectRoot(), "test", "testserver"))
+		tsOutput, tsErr := tsCmd.CombinedOutput()
+		if tsErr != nil {
+			t.Logf("WARNING: Failed to build test server image (TLS validation tests may fail): %v\nOutput: %s", tsErr, tsOutput)
+		} else {
+			kindCluster := os.Getenv("KIND_CLUSTER")
+			if kindCluster == "" {
+				kindCluster = "tls-compliance-operator-test-e2e"
+			}
+			kindBin := os.Getenv("KIND")
+			if kindBin == "" {
+				kindBin = "kind"
+			}
+			loadCmd := exec.Command(kindBin, "load", "docker-image", testServerImage, "--name", kindCluster)
+			loadOutput, loadErr := loadCmd.CombinedOutput()
+			if loadErr != nil {
+				t.Logf("WARNING: Failed to load test server image into Kind: %v\nOutput: %s", loadErr, loadOutput)
+			}
 		}
 	}
 
