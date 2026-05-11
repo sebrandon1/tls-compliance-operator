@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{.Name}}
+  namespace: {{.Namespace}}
+  labels:
+    app: {{.Name}}
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: server
+    image: {{.Image}}
+    imagePullPolicy: IfNotPresent
+    env:
+{{- range $k, $v := .Env}}
+    - name: {{$k}}
+      value: "{{$v}}"
+{{- end}}
+    ports:
+    - containerPort: {{.Port}}
+      name: https
+      protocol: TCP
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]

@@ -46,6 +46,11 @@ jobs:
         run: |
           make docker-build IMG=localhost:5001/tls-compliance-operator:test
 
+      - name: Build test server image
+        run: |
+          docker build -t quay.io/bapalm/tls-test-server:latest test/testserver/
+          kind load docker-image quay.io/bapalm/tls-test-server:latest --name kind
+
       - name: Push to local registry
         run: |
           docker push localhost:5001/tls-compliance-operator:test

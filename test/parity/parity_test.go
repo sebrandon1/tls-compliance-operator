@@ -50,6 +50,13 @@ var scenarios = []Scenario{
 		ExpectTLS:  true,
 		ExpectMTLS: true,
 	},
+	{
+		Name:      "Expired Certificate",
+		PodName:   "expired-cert",
+		Env:       map[string]string{"CERT_EXPIRED": "true"},
+		Port:      8443,
+		ExpectTLS: true,
+	},
 }
 
 var _ = Describe("TLS Tool Parity", Ordered, func() {
