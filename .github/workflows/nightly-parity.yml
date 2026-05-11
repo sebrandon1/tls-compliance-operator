@@ -19,6 +19,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: true
 
       - name: Create Kubernetes cluster
         uses: palmsoftware/quick-k8s@v0.0.66

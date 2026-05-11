@@ -19,6 +19,15 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: true
+
+      - name: Cache envtest binaries
+        uses: actions/cache@v4
+        with:
+          path: |
+            bin/setup-envtest*
+            bin/k8s/
+          key: envtest-${{ runner.os }}-${{ hashFiles('Makefile', 'go.sum') }}
 
       - name: Running Tests
         run: |
