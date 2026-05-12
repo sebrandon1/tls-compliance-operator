@@ -25,7 +25,7 @@ versions, cipher suites, and certificate details.
 
 ## Key Features
 
-- **Automatic Discovery**: Watches Services (ports 443, 8443, https-*), Ingresses with TLS, OpenShift Routes, and Pods with TLS container ports
+- **Automatic Discovery**: Watches Services (ports 443, 8443, 9443, 2379, 5671, 6380, 9200, and ports named https/https-*), Ingresses with TLS, OpenShift Routes, and Pods with TLS container ports
 - **Pod IP Scanning**: Periodically scans all pod container ports for TLS endpoints, including hostNetwork pods exposing TLS on node interfaces
 - **TLS Version Detection**: Probes each endpoint for TLS 1.0, 1.1, 1.2, and 1.3 support
 - **Compliance Classification**: Categorizes endpoints as Compliant, NonCompliant, Warning, or Error
@@ -38,7 +38,7 @@ versions, cipher suites, and certificate details.
 - **Cipher Strength Grading**: A-F grades for negotiated cipher suites
 - **OpenShift TLS Profile Compliance**: Checks endpoints against APIServer, IngressController, and KubeletConfig TLS security profiles
 - **Arbitrary Target Scanning**: Scan any host:port via `TLSComplianceTarget` CRD
-- **Report Export**: CSV and JUnit XML export via `kubectl-tlsreport` plugin
+- **Report Export**: CSV, JSON, JUnit XML, and Markdown export via `kubectl-tlsreport` plugin with filtering and sorting
 - **Worker Pool**: Configurable concurrent workers for periodic scans
 - **Post-Quantum Readiness**: Detects post-quantum key exchange algorithms (e.g. X25519MLKEM768)
 
@@ -96,7 +96,7 @@ kubectl apply -f dist/install.yaml
 | [Configuration](docs/configuration.md) | All flags, environment variables, defaults, and tuning guidance |
 | [Viewing Reports](docs/viewing-reports.md) | Understand compliance status, cipher grades, and certificate info |
 | [Custom Targets](docs/custom-targets.md) | Scan arbitrary external hosts with `TLSComplianceTarget` |
-| [Exporting Reports](docs/exporting-reports.md) | CSV, JSON, and JUnit XML export for CI/CD |
+| [Exporting Reports](docs/exporting-reports.md) | CSV, JSON, JUnit XML, and Markdown export with filtering and sorting |
 | [Troubleshooting](docs/troubleshooting.md) | Common issues and how to fix them |
 
 ## Architecture
@@ -211,6 +211,10 @@ The operator accepts the following command-line flags:
 | `--exclude-namespaces` | `""` | Comma-separated namespaces to skip |
 | `--cert-expiry-warning-days` | `30` | Days before expiry to emit warnings |
 | `--workers` | `5` | Concurrent workers for periodic scans (1-50) |
+| `--max-retries` | `3` | Max retries for transient TLS check failures (0-10) |
+| `--retry-backoff` | `30s` | Base backoff between retries (exponential) |
+| `--extra-tls-ports` | `""` | Additional port numbers to treat as TLS (comma-separated) |
+| `--log-format` | `text` | Log output format: `text` or `json` |
 | `--profile-refresh-interval` | `5m` | Refresh interval for OpenShift TLS security profiles |
 | `--metrics-bind-address` | `0` | Metrics endpoint bind address |
 | `--health-probe-bind-address` | `:8081` | Health probe bind address |
@@ -238,6 +242,8 @@ container args is inconvenient.
 | `TLS_COMPLIANCE_PROFILE_REFRESH_INTERVAL` | `--profile-refresh-interval` | `5m` |
 | `TLS_COMPLIANCE_MAX_RETRIES` | `--max-retries` | `3` |
 | `TLS_COMPLIANCE_RETRY_BACKOFF` | `--retry-backoff` | `30s` |
+| `TLS_COMPLIANCE_EXTRA_TLS_PORTS` | `--extra-tls-ports` | `""` |
+| `TLS_COMPLIANCE_LOG_FORMAT` | `--log-format` | `text` |
 
 Example: set scan interval via environment variable in a Deployment:
 
