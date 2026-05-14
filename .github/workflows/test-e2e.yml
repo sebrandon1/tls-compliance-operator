@@ -73,7 +73,7 @@ jobs:
           path: ${{ github.workspace }}
 
       - name: Create Kubernetes cluster
-        uses: palmsoftware/quick-k8s@v0.0.66
+        uses: palmsoftware/quick-k8s@v0.0.67
         with:
           numControlPlaneNodes: 1
           numWorkerNodes: 1
