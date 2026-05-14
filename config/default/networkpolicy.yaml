@@ -38,12 +38,4 @@ spec:
         - port: 6443
           protocol: TCP
     # Allow TLS checks to any endpoint on any port
-    - ports:
-        - port: 443
-          protocol: TCP
-        - port: 8443
-          protocol: TCP
-        - port: 6443
-          protocol: TCP
-        - port: 9443
-          protocol: TCP
+    - {}
