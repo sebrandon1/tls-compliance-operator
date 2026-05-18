@@ -254,7 +254,7 @@ func podIPs(pod *corev1.Pod) []string {
 }
 
 // ExtractFromPod returns TLS endpoints from a Pod.
-// It inspects container ports for TLS-likely ports (443, 8443, or named https/https-*).
+// It inspects container ports for known TLS ports or ports named https/https-*.
 // On dual-stack clusters, endpoints are created for each pod IP (IPv4 and IPv6).
 // Ports used only by HTTP/TCP health probes are skipped (plaintext expected).
 // HTTPS health probe ports are still included but marked as probe ports.
@@ -308,8 +308,13 @@ func ExtractFromPod(pod *corev1.Pod) []Endpoint {
 }
 
 var defaultTLSPorts = map[int32]bool{
-	443: true, 8443: true, 9443: true,
-	2379: true, 5671: true, 6380: true, 9200: true,
+	443: true, 2379: true, 2380: true,
+	5443: true, 5671: true,
+	6380: true, 6443: true,
+	7443: true, 8443: true,
+	9091: true, 9092: true, 9093: true,
+	9100: true, 9200: true, 9443: true,
+	10250: true, 10257: true, 10259: true,
 }
 
 var extraTLSPorts = map[int32]bool{}
@@ -330,7 +335,7 @@ func isTLSPortByNumberAndName(portNumber int32, portName string) bool {
 	return name == "https" || strings.HasPrefix(name, "https-")
 }
 
-// isTLSContainerPort checks if a ContainerPort is likely a TLS port
+// isTLSContainerPort checks if a ContainerPort is likely a TLS port.
 func isTLSContainerPort(port corev1.ContainerPort) bool {
 	return isTLSPortByNumberAndName(port.ContainerPort, port.Name)
 }
