@@ -373,6 +373,59 @@ func TestParseCertificate(t *testing.T) {
 	}
 }
 
+func TestParseCertificate_KubernetesSuffixMatch(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName: "api.openshift-apiserver.svc",
+		},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		DNSNames: []string{
+			"api.openshift-apiserver.svc",
+			"api.openshift-apiserver.svc.cluster.local",
+		},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("failed to create certificate: %v", err)
+	}
+
+	parsedCert, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		t.Fatalf("failed to parse certificate: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		hostname string
+		want     bool
+	}{
+		{"exact .svc match", "api.openshift-apiserver.svc", true},
+		{"exact .svc.cluster.local match", "api.openshift-apiserver.svc.cluster.local", true},
+		{"short name with suffix fallback", "api.openshift-apiserver", true},
+		{"unrelated hostname", "other-service.default", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			details := ParseCertificate(parsedCert, tt.hostname)
+			if details.HostnameMatch != tt.want {
+				t.Errorf("ParseCertificate(%q).HostnameMatch = %v, want %v", tt.hostname, details.HostnameMatch, tt.want)
+			}
+		})
+	}
+}
+
 func TestNewTLSChecker_DefaultTimeout(t *testing.T) {
 	checker := NewTLSChecker(0)
 	if checker.Timeout != DefaultTimeout {

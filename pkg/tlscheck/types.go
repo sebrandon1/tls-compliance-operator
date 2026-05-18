@@ -97,6 +97,17 @@ func ParseCertificate(cert *x509.Certificate, hostname string) *CertificateDetai
 	daysUntilExpiry := int(cert.NotAfter.Sub(now).Hours() / 24)
 
 	hostnameMatch := cert.VerifyHostname(hostname) == nil
+	if !hostnameMatch {
+		// Kubernetes services are reachable by short name (name.namespace) but certs
+		// typically have the FQDN SANs (.svc, .svc.cluster.local). Try those suffixes
+		// before declaring a mismatch.
+		for _, suffix := range []string{".svc", ".svc.cluster.local"} {
+			if cert.VerifyHostname(hostname+suffix) == nil {
+				hostnameMatch = true
+				break
+			}
+		}
+	}
 
 	return &CertificateDetails{
 		Issuer:          cert.Issuer.String(),
