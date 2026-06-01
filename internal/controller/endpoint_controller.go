@@ -80,6 +80,7 @@ type EndpointReconciler struct {
 	MaxRetries        int
 	RetryBackoff      time.Duration
 	ManagerCtx        context.Context
+	checkSem          chan struct{}
 }
 
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
@@ -270,7 +271,12 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep endpoint.En
 		if checkCtx == nil {
 			checkCtx = context.Background()
 		}
-		go r.performTLSCheck(checkCtx, crName, ep.Host, int(ep.Port))
+		r.initCheckSemaphore()
+		r.checkSem <- struct{}{}
+		go func() {
+			defer func() { <-r.checkSem }()
+			r.performTLSCheck(checkCtx, crName, ep.Host, int(ep.Port))
+		}()
 
 		return nil
 	} else if err != nil {
@@ -738,7 +744,19 @@ func (r *EndpointReconciler) emitComplianceEvents(cr *securityv1alpha1.TLSCompli
 // Ingress and Target events are mapped to reconciliation requests that flow
 // through the controller-runtime work queue (bounded concurrency, back-pressure).
 // Route events use WatchesRawSource because the Route API may not be present.
+func (r *EndpointReconciler) initCheckSemaphore() {
+	if r.checkSem == nil {
+		workers := r.Workers
+		if workers <= 0 {
+			workers = 5
+		}
+		r.checkSem = make(chan struct{}, workers)
+	}
+}
+
 func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.initCheckSemaphore()
+
 	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Service{}).
 		Named("endpoint").
