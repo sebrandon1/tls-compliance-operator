@@ -912,9 +912,18 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 		// Continue — don't fail the whole scan
 	}
 
+	var allCRs []securityv1alpha1.TLSComplianceReport
 	var crList securityv1alpha1.TLSComplianceReportList
-	if err := r.List(ctx, &crList); err != nil {
+	if err := r.List(ctx, &crList, client.Limit(500)); err != nil {
 		return fmt.Errorf("failed to list TLSComplianceReports: %w", err)
+	}
+	allCRs = append(allCRs, crList.Items...)
+	for crList.Continue != "" {
+		crList.Items = nil
+		if err := r.List(ctx, &crList, client.Limit(500), client.Continue(crList.Continue)); err != nil {
+			return fmt.Errorf("failed to list TLSComplianceReports (continue): %w", err)
+		}
+		allCRs = append(allCRs, crList.Items...)
 	}
 
 	workers := r.Workers
@@ -928,15 +937,15 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 		port int
 	}
 
-	items := make(chan scanItem, len(crList.Items))
-	for i := range crList.Items {
-		cr := &crList.Items[i]
+	items := make(chan scanItem, len(allCRs))
+	for i := range allCRs {
+		cr := &allCRs[i]
 		items <- scanItem{name: cr.Name, host: cr.Spec.Host, port: int(cr.Spec.Port)}
 	}
 	close(items)
 
 	var wg sync.WaitGroup
-	for range min(workers, len(crList.Items)) {
+	for range min(workers, len(allCRs)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -952,23 +961,14 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 	}
 	wg.Wait()
 
-	// Update endpoint count metrics using the already-fetched list
-	r.updateEndpointMetrics(ctx, &crList)
+	r.updateEndpointMetrics(allCRs)
 
-	logger.Info("scan completed", "endpoints", len(crList.Items), "workers", workers)
+	logger.Info("scan completed", "endpoints", len(allCRs), "workers", workers)
 	return nil
 }
 
 // updateEndpointMetrics recounts endpoints by compliance status.
-// If crList is nil, it fetches from the API; otherwise reuses the provided list.
-func (r *EndpointReconciler) updateEndpointMetrics(ctx context.Context, crList *securityv1alpha1.TLSComplianceReportList) {
-	if crList == nil {
-		crList = &securityv1alpha1.TLSComplianceReportList{}
-		if err := r.List(ctx, crList); err != nil {
-			return
-		}
-	}
-
+func (r *EndpointReconciler) updateEndpointMetrics(reports []securityv1alpha1.TLSComplianceReport) {
 	counts := map[string]float64{
 		string(securityv1alpha1.ComplianceStatusCompliant):         0,
 		string(securityv1alpha1.ComplianceStatusNonCompliant):      0,
@@ -983,7 +983,7 @@ func (r *EndpointReconciler) updateEndpointMetrics(ctx context.Context, crList *
 		string(securityv1alpha1.ComplianceStatusUnknown):           0,
 	}
 
-	for _, cr := range crList.Items {
+	for _, cr := range reports {
 		status := string(cr.Status.ComplianceStatus)
 		if _, ok := counts[status]; ok {
 			counts[status]++
@@ -1026,12 +1026,21 @@ func sourceKey(namespace, name string) string {
 func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 
+	var allCRs []securityv1alpha1.TLSComplianceReport
 	var crList securityv1alpha1.TLSComplianceReportList
-	if err := r.List(ctx, &crList); err != nil {
+	if err := r.List(ctx, &crList, client.Limit(500)); err != nil {
 		return fmt.Errorf("failed to list TLSComplianceReports: %w", err)
 	}
+	allCRs = append(allCRs, crList.Items...)
+	for crList.Continue != "" {
+		crList.Items = nil
+		if err := r.List(ctx, &crList, client.Limit(500), client.Continue(crList.Continue)); err != nil {
+			return fmt.Errorf("failed to list TLSComplianceReports (continue): %w", err)
+		}
+		allCRs = append(allCRs, crList.Items...)
+	}
 
-	if len(crList.Items) == 0 {
+	if len(allCRs) == 0 {
 		return nil
 	}
 
@@ -1039,62 +1048,102 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 	existingSources := make(map[securityv1alpha1.SourceKind]map[string]bool)
 
 	// Services
+	svcSet := make(map[string]bool)
 	var svcList corev1.ServiceList
-	if err := r.List(ctx, &svcList); err != nil {
+	if err := r.List(ctx, &svcList, client.Limit(500)); err != nil {
 		logger.Error(err, "failed to list Services for cleanup")
 	} else {
-		svcSet := make(map[string]bool, len(svcList.Items))
 		for i := range svcList.Items {
 			svcSet[sourceKey(svcList.Items[i].Namespace, svcList.Items[i].Name)] = true
+		}
+		for svcList.Continue != "" {
+			svcList.Items = nil
+			if err := r.List(ctx, &svcList, client.Limit(500), client.Continue(svcList.Continue)); err != nil {
+				logger.Error(err, "failed to list Services for cleanup (continue)")
+				break
+			}
+			for i := range svcList.Items {
+				svcSet[sourceKey(svcList.Items[i].Namespace, svcList.Items[i].Name)] = true
+			}
 		}
 		existingSources[securityv1alpha1.SourceKindService] = svcSet
 	}
 
 	// Ingresses
+	ingSet := make(map[string]bool)
 	var ingList networkingv1.IngressList
-	if err := r.List(ctx, &ingList); err != nil {
+	if err := r.List(ctx, &ingList, client.Limit(500)); err != nil {
 		logger.Error(err, "failed to list Ingresses for cleanup")
 	} else {
-		ingSet := make(map[string]bool, len(ingList.Items))
 		for i := range ingList.Items {
 			ingSet[sourceKey(ingList.Items[i].Namespace, ingList.Items[i].Name)] = true
+		}
+		for ingList.Continue != "" {
+			ingList.Items = nil
+			if err := r.List(ctx, &ingList, client.Limit(500), client.Continue(ingList.Continue)); err != nil {
+				logger.Error(err, "failed to list Ingresses for cleanup (continue)")
+				break
+			}
+			for i := range ingList.Items {
+				ingSet[sourceKey(ingList.Items[i].Namespace, ingList.Items[i].Name)] = true
+			}
 		}
 		existingSources[securityv1alpha1.SourceKindIngress] = ingSet
 	}
 
 	// Routes (if available)
 	if r.RouteAPIAvailable {
+		routeSet := make(map[string]bool)
 		routeList := &unstructured.UnstructuredList{}
 		routeList.SetGroupVersionKind(routeGVK)
-		if err := r.List(ctx, routeList); err != nil {
+		if err := r.List(ctx, routeList, client.Limit(500)); err != nil {
 			logger.Error(err, "failed to list Routes for cleanup")
 		} else {
-			routeSet := make(map[string]bool, len(routeList.Items))
 			for i := range routeList.Items {
 				routeSet[sourceKey(routeList.Items[i].GetNamespace(), routeList.Items[i].GetName())] = true
+			}
+			for routeList.GetContinue() != "" {
+				routeList.Items = nil
+				if err := r.List(ctx, routeList, client.Limit(500), client.Continue(routeList.GetContinue())); err != nil {
+					logger.Error(err, "failed to list Routes for cleanup (continue)")
+					break
+				}
+				for i := range routeList.Items {
+					routeSet[sourceKey(routeList.Items[i].GetNamespace(), routeList.Items[i].GetName())] = true
+				}
 			}
 			existingSources[securityv1alpha1.SourceKindRoute] = routeSet
 		}
 	}
 
 	// Pods
+	podSet := make(map[string]bool)
 	var podList corev1.PodList
-	if err := r.List(ctx, &podList); err != nil {
+	if err := r.List(ctx, &podList, client.Limit(500)); err != nil {
 		logger.Error(err, "failed to list Pods for cleanup")
 	} else {
-		podSet := make(map[string]bool, len(podList.Items))
 		for i := range podList.Items {
 			podSet[sourceKey(podList.Items[i].Namespace, podList.Items[i].Name)] = true
+		}
+		for podList.Continue != "" {
+			podList.Items = nil
+			if err := r.List(ctx, &podList, client.Limit(500), client.Continue(podList.Continue)); err != nil {
+				logger.Error(err, "failed to list Pods for cleanup (continue)")
+				break
+			}
+			for i := range podList.Items {
+				podSet[sourceKey(podList.Items[i].Namespace, podList.Items[i].Name)] = true
+			}
 		}
 		existingSources[securityv1alpha1.SourceKindPod] = podSet
 	}
 
 	// Targets
+	targetSet := make(map[string]bool)
 	var targetList securityv1alpha1.TLSComplianceTargetList
-	if err := r.List(ctx, &targetList); err != nil {
+	if err := r.List(ctx, &targetList, client.Limit(500)); err != nil {
 		logger.Error(err, "failed to list TLSComplianceTargets for cleanup")
 	} else {
-		targetSet := make(map[string]bool, len(targetList.Items))
 		for i := range targetList.Items {
 			targetSet[sourceKey("cluster-scoped", targetList.Items[i].Name)] = true
 		}
@@ -1102,12 +1151,11 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 	}
 
 	// Check each CR against the in-memory sets
-	for i := range crList.Items {
-		cr := &crList.Items[i]
+	for i := range allCRs {
+		cr := &allCRs[i]
 
 		sourceSet, known := existingSources[cr.Spec.SourceKind]
 		if !known {
-			// Source kind's list failed or is unknown; skip to avoid false deletions
 			continue
 		}
 
