@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -81,6 +82,28 @@ type EndpointReconciler struct {
 	RetryBackoff      time.Duration
 	ManagerCtx        context.Context
 	checkSem          chan struct{}
+}
+
+func (r *EndpointReconciler) updateStatusWithRetry(ctx context.Context, name string, mutateFn func(*securityv1alpha1.TLSComplianceReport)) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var cr securityv1alpha1.TLSComplianceReport
+		if err := r.Get(ctx, client.ObjectKey{Name: name}, &cr); err != nil {
+			return err
+		}
+		mutateFn(&cr)
+		return r.Status().Update(ctx, &cr)
+	})
+}
+
+func (r *EndpointReconciler) updateWithRetry(ctx context.Context, name string, mutateFn func(*securityv1alpha1.TLSComplianceReport)) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var cr securityv1alpha1.TLSComplianceReport
+		if err := r.Get(ctx, client.ObjectKey{Name: name}, &cr); err != nil {
+			return err
+		}
+		mutateFn(&cr)
+		return r.Update(ctx, &cr)
+	})
 }
 
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
@@ -240,23 +263,22 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep endpoint.En
 			return fmt.Errorf("failed to create TLSComplianceReport: %w", err)
 		}
 
-		// Update status
-		cr.Status = securityv1alpha1.TLSComplianceReportStatus{
-			ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
-			FirstSeenAt:      &now,
-			LastSeenAt:       &now,
-			Conditions: []metav1.Condition{
-				{
-					Type:               "Available",
-					Status:             metav1.ConditionTrue,
-					LastTransitionTime: now,
-					Reason:             "EndpointDiscovered",
-					Message:            fmt.Sprintf("Endpoint %s discovered from %s/%s", hostPort(ep.Host, ep.Port), ep.SourceNamespace, ep.SourceName),
+		if err := r.updateStatusWithRetry(ctx, crName, func(cr *securityv1alpha1.TLSComplianceReport) {
+			cr.Status = securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
+				FirstSeenAt:      &now,
+				LastSeenAt:       &now,
+				Conditions: []metav1.Condition{
+					{
+						Type:               "Available",
+						Status:             metav1.ConditionTrue,
+						LastTransitionTime: now,
+						Reason:             "EndpointDiscovered",
+						Message:            fmt.Sprintf("Endpoint %s discovered from %s/%s", hostPort(ep.Host, ep.Port), ep.SourceNamespace, ep.SourceName),
+					},
 				},
-			},
-		}
-
-		if err := r.Status().Update(ctx, cr); err != nil {
+			}
+		}); err != nil {
 			return fmt.Errorf("failed to update TLSComplianceReport status: %w", err)
 		}
 
@@ -283,9 +305,9 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep endpoint.En
 		return fmt.Errorf("failed to get TLSComplianceReport: %w", err)
 	}
 
-	// Update LastSeenAt on existing CR
-	existingCR.Status.LastSeenAt = &now
-	if err := r.Status().Update(ctx, &existingCR); err != nil {
+	if err := r.updateStatusWithRetry(ctx, crName, func(cr *securityv1alpha1.TLSComplianceReport) {
+		cr.Status.LastSeenAt = &now
+	}); err != nil {
 		return fmt.Errorf("failed to update TLSComplianceReport LastSeenAt: %w", err)
 	}
 
@@ -346,155 +368,148 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 		}
 	}
 
-	// Re-fetch the CR to avoid conflicts
-	var cr securityv1alpha1.TLSComplianceReport
-	if err := r.Get(ctx, client.ObjectKey{Name: crName}, &cr); err != nil {
-		logger.Error(err, "failed to get TLSComplianceReport for TLS check update")
-		return
-	}
-
-	now := metav1.Now()
-	cr.Status.LastCheckAt = &now
-	cr.Status.CheckCount++
-	cr.Status.RetryCount = 0
-	cr.Status.NextRetryAt = nil
-
 	portStr := fmt.Sprintf("%d", port)
 
 	if checkErr != nil {
 		var failReason tlscheck.FailureReason
 		if result != nil {
 			failReason = result.FailureReason
-
-			// Populate TLS version info even on error (e.g. mTLS detected versions)
-			cr.Status.TLSVersions = securityv1alpha1.TLSVersionSupport{
-				SSL30: result.SupportsSSL30,
-				TLS10: result.SupportsTLS10,
-				TLS11: result.SupportsTLS11,
-				TLS12: result.SupportsTLS12,
-				TLS13: result.SupportsTLS13,
-			}
 		}
 
-		cr.Status.ComplianceStatus = failureReasonToComplianceStatus(failReason)
-		cr.Status.ConsecutiveErrors++
-		cr.Status.LastError = checkErr.Error()
+		if err := r.updateStatusWithRetry(ctx, crName, func(cr *securityv1alpha1.TLSComplianceReport) {
+			now := metav1.Now()
+			cr.Status.LastCheckAt = &now
+			cr.Status.CheckCount++
+			cr.Status.RetryCount = 0
+			cr.Status.NextRetryAt = nil
 
-		if err := r.Status().Update(ctx, &cr); err != nil {
+			if result != nil {
+				cr.Status.TLSVersions = securityv1alpha1.TLSVersionSupport{
+					SSL30: result.SupportsSSL30,
+					TLS10: result.SupportsTLS10,
+					TLS11: result.SupportsTLS11,
+					TLS12: result.SupportsTLS12,
+					TLS13: result.SupportsTLS13,
+				}
+			}
+
+			cr.Status.ComplianceStatus = failureReasonToComplianceStatus(failReason)
+			cr.Status.ConsecutiveErrors++
+			cr.Status.LastError = checkErr.Error()
+		}); err != nil {
 			logger.Error(err, "failed to update TLSComplianceReport after check error")
 		}
 
 		if failReason.IsTransient() && r.MaxRetries > 0 {
 			metrics.RecordRetriesExhausted()
 			if r.Recorder != nil {
-				r.Recorder.Event(&cr, corev1.EventTypeWarning, EventReasonRetryExhausted,
-					fmt.Sprintf("TLS check retries exhausted for %s after %d attempts: %s",
-						hostPort(host, int32(port)), maxAttempts, failReason))
+				var cr securityv1alpha1.TLSComplianceReport
+				if err := r.Get(ctx, client.ObjectKey{Name: crName}, &cr); err == nil {
+					r.Recorder.Event(&cr, corev1.EventTypeWarning, EventReasonRetryExhausted,
+						fmt.Sprintf("TLS check retries exhausted for %s after %d attempts: %s",
+							hostPort(host, int32(port)), maxAttempts, failReason))
+				}
 			}
 		}
 		return
 	}
 
-	// Reset error state on success
-	cr.Status.ConsecutiveErrors = 0
-	cr.Status.LastError = ""
-
-	// Store old status for change detection
-	oldComplianceStatus := cr.Status.ComplianceStatus
-	oldPQCReadiness := cr.Status.PQCReadiness
-
-	// Update TLS version support
-	cr.Status.TLSVersions = securityv1alpha1.TLSVersionSupport{
-		SSL30: result.SupportsSSL30,
-		TLS10: result.SupportsTLS10,
-		TLS11: result.SupportsTLS11,
-		TLS12: result.SupportsTLS12,
-		TLS13: result.SupportsTLS13,
-	}
-
-	// Update cipher suites and grades (compute once, reuse for overall)
-	cr.Status.CipherSuites = result.CipherSuites
+	// Pre-compute values that don't depend on the CR
 	cipherGrades := tlscheck.GradeCipherSuites(result.CipherSuites)
-	cr.Status.CipherStrengthGrades = cipherGrades
-	cr.Status.OverallCipherGrade = tlscheck.OverallGrade(result.CipherSuites, cipherGrades)
-	cr.Status.ForwardSecrecy = tlscheck.AllCiphersHaveForwardSecrecy(result.CipherSuites)
+	overallGrade := tlscheck.OverallGrade(result.CipherSuites, cipherGrades)
+	forwardSecrecy := tlscheck.AllCiphersHaveForwardSecrecy(result.CipherSuites)
+	keyExchangeTypes := tlscheck.KeyExchangeTypes(result.CipherSuites)
+	pqcReadiness := determinePQCReadiness(result)
+	complianceStatus := determineComplianceStatus(result)
 
-	cr.Status.KeyExchangeTypes = tlscheck.KeyExchangeTypes(result.CipherSuites)
+	var oldComplianceStatus securityv1alpha1.ComplianceStatus
+	var oldPQCReadiness securityv1alpha1.PQCReadiness
 
-	// PQCReadiness supersedes QuantumReady with a richer classification;
-	// both are populated for backward compatibility.
-	cr.Status.NegotiatedCurves = result.NegotiatedCurves
-	cr.Status.PQCReadiness = determinePQCReadiness(result)
-	cr.Status.QuantumReady = cr.Status.PQCReadiness == securityv1alpha1.PQCReadinessPQCReady
+	if err := r.updateStatusWithRetry(ctx, crName, func(cr *securityv1alpha1.TLSComplianceReport) {
+		now := metav1.Now()
+		cr.Status.LastCheckAt = &now
+		cr.Status.CheckCount++
+		cr.Status.RetryCount = 0
+		cr.Status.NextRetryAt = nil
+		cr.Status.ConsecutiveErrors = 0
+		cr.Status.LastError = ""
 
-	// Update certificate info
-	if result.Certificate != nil {
-		notBefore := metav1.NewTime(result.Certificate.NotBefore)
-		notAfter := metav1.NewTime(result.Certificate.NotAfter)
-		hostnameMatch := result.Certificate.HostnameMatch
-		cr.Status.CertificateInfo = &securityv1alpha1.CertificateInfo{
-			Issuer:          result.Certificate.Issuer,
-			Subject:         result.Certificate.Subject,
-			NotBefore:       &notBefore,
-			NotAfter:        &notAfter,
-			DNSNames:        result.Certificate.DNSNames,
-			IsExpired:       result.Certificate.IsExpired,
-			DaysUntilExpiry: result.Certificate.DaysUntilExpiry,
-			HostnameMatch:   &hostnameMatch,
+		oldComplianceStatus = cr.Status.ComplianceStatus
+		oldPQCReadiness = cr.Status.PQCReadiness
+
+		cr.Status.TLSVersions = securityv1alpha1.TLSVersionSupport{
+			SSL30: result.SupportsSSL30,
+			TLS10: result.SupportsTLS10,
+			TLS11: result.SupportsTLS11,
+			TLS12: result.SupportsTLS12,
+			TLS13: result.SupportsTLS13,
 		}
 
-		// Record cert expiry metric
-		metrics.RecordCertExpiry(host, portStr, float64(result.Certificate.DaysUntilExpiry))
+		cr.Status.CipherSuites = result.CipherSuites
+		cr.Status.CipherStrengthGrades = cipherGrades
+		cr.Status.OverallCipherGrade = overallGrade
+		cr.Status.ForwardSecrecy = forwardSecrecy
+		cr.Status.KeyExchangeTypes = keyExchangeTypes
+		cr.Status.NegotiatedCurves = result.NegotiatedCurves
+		cr.Status.PQCReadiness = pqcReadiness
+		cr.Status.QuantumReady = pqcReadiness == securityv1alpha1.PQCReadinessPQCReady
+
+		if result.Certificate != nil {
+			notBefore := metav1.NewTime(result.Certificate.NotBefore)
+			notAfter := metav1.NewTime(result.Certificate.NotAfter)
+			hostnameMatch := result.Certificate.HostnameMatch
+			cr.Status.CertificateInfo = &securityv1alpha1.CertificateInfo{
+				Issuer:          result.Certificate.Issuer,
+				Subject:         result.Certificate.Subject,
+				NotBefore:       &notBefore,
+				NotAfter:        &notAfter,
+				DNSNames:        result.Certificate.DNSNames,
+				IsExpired:       result.Certificate.IsExpired,
+				DaysUntilExpiry: result.Certificate.DaysUntilExpiry,
+				HostnameMatch:   &hostnameMatch,
+			}
+		}
+
+		r.checkProfileCompliance(cr, result)
+		cr.Status.ComplianceStatus = complianceStatus
+		r.updateConditions(cr, complianceStatus, result)
+	}); err != nil {
+		logger.Error(err, "failed to update TLSComplianceReport with check results")
+		return
 	}
 
-	// Check OpenShift TLS security profile compliance
-	r.checkProfileCompliance(&cr, result)
-
-	// Determine compliance status
-	complianceStatus := determineComplianceStatus(result)
-	cr.Status.ComplianceStatus = complianceStatus
-
-	// Record metrics
+	// Record metrics (idempotent, safe outside retry)
 	metrics.RecordCheckDuration(result.CheckDuration.Seconds())
 	metrics.RecordVersionSupport(host, portStr, "ssl3.0", result.SupportsSSL30)
 	metrics.RecordVersionSupport(host, portStr, "1.0", result.SupportsTLS10)
 	metrics.RecordVersionSupport(host, portStr, "1.1", result.SupportsTLS11)
 	metrics.RecordVersionSupport(host, portStr, "1.2", result.SupportsTLS12)
 	metrics.RecordVersionSupport(host, portStr, "1.3", result.SupportsTLS13)
-	metrics.RecordForwardSecrecy(host, portStr, cr.Status.ForwardSecrecy)
-	metrics.RecordPQCReadiness(host, portStr, cr.Status.PQCReadiness)
-
-	// Update conditions
-	r.updateConditions(&cr, complianceStatus, result)
-
-	if err := r.Status().Update(ctx, &cr); err != nil {
-		logger.Error(err, "failed to update TLSComplianceReport with check results")
-		return
+	metrics.RecordForwardSecrecy(host, portStr, forwardSecrecy)
+	metrics.RecordPQCReadiness(host, portStr, pqcReadiness)
+	if result.Certificate != nil {
+		metrics.RecordCertExpiry(host, portStr, float64(result.Certificate.DaysUntilExpiry))
 	}
 
-	// Emit events
-	r.emitComplianceEvents(&cr, oldComplianceStatus, oldPQCReadiness, result)
+	// Emit events (need fresh CR for event object)
+	var cr securityv1alpha1.TLSComplianceReport
+	if err := r.Get(ctx, client.ObjectKey{Name: crName}, &cr); err == nil {
+		r.emitComplianceEvents(&cr, oldComplianceStatus, oldPQCReadiness, result)
+	}
 }
 
 // updateRetryStatus updates the CR with intermediate retry status information
 func (r *EndpointReconciler) updateRetryStatus(ctx context.Context, crName string, retryCount int, retryDelay time.Duration, reason tlscheck.FailureReason, checkErr error) {
 	logger := log.FromContext(ctx).WithValues("crName", crName)
 
-	var cr securityv1alpha1.TLSComplianceReport
-	if err := r.Get(ctx, client.ObjectKey{Name: crName}, &cr); err != nil {
-		logger.Error(err, "failed to get TLSComplianceReport for retry status update")
-		return
-	}
-
-	nextRetry := metav1.NewTime(time.Now().Add(retryDelay))
-	cr.Status.RetryCount = retryCount
-	cr.Status.NextRetryAt = &nextRetry
-	cr.Status.LastError = checkErr.Error()
-	cr.Status.ConsecutiveErrors++
-
-	cr.Status.ComplianceStatus = failureReasonToComplianceStatus(reason)
-
-	if err := r.Status().Update(ctx, &cr); err != nil {
+	if err := r.updateStatusWithRetry(ctx, crName, func(cr *securityv1alpha1.TLSComplianceReport) {
+		nextRetry := metav1.NewTime(time.Now().Add(retryDelay))
+		cr.Status.RetryCount = retryCount
+		cr.Status.NextRetryAt = &nextRetry
+		cr.Status.LastError = checkErr.Error()
+		cr.Status.ConsecutiveErrors++
+		cr.Status.ComplianceStatus = failureReasonToComplianceStatus(reason)
+	}); err != nil {
 		logger.Error(err, "failed to update TLSComplianceReport retry status")
 	}
 }
@@ -864,19 +879,15 @@ func (r *EndpointReconciler) scanPodEndpoints(ctx context.Context) error {
 			// Label hostNetwork pod CRs for queryability
 			if pod.Spec.HostNetwork {
 				crName := endpoint.GenerateCRName(ep)
-				var cr securityv1alpha1.TLSComplianceReport
-				if err := r.Get(ctx, client.ObjectKey{Name: crName}, &cr); err == nil {
+				if err := r.updateWithRetry(ctx, crName, func(cr *securityv1alpha1.TLSComplianceReport) {
 					labels := cr.Labels
 					if labels == nil {
 						labels = make(map[string]string)
 					}
-					if labels["tls-compliance.telco.openshift.io/host-network"] != "true" {
-						labels["tls-compliance.telco.openshift.io/host-network"] = "true"
-						cr.Labels = labels
-						if err := r.Update(ctx, &cr); err != nil {
-							logger.Error(err, "failed to label hostNetwork CR", "name", crName)
-						}
-					}
+					labels["tls-compliance.telco.openshift.io/host-network"] = "true"
+					cr.Labels = labels
+				}); err != nil && !apierrors.IsNotFound(err) {
+					logger.Error(err, "failed to label hostNetwork CR", "name", crName)
 				}
 			}
 		}
