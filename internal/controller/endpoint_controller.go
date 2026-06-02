@@ -118,6 +118,7 @@ func (r *EndpointReconciler) updateWithRetry(ctx context.Context, name string, m
 // +kubebuilder:rbac:groups=security.telco.openshift.io,resources=tlscompliancereports/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=security.telco.openshift.io,resources=tlscompliancereports/finalizers,verbs=update
 // +kubebuilder:rbac:groups=security.telco.openshift.io,resources=tlscompliancetargets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=security.telco.openshift.io,resources=tlscompliancetargets/status,verbs=get;update;patch
 
 // Reconcile handles Service events and creates/updates TLSComplianceReport CRs
 func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -234,10 +235,73 @@ func (r *EndpointReconciler) ReconcileTarget(ctx context.Context, req ctrl.Reque
 		SourceName:      target.Name,
 	}
 
+	crName := endpoint.GenerateCRName(ep)
+
 	if err := r.processEndpoint(ctx, ep); err != nil {
 		logger.Error(err, "failed to process Target endpoint", "host", ep.Host, "port", ep.Port)
 		metrics.RecordReconcileError("Target", "process")
+		r.updateTargetStatus(ctx, req.Name, crName, "", err.Error())
+		return
 	}
+
+	// Copy compliance status from the generated report back to the target
+	var report securityv1alpha1.TLSComplianceReport
+	if err := r.Get(ctx, client.ObjectKey{Name: crName}, &report); err == nil {
+		r.updateTargetStatus(ctx, req.Name, crName, string(report.Status.ComplianceStatus), "")
+	}
+}
+
+func (r *EndpointReconciler) updateTargetStatus(ctx context.Context, targetName, reportName, complianceStatus, errMsg string) {
+	logger := log.FromContext(ctx)
+
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var target securityv1alpha1.TLSComplianceTarget
+		if err := r.Get(ctx, client.ObjectKey{Name: targetName}, &target); err != nil {
+			return err
+		}
+
+		now := metav1.Now()
+		target.Status.LastScannedAt = &now
+		target.Status.ReportName = reportName
+
+		if errMsg != "" {
+			target.Status.ComplianceStatus = ""
+			target.Status.Message = errMsg
+			setTargetCondition(&target, metav1.Condition{
+				Type:               "Ready",
+				Status:             metav1.ConditionFalse,
+				ObservedGeneration: target.Generation,
+				LastTransitionTime: now,
+				Reason:             "ScanFailed",
+				Message:            errMsg,
+			})
+		} else {
+			target.Status.ComplianceStatus = securityv1alpha1.ComplianceStatus(complianceStatus)
+			target.Status.Message = ""
+			setTargetCondition(&target, metav1.Condition{
+				Type:               "Ready",
+				Status:             metav1.ConditionTrue,
+				ObservedGeneration: target.Generation,
+				LastTransitionTime: now,
+				Reason:             "ScanComplete",
+				Message:            fmt.Sprintf("Report %s generated", reportName),
+			})
+		}
+
+		return r.Status().Update(ctx, &target)
+	}); err != nil {
+		logger.Error(err, "failed to update TLSComplianceTarget status", "target", targetName)
+	}
+}
+
+func setTargetCondition(target *securityv1alpha1.TLSComplianceTarget, condition metav1.Condition) {
+	for i, c := range target.Status.Conditions {
+		if c.Type == condition.Type {
+			target.Status.Conditions[i] = condition
+			return
+		}
+	}
+	target.Status.Conditions = append(target.Status.Conditions, condition)
 }
 
 // processEndpoint creates or updates a TLSComplianceReport CR for an endpoint
