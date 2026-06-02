@@ -1,0 +1,7 @@
+apiVersion: security.telco.openshift.io/v1alpha1
+kind: TLSComplianceTarget
+metadata:
+  name: external-api-check
+spec:
+  host: api.example.com
+  port: 443
