@@ -127,6 +127,16 @@ var (
 			Help:      "Total number of times TLS check retries were exhausted",
 		},
 	)
+
+	// ReconcileErrorsTotal tracks errors in resource-specific reconciliation handlers
+	ReconcileErrorsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: MetricsNamespace,
+			Name:      "reconcile_errors_total",
+			Help:      "Total number of errors during resource reconciliation by source kind and error type",
+		},
+		[]string{"source_kind", "error_type"},
+	)
 )
 
 func init() {
@@ -141,6 +151,7 @@ func init() {
 		ScanCycleDurationSeconds,
 		CheckRetriesTotal,
 		CheckRetriesExhaustedTotal,
+		ReconcileErrorsTotal,
 	)
 }
 
@@ -207,4 +218,9 @@ func RecordRetry(reason string) {
 // RecordRetriesExhausted records that retries were exhausted for a TLS check
 func RecordRetriesExhausted() {
 	CheckRetriesExhaustedTotal.Inc()
+}
+
+// RecordReconcileError records an error during resource reconciliation
+func RecordReconcileError(sourceKind, errorType string) {
+	ReconcileErrorsTotal.WithLabelValues(sourceKind, errorType).Inc()
 }

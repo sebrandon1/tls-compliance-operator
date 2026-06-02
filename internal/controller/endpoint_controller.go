@@ -170,6 +170,7 @@ func (r *EndpointReconciler) ReconcileIngress(ctx context.Context, req ctrl.Requ
 	if err := r.Get(ctx, req.NamespacedName, &ing); err != nil {
 		if !apierrors.IsNotFound(err) {
 			logger.Error(err, "unable to fetch Ingress")
+			metrics.RecordReconcileError("Ingress", "fetch")
 		}
 		return
 	}
@@ -178,6 +179,7 @@ func (r *EndpointReconciler) ReconcileIngress(ctx context.Context, req ctrl.Requ
 	for _, ep := range endpoints {
 		if err := r.processEndpoint(ctx, ep); err != nil {
 			logger.Error(err, "failed to process Ingress endpoint", "host", ep.Host)
+			metrics.RecordReconcileError("Ingress", "process")
 		}
 	}
 }
@@ -197,6 +199,7 @@ func (r *EndpointReconciler) ReconcileRoute(ctx context.Context, req ctrl.Reques
 	if err := r.Get(ctx, req.NamespacedName, route); err != nil {
 		if !apierrors.IsNotFound(err) && ctx.Err() == nil {
 			logger.Error(err, "unable to fetch Route")
+			metrics.RecordReconcileError("Route", "fetch")
 		}
 		return
 	}
@@ -205,6 +208,7 @@ func (r *EndpointReconciler) ReconcileRoute(ctx context.Context, req ctrl.Reques
 	for _, ep := range endpoints {
 		if err := r.processEndpoint(ctx, ep); err != nil {
 			logger.Error(err, "failed to process Route endpoint", "host", ep.Host)
+			metrics.RecordReconcileError("Route", "process")
 		}
 	}
 }
@@ -217,6 +221,7 @@ func (r *EndpointReconciler) ReconcileTarget(ctx context.Context, req ctrl.Reque
 	if err := r.Get(ctx, req.NamespacedName, &target); err != nil {
 		if !apierrors.IsNotFound(err) {
 			logger.Error(err, "unable to fetch TLSComplianceTarget")
+			metrics.RecordReconcileError("Target", "fetch")
 		}
 		return
 	}
@@ -231,6 +236,7 @@ func (r *EndpointReconciler) ReconcileTarget(ctx context.Context, req ctrl.Reque
 
 	if err := r.processEndpoint(ctx, ep); err != nil {
 		logger.Error(err, "failed to process Target endpoint", "host", ep.Host, "port", ep.Port)
+		metrics.RecordReconcileError("Target", "process")
 	}
 }
 
