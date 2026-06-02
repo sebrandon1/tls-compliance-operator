@@ -82,6 +82,7 @@ rules:
   - security.telco.openshift.io
   resources:
   - tlscompliancereports/status
+  - tlscompliancetargets/status
   verbs:
   - get
   - patch

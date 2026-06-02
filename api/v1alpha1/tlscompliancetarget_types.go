@@ -34,10 +34,38 @@ type TLSComplianceTargetSpec struct {
 	Port int32 `json:"port"`
 }
 
+// TLSComplianceTargetStatus defines the observed state of TLSComplianceTarget
+type TLSComplianceTargetStatus struct {
+	// LastScannedAt is the timestamp of the most recent scan
+	// +optional
+	LastScannedAt *metav1.Time `json:"lastScannedAt,omitempty"`
+
+	// ComplianceStatus is the result of the last scan
+	// +optional
+	ComplianceStatus ComplianceStatus `json:"complianceStatus,omitempty"`
+
+	// Message provides human-readable details about the last scan result
+	// +optional
+	Message string `json:"message,omitempty"`
+
+	// ReportName is the name of the TLSComplianceReport CR generated for this target
+	// +optional
+	ReportName string `json:"reportName,omitempty"`
+
+	// Conditions represent the current state of the target
+	// +listType=map
+	// +listMapKey=type
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
 // +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=tlstarget
 // +kubebuilder:printcolumn:name="Host",type=string,JSONPath=`.spec.host`
 // +kubebuilder:printcolumn:name="Port",type=integer,JSONPath=`.spec.port`
+// +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.complianceStatus`
+// +kubebuilder:printcolumn:name="Last Scanned",type=date,JSONPath=`.status.lastScannedAt`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // TLSComplianceTarget is the Schema for the tlscompliancetargets API.
@@ -49,6 +77,10 @@ type TLSComplianceTarget struct {
 	// Spec defines the target to scan
 	// +required
 	Spec TLSComplianceTargetSpec `json:"spec"`
+
+	// Status defines the observed state of the target
+	// +optional
+	Status TLSComplianceTargetStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
