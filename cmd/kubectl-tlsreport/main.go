@@ -20,6 +20,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
+	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -72,6 +74,8 @@ Supported formats: csv (default), json, junit, markdown (or md)`,
 	rootCmd.PersistentFlags().StringVar(&sortBy, "sort-by", "", "Sort results by field (host, port, compliance, expiry, grade, pqc)")
 
 	rootCmd.AddCommand(newSummaryCmd())
+	rootCmd.AddCommand(newGetCmd())
+	rootCmd.AddCommand(newDescribeCmd())
 
 	return rootCmd
 }
@@ -80,7 +84,39 @@ func newSummaryCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "summary",
 		Short: "Show a compliance summary of all TLS endpoints",
-		RunE:  runSummary,
+		Example: `  # Show summary of all endpoints
+  kubectl tlsreport summary
+
+  # Show summary for a specific namespace
+  kubectl tlsreport summary -n production`,
+		RunE: runSummary,
+	}
+}
+
+func newGetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "get [name]",
+		Short: "Display TLS compliance reports in a table",
+		Example: `  # List all reports
+  kubectl tlsreport get
+
+  # Get a specific report
+  kubectl tlsreport get my-service-443-abc12345
+
+  # Get non-compliant endpoints in a namespace
+  kubectl tlsreport get --status NonCompliant -n production`,
+		RunE: runGet,
+	}
+}
+
+func newDescribeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "describe <name>",
+		Short: "Show detailed information about a TLS compliance report",
+		Example: `  # Describe a specific report
+  kubectl tlsreport describe my-service-443-abc12345`,
+		Args: cobra.ExactArgs(1),
+		RunE: runDescribe,
 	}
 }
 
@@ -136,6 +172,199 @@ func runSummary(_ *cobra.Command, _ []string) error {
 	export.SortReports(reports, sortBy)
 
 	return export.WriteSummary(os.Stdout, reports)
+}
+
+func runGet(_ *cobra.Command, args []string) error {
+	reports, err := fetchReports()
+	if err != nil {
+		return err
+	}
+
+	if len(args) > 0 {
+		name := args[0]
+		for _, r := range reports {
+			if r.Name == name {
+				return printReportTable([]securityv1alpha1.TLSComplianceReport{r})
+			}
+		}
+		return fmt.Errorf("report %q not found", name)
+	}
+
+	reports, err = export.FilterReports(reports, filterOpts)
+	if err != nil {
+		return err
+	}
+
+	export.SortReports(reports, sortBy)
+
+	return printReportTable(reports)
+}
+
+func printReportTable(reports []securityv1alpha1.TLSComplianceReport) error {
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "NAME\tHOST\tPORT\tSOURCE\tSTATUS\tTLS 1.2\tTLS 1.3\tPQC\tGRADE")
+	for _, r := range reports {
+		tls12 := "-"
+		tls13 := "-"
+		if r.Status.TLSVersions.TLS12 {
+			tls12 = "true"
+		}
+		if r.Status.TLSVersions.TLS13 {
+			tls13 = "true"
+		}
+
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			r.Name,
+			r.Spec.Host,
+			r.Spec.Port,
+			string(r.Spec.SourceKind),
+			string(r.Status.ComplianceStatus),
+			tls12, tls13,
+			string(r.Status.PQCReadiness),
+			r.Status.OverallCipherGrade,
+		)
+	}
+	return w.Flush()
+}
+
+func runDescribe(_ *cobra.Command, args []string) error {
+	reports, err := fetchReports()
+	if err != nil {
+		return err
+	}
+
+	name := args[0]
+	for _, r := range reports {
+		if r.Name == name {
+			return printReportDetail(r)
+		}
+	}
+	return fmt.Errorf("report %q not found", name)
+}
+
+func printReportDetail(r securityv1alpha1.TLSComplianceReport) error {
+	w := os.Stdout
+
+	_, _ = fmt.Fprintf(w, "Name:         %s\n", r.Name)
+	_, _ = fmt.Fprintf(w, "Host:         %s\n", r.Spec.Host)
+	_, _ = fmt.Fprintf(w, "Port:         %d\n", r.Spec.Port)
+	_, _ = fmt.Fprintf(w, "Source Kind:  %s\n", r.Spec.SourceKind)
+	_, _ = fmt.Fprintf(w, "Source:       %s/%s\n", r.Spec.SourceNamespace, r.Spec.SourceName)
+
+	_, _ = fmt.Fprintf(w, "\nCompliance:\n")
+	_, _ = fmt.Fprintf(w, "  Status:          %s\n", r.Status.ComplianceStatus)
+	_, _ = fmt.Fprintf(w, "  PQC Readiness:   %s\n", r.Status.PQCReadiness)
+	_, _ = fmt.Fprintf(w, "  Quantum Ready:   %v\n", r.Status.QuantumReady)
+	_, _ = fmt.Fprintf(w, "  Cipher Grade:    %s\n", r.Status.OverallCipherGrade)
+	_, _ = fmt.Fprintf(w, "  Forward Secrecy: %v\n", r.Status.ForwardSecrecy)
+
+	_, _ = fmt.Fprintf(w, "\nTLS Versions:\n")
+	_, _ = fmt.Fprintf(w, "  SSL 3.0:  %v\n", r.Status.TLSVersions.SSL30)
+	_, _ = fmt.Fprintf(w, "  TLS 1.0:  %v\n", r.Status.TLSVersions.TLS10)
+	_, _ = fmt.Fprintf(w, "  TLS 1.1:  %v\n", r.Status.TLSVersions.TLS11)
+	_, _ = fmt.Fprintf(w, "  TLS 1.2:  %v\n", r.Status.TLSVersions.TLS12)
+	_, _ = fmt.Fprintf(w, "  TLS 1.3:  %v\n", r.Status.TLSVersions.TLS13)
+
+	if r.Status.CertificateInfo != nil {
+		cert := r.Status.CertificateInfo
+		_, _ = fmt.Fprintf(w, "\nCertificate:\n")
+		_, _ = fmt.Fprintf(w, "  Issuer:           %s\n", cert.Issuer)
+		_, _ = fmt.Fprintf(w, "  Subject:          %s\n", cert.Subject)
+		if cert.NotBefore != nil {
+			_, _ = fmt.Fprintf(w, "  Not Before:       %s\n", cert.NotBefore.Format("2006-01-02 15:04:05 UTC"))
+		}
+		if cert.NotAfter != nil {
+			_, _ = fmt.Fprintf(w, "  Not After:        %s\n", cert.NotAfter.Format("2006-01-02 15:04:05 UTC"))
+		}
+		_, _ = fmt.Fprintf(w, "  Days Until Expiry: %d\n", cert.DaysUntilExpiry)
+		_, _ = fmt.Fprintf(w, "  Is Expired:       %v\n", cert.IsExpired)
+		if cert.HostnameMatch != nil {
+			_, _ = fmt.Fprintf(w, "  Hostname Match:   %v\n", *cert.HostnameMatch)
+		}
+		if len(cert.DNSNames) > 0 {
+			_, _ = fmt.Fprintf(w, "  DNS Names:        %s\n", strings.Join(cert.DNSNames, ", "))
+		}
+	}
+
+	if len(r.Status.CipherSuites) > 0 {
+		_, _ = fmt.Fprintf(w, "\nCipher Suites:\n")
+		for version, suites := range r.Status.CipherSuites {
+			_, _ = fmt.Fprintf(w, "  %s:\n", version)
+			for _, suite := range suites {
+				grade := "?"
+				if r.Status.CipherStrengthGrades != nil {
+					if g, ok := r.Status.CipherStrengthGrades[suite]; ok {
+						grade = g
+					}
+				}
+				_, _ = fmt.Fprintf(w, "    - %s [%s]\n", suite, grade)
+			}
+		}
+	}
+
+	if len(r.Status.KeyExchangeTypes) > 0 {
+		_, _ = fmt.Fprintf(w, "\nKey Exchange Types:\n")
+		for kex, info := range r.Status.KeyExchangeTypes {
+			_, _ = fmt.Fprintf(w, "  %s: %s\n", kex, info)
+		}
+	}
+
+	if len(r.Status.NegotiatedCurves) > 0 {
+		_, _ = fmt.Fprintf(w, "\nNegotiated Curves:\n")
+		for curve, info := range r.Status.NegotiatedCurves {
+			_, _ = fmt.Fprintf(w, "  %s: %s\n", curve, info)
+		}
+	}
+
+	if r.Status.IngressProfileCompliance != nil {
+		_, _ = fmt.Fprintf(w, "\nIngress TLS Profile Compliance:\n")
+		_, _ = fmt.Fprintf(w, "  Profile:   %s\n", r.Status.IngressProfileCompliance.ProfileType)
+		_, _ = fmt.Fprintf(w, "  Compliant: %v\n", r.Status.IngressProfileCompliance.Compliant)
+	}
+	if r.Status.APIServerProfileCompliance != nil {
+		_, _ = fmt.Fprintf(w, "\nAPI Server TLS Profile Compliance:\n")
+		_, _ = fmt.Fprintf(w, "  Profile:   %s\n", r.Status.APIServerProfileCompliance.ProfileType)
+		_, _ = fmt.Fprintf(w, "  Compliant: %v\n", r.Status.APIServerProfileCompliance.Compliant)
+	}
+	if r.Status.KubeletProfileCompliance != nil {
+		_, _ = fmt.Fprintf(w, "\nKubelet TLS Profile Compliance:\n")
+		_, _ = fmt.Fprintf(w, "  Profile:   %s\n", r.Status.KubeletProfileCompliance.ProfileType)
+		_, _ = fmt.Fprintf(w, "  Compliant: %v\n", r.Status.KubeletProfileCompliance.Compliant)
+	}
+
+	if len(r.Status.Conditions) > 0 {
+		_, _ = fmt.Fprintf(w, "\nConditions:\n")
+		tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+		_, _ = fmt.Fprintln(tw, "  TYPE\tSTATUS\tREASON\tMESSAGE")
+		for _, c := range r.Status.Conditions {
+			_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", c.Type, c.Status, c.Reason, c.Message)
+		}
+		_ = tw.Flush()
+	}
+
+	_, _ = fmt.Fprintf(w, "\nScan Info:\n")
+	if r.Status.FirstSeenAt != nil {
+		_, _ = fmt.Fprintf(w, "  First Seen:         %s\n", r.Status.FirstSeenAt.Format("2006-01-02 15:04:05 UTC"))
+	}
+	if r.Status.LastSeenAt != nil {
+		_, _ = fmt.Fprintf(w, "  Last Seen:          %s\n", r.Status.LastSeenAt.Format("2006-01-02 15:04:05 UTC"))
+	}
+	if r.Status.LastCheckAt != nil {
+		_, _ = fmt.Fprintf(w, "  Last Check:         %s\n", r.Status.LastCheckAt.Format("2006-01-02 15:04:05 UTC"))
+	}
+	_, _ = fmt.Fprintf(w, "  Check Count:        %d\n", r.Status.CheckCount)
+	_, _ = fmt.Fprintf(w, "  Consecutive Errors: %d\n", r.Status.ConsecutiveErrors)
+	if r.Status.RetryCount > 0 {
+		_, _ = fmt.Fprintf(w, "  Retry Count:        %d\n", r.Status.RetryCount)
+	}
+	if r.Status.NextRetryAt != nil {
+		_, _ = fmt.Fprintf(w, "  Next Retry:         %s\n", r.Status.NextRetryAt.Format("2006-01-02 15:04:05 UTC"))
+	}
+	if r.Status.LastError != "" {
+		_, _ = fmt.Fprintf(w, "  Last Error:         %s\n", r.Status.LastError)
+	}
+
+	return nil
 }
 
 func fetchReports() ([]securityv1alpha1.TLSComplianceReport, error) {
