@@ -120,35 +120,49 @@ func (r *EndpointReconciler) updateWithRetry(ctx context.Context, name string, m
 // +kubebuilder:rbac:groups=security.telco.openshift.io,resources=tlscompliancetargets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=security.telco.openshift.io,resources=tlscompliancetargets/status,verbs=get;update;patch
 
-// Reconcile handles Service events and creates/updates TLSComplianceReport CRs
+// Reconcile handles all watched resource events (Service, Ingress, Route, TLSComplianceTarget)
+// by detecting the resource type and routing to the appropriate handler. All resource types
+// flow through the controller-runtime work queue for bounded concurrency and automatic retry.
 func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
-	// Check if namespace is excluded
 	if r.isNamespaceFiltered(req.Namespace) {
 		return ctrl.Result{}, nil
 	}
 
-	// Try to fetch as Service first (primary watch)
 	var svc corev1.Service
-	if err := r.Get(ctx, req.NamespacedName, &svc); err != nil {
-		if apierrors.IsNotFound(err) {
-			metrics.RecordReconcile("success")
-			return ctrl.Result{}, nil
-		}
-		logger.Error(err, "unable to fetch Service")
-		metrics.RecordReconcile("error")
-		return ctrl.Result{}, err
+	if err := r.Get(ctx, req.NamespacedName, &svc); err == nil {
+		return r.handleService(ctx, &svc)
 	}
 
-	// Extract endpoints from Service
-	endpoints := endpoint.ExtractFromService(&svc)
+	var ing networkingv1.Ingress
+	if err := r.Get(ctx, req.NamespacedName, &ing); err == nil {
+		return r.handleIngress(ctx, &ing)
+	}
+
+	if r.RouteAPIAvailable {
+		route := &unstructured.Unstructured{}
+		route.SetGroupVersionKind(routeGVK)
+		if err := r.Get(ctx, req.NamespacedName, route); err == nil {
+			return r.handleRoute(ctx, route)
+		}
+	}
+
+	var target securityv1alpha1.TLSComplianceTarget
+	if err := r.Get(ctx, client.ObjectKey{Name: req.Name}, &target); err == nil {
+		return r.handleTarget(ctx, &target)
+	}
+
+	return ctrl.Result{}, nil
+}
+
+func (r *EndpointReconciler) handleService(ctx context.Context, svc *corev1.Service) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	endpoints := endpoint.ExtractFromService(svc)
 	if len(endpoints) == 0 {
 		metrics.RecordReconcile("success")
 		return ctrl.Result{}, nil
 	}
 
-	// Process each endpoint
 	for _, ep := range endpoints {
 		if err := r.processEndpoint(ctx, ep); err != nil {
 			logger.Error(err, "failed to process endpoint", "host", ep.Host, "port", ep.Port)
@@ -159,51 +173,23 @@ func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	return ctrl.Result{}, nil
 }
 
-// ReconcileIngress handles Ingress events
-func (r *EndpointReconciler) ReconcileIngress(ctx context.Context, req ctrl.Request) {
+func (r *EndpointReconciler) handleIngress(ctx context.Context, ing *networkingv1.Ingress) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	if r.isNamespaceFiltered(req.Namespace) {
-		return
-	}
-
-	var ing networkingv1.Ingress
-	if err := r.Get(ctx, req.NamespacedName, &ing); err != nil {
-		if !apierrors.IsNotFound(err) {
-			logger.Error(err, "unable to fetch Ingress")
-			metrics.RecordReconcileError("Ingress", "fetch")
-		}
-		return
-	}
-
-	endpoints := endpoint.ExtractFromIngress(&ing)
+	endpoints := endpoint.ExtractFromIngress(ing)
 	for _, ep := range endpoints {
 		if err := r.processEndpoint(ctx, ep); err != nil {
 			logger.Error(err, "failed to process Ingress endpoint", "host", ep.Host)
 			metrics.RecordReconcileError("Ingress", "process")
 		}
 	}
+
+	metrics.RecordReconcile("success")
+	return ctrl.Result{}, nil
 }
 
-// ReconcileRoute handles Route events
-func (r *EndpointReconciler) ReconcileRoute(ctx context.Context, req ctrl.Request) {
+func (r *EndpointReconciler) handleRoute(ctx context.Context, route *unstructured.Unstructured) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-
-	if r.isNamespaceFiltered(req.Namespace) {
-		return
-	}
-
-	// Fetch Route as unstructured
-	route := &unstructured.Unstructured{}
-	route.SetGroupVersionKind(routeGVK)
-
-	if err := r.Get(ctx, req.NamespacedName, route); err != nil {
-		if !apierrors.IsNotFound(err) && ctx.Err() == nil {
-			logger.Error(err, "unable to fetch Route")
-			metrics.RecordReconcileError("Route", "fetch")
-		}
-		return
-	}
 
 	endpoints := endpoint.ExtractFromRoute(route)
 	for _, ep := range endpoints {
@@ -212,20 +198,13 @@ func (r *EndpointReconciler) ReconcileRoute(ctx context.Context, req ctrl.Reques
 			metrics.RecordReconcileError("Route", "process")
 		}
 	}
+
+	metrics.RecordReconcile("success")
+	return ctrl.Result{}, nil
 }
 
-// ReconcileTarget handles TLSComplianceTarget events
-func (r *EndpointReconciler) ReconcileTarget(ctx context.Context, req ctrl.Request) {
+func (r *EndpointReconciler) handleTarget(ctx context.Context, target *securityv1alpha1.TLSComplianceTarget) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-
-	var target securityv1alpha1.TLSComplianceTarget
-	if err := r.Get(ctx, req.NamespacedName, &target); err != nil {
-		if !apierrors.IsNotFound(err) {
-			logger.Error(err, "unable to fetch TLSComplianceTarget")
-			metrics.RecordReconcileError("Target", "fetch")
-		}
-		return
-	}
 
 	ep := endpoint.Endpoint{
 		Host:            target.Spec.Host,
@@ -240,15 +219,17 @@ func (r *EndpointReconciler) ReconcileTarget(ctx context.Context, req ctrl.Reque
 	if err := r.processEndpoint(ctx, ep); err != nil {
 		logger.Error(err, "failed to process Target endpoint", "host", ep.Host, "port", ep.Port)
 		metrics.RecordReconcileError("Target", "process")
-		r.updateTargetStatus(ctx, req.Name, crName, "", err.Error())
-		return
+		r.updateTargetStatus(ctx, target.Name, crName, "", err.Error())
+		return ctrl.Result{}, nil
 	}
 
-	// Copy compliance status from the generated report back to the target
 	var report securityv1alpha1.TLSComplianceReport
 	if err := r.Get(ctx, client.ObjectKey{Name: crName}, &report); err == nil {
-		r.updateTargetStatus(ctx, req.Name, crName, string(report.Status.ComplianceStatus), "")
+		r.updateTargetStatus(ctx, target.Name, crName, string(report.Status.ComplianceStatus), "")
 	}
+
+	metrics.RecordReconcile("success")
+	return ctrl.Result{}, nil
 }
 
 func (r *EndpointReconciler) updateTargetStatus(ctx context.Context, targetName, reportName, complianceStatus, errMsg string) {
@@ -333,22 +314,21 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep endpoint.En
 			return fmt.Errorf("failed to create TLSComplianceReport: %w", err)
 		}
 
-		if err := r.updateStatusWithRetry(ctx, crName, func(cr *securityv1alpha1.TLSComplianceReport) {
-			cr.Status = securityv1alpha1.TLSComplianceReportStatus{
-				ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
-				FirstSeenAt:      &now,
-				LastSeenAt:       &now,
-				Conditions: []metav1.Condition{
-					{
-						Type:               "Available",
-						Status:             metav1.ConditionTrue,
-						LastTransitionTime: now,
-						Reason:             "EndpointDiscovered",
-						Message:            fmt.Sprintf("Endpoint %s discovered from %s/%s", hostPort(ep.Host, ep.Port), ep.SourceNamespace, ep.SourceName),
-					},
+		cr.Status = securityv1alpha1.TLSComplianceReportStatus{
+			ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
+			FirstSeenAt:      &now,
+			LastSeenAt:       &now,
+			Conditions: []metav1.Condition{
+				{
+					Type:               "Available",
+					Status:             metav1.ConditionTrue,
+					LastTransitionTime: now,
+					Reason:             "EndpointDiscovered",
+					Message:            fmt.Sprintf("Endpoint %s discovered from %s/%s", hostPort(ep.Host, ep.Port), ep.SourceNamespace, ep.SourceName),
 				},
-			}
-		}); err != nil {
+			},
+		}
+		if err := r.Status().Update(ctx, cr); err != nil {
 			return fmt.Errorf("failed to update TLSComplianceReport status: %w", err)
 		}
 
@@ -364,11 +344,15 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep endpoint.En
 			checkCtx = context.Background()
 		}
 		r.initCheckSemaphore()
-		r.checkSem <- struct{}{}
-		go func() {
-			defer func() { <-r.checkSem }()
-			r.performTLSCheck(checkCtx, crName, ep.Host, int(ep.Port))
-		}()
+		select {
+		case r.checkSem <- struct{}{}:
+			go func() {
+				defer func() { <-r.checkSem }()
+				r.performTLSCheck(checkCtx, crName, ep.Host, int(ep.Port))
+			}()
+		default:
+			logger.V(1).Info("TLS check deferred to next scan cycle (workers busy)", "host", ep.Host, "port", ep.Port)
+		}
 
 		return nil
 	} else if err != nil {
@@ -842,38 +826,17 @@ func (r *EndpointReconciler) initCheckSemaphore() {
 func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.initCheckSemaphore()
 
+	enqueueObject := func(_ context.Context, obj client.Object) []ctrl.Request {
+		return []ctrl.Request{{NamespacedName: client.ObjectKeyFromObject(obj)}}
+	}
+
 	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Service{}).
 		Named("endpoint").
 		WithOptions(controller.Options{MaxConcurrentReconciles: r.Workers}).
-		Watches(&networkingv1.Ingress{}, handler.EnqueueRequestsFromMapFunc(
-			func(ctx context.Context, obj client.Object) []ctrl.Request {
-				ing, ok := obj.(*networkingv1.Ingress)
-				if !ok {
-					return nil
-				}
-				r.ReconcileIngress(ctx, ctrl.Request{
-					NamespacedName: client.ObjectKeyFromObject(ing),
-				})
-				return nil
-			},
-		))
+		Watches(&networkingv1.Ingress{}, handler.EnqueueRequestsFromMapFunc(enqueueObject)).
+		Watches(&securityv1alpha1.TLSComplianceTarget{}, handler.EnqueueRequestsFromMapFunc(enqueueObject))
 
-	// Add TLSComplianceTarget watch
-	builder = builder.Watches(&securityv1alpha1.TLSComplianceTarget{}, handler.EnqueueRequestsFromMapFunc(
-		func(ctx context.Context, obj client.Object) []ctrl.Request {
-			target, ok := obj.(*securityv1alpha1.TLSComplianceTarget)
-			if !ok {
-				return nil
-			}
-			r.ReconcileTarget(ctx, ctrl.Request{
-				NamespacedName: client.ObjectKeyFromObject(target),
-			})
-			return nil
-		},
-	))
-
-	// Add Route watch if OpenShift Route API is available
 	if r.RouteAPIAvailable {
 		routeObj := &unstructured.Unstructured{}
 		routeObj.SetGroupVersionKind(routeGVK)
@@ -881,11 +844,8 @@ func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		builder = builder.WatchesRawSource(source.Kind(
 			mgr.GetCache(),
 			routeObj,
-			handler.TypedEnqueueRequestsFromMapFunc(func(ctx context.Context, obj *unstructured.Unstructured) []ctrl.Request {
-				r.ReconcileRoute(ctx, ctrl.Request{
-					NamespacedName: client.ObjectKeyFromObject(obj),
-				})
-				return nil
+			handler.TypedEnqueueRequestsFromMapFunc(func(_ context.Context, obj *unstructured.Unstructured) []ctrl.Request {
+				return []ctrl.Request{{NamespacedName: client.ObjectKeyFromObject(obj)}}
 			}),
 		))
 	}
@@ -976,18 +936,9 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 		// Continue — don't fail the whole scan
 	}
 
-	var allCRs []securityv1alpha1.TLSComplianceReport
 	var crList securityv1alpha1.TLSComplianceReportList
-	if err := r.List(ctx, &crList, client.Limit(500)); err != nil {
+	if err := r.List(ctx, &crList); err != nil {
 		return fmt.Errorf("failed to list TLSComplianceReports: %w", err)
-	}
-	allCRs = append(allCRs, crList.Items...)
-	for crList.Continue != "" {
-		crList.Items = nil
-		if err := r.List(ctx, &crList, client.Limit(500), client.Continue(crList.Continue)); err != nil {
-			return fmt.Errorf("failed to list TLSComplianceReports (continue): %w", err)
-		}
-		allCRs = append(allCRs, crList.Items...)
 	}
 
 	workers := r.Workers
@@ -1001,15 +952,15 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 		port int
 	}
 
-	items := make(chan scanItem, len(allCRs))
-	for i := range allCRs {
-		cr := &allCRs[i]
+	items := make(chan scanItem, len(crList.Items))
+	for i := range crList.Items {
+		cr := &crList.Items[i]
 		items <- scanItem{name: cr.Name, host: cr.Spec.Host, port: int(cr.Spec.Port)}
 	}
 	close(items)
 
 	var wg sync.WaitGroup
-	for range min(workers, len(allCRs)) {
+	for range min(workers, len(crList.Items)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -1025,9 +976,9 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 	}
 	wg.Wait()
 
-	r.updateEndpointMetrics(allCRs)
+	r.updateEndpointMetrics(crList.Items)
 
-	logger.Info("scan completed", "endpoints", len(allCRs), "workers", workers)
+	logger.Info("scan completed", "endpoints", len(crList.Items), "workers", workers)
 	return nil
 }
 
@@ -1090,133 +1041,77 @@ func sourceKey(namespace, name string) string {
 func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 
-	var allCRs []securityv1alpha1.TLSComplianceReport
 	var crList securityv1alpha1.TLSComplianceReportList
-	if err := r.List(ctx, &crList, client.Limit(500)); err != nil {
+	if err := r.List(ctx, &crList); err != nil {
 		return fmt.Errorf("failed to list TLSComplianceReports: %w", err)
 	}
-	allCRs = append(allCRs, crList.Items...)
-	for crList.Continue != "" {
-		crList.Items = nil
-		if err := r.List(ctx, &crList, client.Limit(500), client.Continue(crList.Continue)); err != nil {
-			return fmt.Errorf("failed to list TLSComplianceReports (continue): %w", err)
-		}
-		allCRs = append(allCRs, crList.Items...)
-	}
 
-	if len(allCRs) == 0 {
+	if len(crList.Items) == 0 {
 		return nil
 	}
 
-	// Build sets of existing source resources by listing each type once
 	existingSources := make(map[securityv1alpha1.SourceKind]map[string]bool)
 
-	// Services
-	svcSet := make(map[string]bool)
 	var svcList corev1.ServiceList
-	if err := r.List(ctx, &svcList, client.Limit(500)); err != nil {
+	if err := r.List(ctx, &svcList); err != nil {
 		logger.Error(err, "failed to list Services for cleanup")
 	} else {
+		svcSet := make(map[string]bool, len(svcList.Items))
 		for i := range svcList.Items {
 			svcSet[sourceKey(svcList.Items[i].Namespace, svcList.Items[i].Name)] = true
-		}
-		for svcList.Continue != "" {
-			svcList.Items = nil
-			if err := r.List(ctx, &svcList, client.Limit(500), client.Continue(svcList.Continue)); err != nil {
-				logger.Error(err, "failed to list Services for cleanup (continue)")
-				break
-			}
-			for i := range svcList.Items {
-				svcSet[sourceKey(svcList.Items[i].Namespace, svcList.Items[i].Name)] = true
-			}
 		}
 		existingSources[securityv1alpha1.SourceKindService] = svcSet
 	}
 
-	// Ingresses
-	ingSet := make(map[string]bool)
 	var ingList networkingv1.IngressList
-	if err := r.List(ctx, &ingList, client.Limit(500)); err != nil {
+	if err := r.List(ctx, &ingList); err != nil {
 		logger.Error(err, "failed to list Ingresses for cleanup")
 	} else {
+		ingSet := make(map[string]bool, len(ingList.Items))
 		for i := range ingList.Items {
 			ingSet[sourceKey(ingList.Items[i].Namespace, ingList.Items[i].Name)] = true
-		}
-		for ingList.Continue != "" {
-			ingList.Items = nil
-			if err := r.List(ctx, &ingList, client.Limit(500), client.Continue(ingList.Continue)); err != nil {
-				logger.Error(err, "failed to list Ingresses for cleanup (continue)")
-				break
-			}
-			for i := range ingList.Items {
-				ingSet[sourceKey(ingList.Items[i].Namespace, ingList.Items[i].Name)] = true
-			}
 		}
 		existingSources[securityv1alpha1.SourceKindIngress] = ingSet
 	}
 
-	// Routes (if available)
 	if r.RouteAPIAvailable {
-		routeSet := make(map[string]bool)
 		routeList := &unstructured.UnstructuredList{}
 		routeList.SetGroupVersionKind(routeGVK)
-		if err := r.List(ctx, routeList, client.Limit(500)); err != nil {
+		if err := r.List(ctx, routeList); err != nil {
 			logger.Error(err, "failed to list Routes for cleanup")
 		} else {
+			routeSet := make(map[string]bool, len(routeList.Items))
 			for i := range routeList.Items {
 				routeSet[sourceKey(routeList.Items[i].GetNamespace(), routeList.Items[i].GetName())] = true
-			}
-			for routeList.GetContinue() != "" {
-				routeList.Items = nil
-				if err := r.List(ctx, routeList, client.Limit(500), client.Continue(routeList.GetContinue())); err != nil {
-					logger.Error(err, "failed to list Routes for cleanup (continue)")
-					break
-				}
-				for i := range routeList.Items {
-					routeSet[sourceKey(routeList.Items[i].GetNamespace(), routeList.Items[i].GetName())] = true
-				}
 			}
 			existingSources[securityv1alpha1.SourceKindRoute] = routeSet
 		}
 	}
 
-	// Pods
-	podSet := make(map[string]bool)
 	var podList corev1.PodList
-	if err := r.List(ctx, &podList, client.Limit(500)); err != nil {
+	if err := r.List(ctx, &podList); err != nil {
 		logger.Error(err, "failed to list Pods for cleanup")
 	} else {
+		podSet := make(map[string]bool, len(podList.Items))
 		for i := range podList.Items {
 			podSet[sourceKey(podList.Items[i].Namespace, podList.Items[i].Name)] = true
-		}
-		for podList.Continue != "" {
-			podList.Items = nil
-			if err := r.List(ctx, &podList, client.Limit(500), client.Continue(podList.Continue)); err != nil {
-				logger.Error(err, "failed to list Pods for cleanup (continue)")
-				break
-			}
-			for i := range podList.Items {
-				podSet[sourceKey(podList.Items[i].Namespace, podList.Items[i].Name)] = true
-			}
 		}
 		existingSources[securityv1alpha1.SourceKindPod] = podSet
 	}
 
-	// Targets
-	targetSet := make(map[string]bool)
 	var targetList securityv1alpha1.TLSComplianceTargetList
-	if err := r.List(ctx, &targetList, client.Limit(500)); err != nil {
+	if err := r.List(ctx, &targetList); err != nil {
 		logger.Error(err, "failed to list TLSComplianceTargets for cleanup")
 	} else {
+		targetSet := make(map[string]bool, len(targetList.Items))
 		for i := range targetList.Items {
 			targetSet[sourceKey("cluster-scoped", targetList.Items[i].Name)] = true
 		}
 		existingSources[securityv1alpha1.SourceKindTarget] = targetSet
 	}
 
-	// Check each CR against the in-memory sets
-	for i := range allCRs {
-		cr := &allCRs[i]
+	for i := range crList.Items {
+		cr := &crList.Items[i]
 
 		sourceSet, known := existingSources[cr.Spec.SourceKind]
 		if !known {

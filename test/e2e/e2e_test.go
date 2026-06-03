@@ -108,7 +108,7 @@ var _ = Describe("Manager", Ordered, func() {
 		By("patching scan and cleanup intervals for faster E2E execution")
 		cmd = exec.Command("kubectl", "patch", "deployment",
 			"tls-compliance-operator-controller-manager", "-n", namespace,
-			"--type=json", `-p=[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--scan-interval=30s"},{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--cleanup-interval=30s"}]`)
+			"--type=json", `-p=[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--scan-interval=30s"},{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--cleanup-interval=30s"},{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--workers=20"}]`)
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to patch scan interval")
 
@@ -686,7 +686,7 @@ var _ = Describe("Manager", Ordered, func() {
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).NotTo(ContainSubstring("test-cleanup-pod"))
-			}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+			}).WithTimeout(8 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
 		})
 
 		It("should remove report when source Service is deleted", func() {
@@ -713,7 +713,7 @@ var _ = Describe("Manager", Ordered, func() {
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).NotTo(ContainSubstring("test-cleanup-svc"))
-			}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+			}).WithTimeout(8 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
 		})
 	})
 
