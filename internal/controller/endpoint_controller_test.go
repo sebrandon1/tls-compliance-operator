@@ -863,12 +863,18 @@ func TestEndpointReconciler_ReconcileIngress(t *testing.T) {
 		CertExpiryDays: 30,
 	}
 
-	reconciler.ReconcileIngress(ctx, reconcile.Request{
+	result, err := reconciler.Reconcile(ctx, reconcile.Request{
 		NamespacedName: types.NamespacedName{
 			Name:      "my-ingress",
 			Namespace: testNamespace,
 		},
 	})
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.RequeueAfter != 0 {
+		t.Error("Reconcile() returned RequeueAfter != 0, want 0")
+	}
 
 	// Small delay for async processing
 	time.Sleep(50 * time.Millisecond)
