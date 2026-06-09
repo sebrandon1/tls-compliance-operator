@@ -6,26 +6,27 @@ on:
   pull_request:
     branches: [main]
 
-permissions:
-  contents: read
+permissions: read-all
 
 jobs:
   govulncheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: true
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
       - name: Run govulncheck
-        run: govulncheck ./... || true
+        continue-on-error: true
+        run: govulncheck ./...
 
   trivy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Run Trivy filesystem scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -35,7 +36,7 @@ jobs:
           exit-code: "0"
           severity: CRITICAL,HIGH
       - name: Build image for scanning
-        run: docker build -t tls-compliance-operator:scan .
+        run: make docker-build IMG=tls-compliance-operator:scan
       - name: Run Trivy image scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
