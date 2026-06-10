@@ -110,3 +110,47 @@ args:
 - --log-format=json
 - --leader-elect
 ```
+
+## Resource Sizing
+
+The default resource limits are configured for small-to-medium clusters
+(up to ~500 TLS endpoints):
+
+| Resource | Request | Limit |
+|----------|---------|-------|
+| CPU | 10m | 500m |
+| Memory | 64Mi | 256Mi |
+
+### Scaling Guidance
+
+Memory usage scales with the number of endpoints being monitored and the
+concurrency settings:
+
+| Endpoints | Workers | Rate Limit | Recommended Memory Limit |
+|-----------|---------|------------|-------------------------|
+| < 500 | 5 | 10 | 256Mi (default) |
+| 500-2000 | 10 | 20 | 512Mi |
+| 2000+ | 20 | 50 | 1Gi |
+
+Increasing `--workers` and `--rate-limit` will increase peak memory usage
+since more TLS checks run concurrently. Monitor actual usage with:
+
+```promql
+container_memory_working_set_bytes{container="manager"}
+```
+
+### High-Memory Kustomize Overlay
+
+For larger clusters, use the provided kustomize overlay:
+
+```bash
+kubectl kustomize config/overlays/high-memory/ | kubectl apply -f -
+```
+
+This sets memory limits to 512Mi and requests to 128Mi. Customize the overlay
+values for your workload by editing
+`config/overlays/high-memory/kustomization.yaml`.
+
+---
+
+Next: [Architecture](architecture.md)
