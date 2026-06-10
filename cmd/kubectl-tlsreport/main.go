@@ -42,8 +42,10 @@ func init() {
 }
 
 var (
-	filterOpts export.FilterOptions
-	sortBy     string
+	filterOpts  export.FilterOptions
+	sortBy      string
+	kubeconfig  string
+	kubecontext string
 )
 
 func main() {
@@ -58,7 +60,9 @@ func newRootCmd() *cobra.Command {
 		Short: "Export TLS compliance reports from the cluster",
 		Long: `Export TLS compliance reports from the cluster in various formats.
 
-Supported formats: csv (default), json, junit, markdown (or md)`,
+Supported formats: csv (default), json, junit, markdown (or md)
+
+Use --kubeconfig and --context to target a specific cluster.`,
 		Args:          cobra.MaximumNArgs(1),
 		RunE:          runExport,
 		SilenceUsage:  true,
@@ -72,6 +76,8 @@ Supported formats: csv (default), json, junit, markdown (or md)`,
 	rootCmd.PersistentFlags().StringVar(&filterOpts.ExpiresWithin, "expires-within", "", "Show certs expiring within duration (e.g. 30d, 7d, 90d)")
 	rootCmd.PersistentFlags().BoolVar(&filterOpts.Expired, "expired", false, "Show only expired certificates")
 	rootCmd.PersistentFlags().StringVar(&sortBy, "sort-by", "", "Sort results by field (host, port, compliance, expiry, grade, pqc)")
+	rootCmd.PersistentFlags().StringVar(&kubeconfig, "kubeconfig", "", "Path to the kubeconfig file to use")
+	rootCmd.PersistentFlags().StringVar(&kubecontext, "context", "", "The kubeconfig context to use")
 
 	rootCmd.AddCommand(newSummaryCmd())
 	rootCmd.AddCommand(newGetCmd())
@@ -369,7 +375,13 @@ func printReportDetail(r securityv1alpha1.TLSComplianceReport) error {
 
 func fetchReports() ([]securityv1alpha1.TLSComplianceReport, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if kubeconfig != "" {
+		loadingRules.ExplicitPath = kubeconfig
+	}
 	configOverrides := &clientcmd.ConfigOverrides{}
+	if kubecontext != "" {
+		configOverrides.CurrentContext = kubecontext
+	}
 	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
 
 	restConfig, err := kubeConfig.ClientConfig()
