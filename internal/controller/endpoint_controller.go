@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"strings"
 	"sync"
@@ -80,6 +81,7 @@ type EndpointReconciler struct {
 	Workers           int
 	MaxRetries        int
 	RetryBackoff      time.Duration
+	MaxBackoff        time.Duration
 	ManagerCtx        context.Context
 	checkSem          chan struct{}
 }
@@ -382,6 +384,10 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	if backoff <= 0 {
 		backoff = 30 * time.Second
 	}
+	maxBackoff := r.MaxBackoff
+	if maxBackoff <= 0 {
+		maxBackoff = 5 * time.Minute
+	}
 
 	var result *tlscheck.TLSCheckResult
 	var checkErr error
@@ -402,6 +408,11 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 		// Transient failure with retries remaining
 		if attempt < maxAttempts-1 {
 			retryDelay := backoff * time.Duration(1<<uint(attempt))
+			if retryDelay > maxBackoff {
+				retryDelay = maxBackoff
+			}
+			jitter := time.Duration(rand.Int64N(int64(retryDelay) / 4))
+			retryDelay += jitter
 			logger.Info("transient TLS check failure, retrying",
 				"attempt", attempt+1,
 				"maxAttempts", maxAttempts,

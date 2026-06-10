@@ -1608,5 +1608,78 @@ func TestEndpointReconciler_RetryDisabled(t *testing.T) {
 	}
 }
 
+func TestEndpointReconciler_RetryBackoffCap(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	crName := "retry-backoff-cap-cr"
+	now := metav1.Now()
+	cr := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: crName,
+		},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host:            "slow.example.com",
+			Port:            443,
+			SourceKind:      securityv1alpha1.SourceKindService,
+			SourceNamespace: testNamespace,
+			SourceName:      "slow-service",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{
+			ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
+			FirstSeenAt:      &now,
+			LastSeenAt:       &now,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cr).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	checker := &SequencedMockTLSChecker{
+		Results: []*tlscheck.TLSCheckResult{
+			{FailureReason: tlscheck.FailureReasonTimeout},
+			{FailureReason: tlscheck.FailureReasonTimeout},
+			{FailureReason: tlscheck.FailureReasonTimeout},
+			{FailureReason: tlscheck.FailureReasonTimeout},
+		},
+		Errors: []error{
+			fmt.Errorf("timeout 1"),
+			fmt.Errorf("timeout 2"),
+			fmt.Errorf("timeout 3"),
+			fmt.Errorf("timeout 4"),
+		},
+	}
+
+	// Without cap: backoff would be 10ms, 20ms, 40ms = 70ms total
+	// With cap at 15ms: backoff is 10ms, 15ms(+jitter), 15ms(+jitter) ≤ ~60ms
+	// Without cap and higher retries the difference would be dramatic
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		TLSChecker:     checker,
+		CertExpiryDays: 30,
+		MaxRetries:     3,
+		RetryBackoff:   10 * time.Millisecond,
+		MaxBackoff:     15 * time.Millisecond,
+	}
+
+	start := time.Now()
+	reconciler.performTLSCheck(ctx, crName, "slow.example.com", 443)
+	elapsed := time.Since(start)
+
+	if checker.CallCount() != 4 {
+		t.Errorf("expected 4 calls, got %d", checker.CallCount())
+	}
+
+	// 3 sleeps, each capped at 15ms + up to 25% jitter ≈ 18.75ms max per sleep
+	// Total max ≈ 56.25ms, give generous upper bound of 100ms
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("elapsed %v exceeds 100ms — backoff cap may not be working", elapsed)
+	}
+}
+
 // Ensure _ satisfies the client.Object interface for compile-time check
 var _ client.Object = &securityv1alpha1.TLSComplianceReport{}
