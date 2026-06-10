@@ -84,6 +84,7 @@ func main() {
 	var workers int
 	var maxRetries int
 	var retryBackoff time.Duration
+	var maxBackoff time.Duration
 	var extraTLSPortsStr string
 	var logFormat string
 
@@ -130,6 +131,8 @@ func main() {
 		"Maximum number of retries for transient TLS check failures (0-10)")
 	flag.DurationVar(&retryBackoff, "retry-backoff", 30*time.Second,
 		"Base backoff duration between retries (exponential: base * 2^attempt)")
+	flag.DurationVar(&maxBackoff, "max-backoff", 5*time.Minute,
+		"Maximum backoff duration between retries (caps exponential growth)")
 	flag.StringVar(&extraTLSPortsStr, "extra-tls-ports", "",
 		"Comma-separated list of additional port numbers to treat as TLS endpoints (e.g., 9443,6380,5671)")
 	flag.StringVar(&logFormat, "log-format", "text",
@@ -316,6 +319,7 @@ func main() {
 		Workers:           workers,
 		MaxRetries:        maxRetries,
 		RetryBackoff:      retryBackoff,
+		MaxBackoff:        maxBackoff,
 		ManagerCtx:        ctx,
 	}
 
@@ -366,6 +370,7 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_PROFILE_REFRESH_INTERVAL", "profile-refresh-interval"},
 	{"TLS_COMPLIANCE_MAX_RETRIES", "max-retries"},
 	{"TLS_COMPLIANCE_RETRY_BACKOFF", "retry-backoff"},
+	{"TLS_COMPLIANCE_MAX_BACKOFF", "max-backoff"},
 	{"TLS_COMPLIANCE_EXTRA_TLS_PORTS", "extra-tls-ports"},
 	{"TLS_COMPLIANCE_LOG_FORMAT", "log-format"},
 }
@@ -419,7 +424,7 @@ func resolveEnvConfig(fs *flag.FlagSet, lookupEnv func(string) (string, bool)) [
 // validateEnvValue performs type-appropriate validation for known flag types.
 func validateEnvValue(flagName, value string) error {
 	switch flagName {
-	case "scan-interval", "cleanup-interval", "tls-check-timeout", "profile-refresh-interval", "retry-backoff":
+	case "scan-interval", "cleanup-interval", "tls-check-timeout", "profile-refresh-interval", "retry-backoff", "max-backoff":
 		if _, err := time.ParseDuration(value); err != nil {
 			return fmt.Errorf("invalid duration: %w", err)
 		}
