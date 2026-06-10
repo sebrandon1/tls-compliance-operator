@@ -19,7 +19,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"math/rand/v2"
 	"net"
 	"strings"
 	"sync"
@@ -32,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -380,13 +380,20 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	}
 
 	maxAttempts := 1 + r.MaxRetries
-	backoff := r.RetryBackoff
-	if backoff <= 0 {
-		backoff = 30 * time.Second
+	retryBackoff := r.RetryBackoff
+	if retryBackoff <= 0 {
+		retryBackoff = 30 * time.Second
 	}
 	maxBackoff := r.MaxBackoff
 	if maxBackoff <= 0 {
 		maxBackoff = 5 * time.Minute
+	}
+	backoff := wait.Backoff{
+		Duration: retryBackoff,
+		Factor:   2,
+		Jitter:   0.25,
+		Steps:    maxAttempts,
+		Cap:      maxBackoff,
 	}
 
 	var result *tlscheck.TLSCheckResult
@@ -407,12 +414,7 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 
 		// Transient failure with retries remaining
 		if attempt < maxAttempts-1 {
-			retryDelay := backoff * time.Duration(1<<uint(attempt))
-			if retryDelay > maxBackoff {
-				retryDelay = maxBackoff
-			}
-			jitter := time.Duration(rand.Int64N(int64(retryDelay) / 4))
-			retryDelay += jitter
+			retryDelay := backoff.Step()
 			logger.Info("transient TLS check failure, retrying",
 				"attempt", attempt+1,
 				"maxAttempts", maxAttempts,
