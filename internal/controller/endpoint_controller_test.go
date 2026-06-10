@@ -206,6 +206,71 @@ func TestEndpointReconciler_Reconcile_ServiceWithoutHTTPS(t *testing.T) {
 	}
 }
 
+func TestEndpointReconciler_Reconcile_ExternalNameService(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "external-api",
+			Namespace: testNamespace,
+		},
+		Spec: corev1.ServiceSpec{
+			Type:         corev1.ServiceTypeExternalName,
+			ExternalName: "api.vendor.example.com",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(svc).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		CertExpiryDays: 30,
+	}
+
+	req := reconcile.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      "external-api",
+			Namespace: testNamespace,
+		},
+	}
+
+	result, err := reconciler.Reconcile(ctx, req)
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.RequeueAfter != 0 {
+		t.Error("Reconcile() returned RequeueAfter != 0, want 0")
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("Failed to list TLSComplianceReports: %v", err)
+	}
+	if len(crList.Items) != 1 {
+		t.Fatalf("TLSComplianceReport count = %v, want 1", len(crList.Items))
+	}
+
+	cr := crList.Items[0]
+	if cr.Spec.Host != "api.vendor.example.com" {
+		t.Errorf("Host = %v, want api.vendor.example.com", cr.Spec.Host)
+	}
+	if cr.Spec.Port != 443 {
+		t.Errorf("Port = %v, want 443", cr.Spec.Port)
+	}
+	if cr.Spec.SourceKind != securityv1alpha1.SourceKindService {
+		t.Errorf("SourceKind = %v, want Service", cr.Spec.SourceKind)
+	}
+	if cr.Spec.SourceName != "external-api" {
+		t.Errorf("SourceName = %v, want external-api", cr.Spec.SourceName)
+	}
+}
+
 func TestEndpointReconciler_Reconcile_DeletedService(t *testing.T) {
 	ctx := context.Background()
 	scheme := newTestScheme()

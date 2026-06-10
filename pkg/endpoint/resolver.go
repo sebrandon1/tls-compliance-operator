@@ -46,7 +46,13 @@ var sanitizeRegex = regexp.MustCompile(`[^a-z0-9-]`)
 
 // ExtractFromService returns TLS endpoints from a Service.
 // It looks for ports that are 443, 8443, or named https/https-*.
+// For ExternalName services, the host is spec.externalName and
+// port 443 is assumed when no ports are defined.
 func ExtractFromService(svc *corev1.Service) []Endpoint {
+	if svc.Spec.Type == corev1.ServiceTypeExternalName {
+		return extractFromExternalNameService(svc)
+	}
+
 	var endpoints []Endpoint
 
 	for _, port := range svc.Spec.Ports {
@@ -59,6 +65,39 @@ func ExtractFromService(svc *corev1.Service) []Endpoint {
 				SourceNamespace: svc.Namespace,
 				SourceName:      svc.Name,
 			})
+		}
+	}
+
+	return endpoints
+}
+
+func extractFromExternalNameService(svc *corev1.Service) []Endpoint {
+	host := svc.Spec.ExternalName
+	if host == "" {
+		return nil
+	}
+
+	var endpoints []Endpoint
+
+	if len(svc.Spec.Ports) == 0 {
+		endpoints = append(endpoints, Endpoint{
+			Host:            host,
+			Port:            443,
+			SourceKind:      "Service",
+			SourceNamespace: svc.Namespace,
+			SourceName:      svc.Name,
+		})
+	} else {
+		for _, port := range svc.Spec.Ports {
+			if isTLSPort(port) {
+				endpoints = append(endpoints, Endpoint{
+					Host:            host,
+					Port:            port.Port,
+					SourceKind:      "Service",
+					SourceNamespace: svc.Namespace,
+					SourceName:      svc.Name,
+				})
+			}
 		}
 	}
 

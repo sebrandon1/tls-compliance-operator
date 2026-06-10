@@ -147,6 +147,84 @@ func TestExtractFromService_MultiplePorts(t *testing.T) {
 	}
 }
 
+func TestExtractFromService_ExternalName(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "external-api",
+			Namespace: "default",
+		},
+		Spec: corev1.ServiceSpec{
+			Type:         corev1.ServiceTypeExternalName,
+			ExternalName: "api.vendor.example.com",
+		},
+	}
+
+	endpoints := ExtractFromService(svc)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(endpoints))
+	}
+
+	ep := endpoints[0]
+	if ep.Host != "api.vendor.example.com" {
+		t.Errorf("host = %q, want api.vendor.example.com", ep.Host)
+	}
+	if ep.Port != 443 {
+		t.Errorf("port = %d, want 443 (default for ExternalName without ports)", ep.Port)
+	}
+	if ep.SourceKind != "Service" {
+		t.Errorf("sourceKind = %q, want Service", ep.SourceKind)
+	}
+	if ep.SourceName != "external-api" {
+		t.Errorf("sourceName = %q, want external-api", ep.SourceName)
+	}
+}
+
+func TestExtractFromService_ExternalNameWithPorts(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "external-db",
+			Namespace: "default",
+		},
+		Spec: corev1.ServiceSpec{
+			Type:         corev1.ServiceTypeExternalName,
+			ExternalName: "db.vendor.example.com",
+			Ports: []corev1.ServicePort{
+				{Name: "https", Port: 8443},
+				{Name: "http", Port: 80},
+			},
+		},
+	}
+
+	endpoints := ExtractFromService(svc)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 TLS endpoint, got %d", len(endpoints))
+	}
+	if endpoints[0].Host != "db.vendor.example.com" {
+		t.Errorf("host = %q, want db.vendor.example.com", endpoints[0].Host)
+	}
+	if endpoints[0].Port != 8443 {
+		t.Errorf("port = %d, want 8443", endpoints[0].Port)
+	}
+}
+
+func TestExtractFromService_ExternalNameEmpty(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "broken-external",
+			Namespace: "default",
+		},
+		Spec: corev1.ServiceSpec{
+			Type:         corev1.ServiceTypeExternalName,
+			ExternalName: "",
+		},
+	}
+
+	endpoints := ExtractFromService(svc)
+	if len(endpoints) != 0 {
+		t.Fatalf("expected 0 endpoints for empty ExternalName, got %d", len(endpoints))
+	}
+}
+
 func TestExtractFromIngress(t *testing.T) {
 	ing := &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
