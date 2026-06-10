@@ -22,7 +22,7 @@ spec:
             runbook_url: "https://github.com/sebrandon1/tls-compliance-operator#compliance-logic"
 
         - alert: TLSCertificateExpiringSoon
-          expr: tls_compliance_certificate_expiry_days > 0 and tls_compliance_certificate_expiry_days < 7
+          expr: tls_compliance_certificate_expiry_days > 0 and tls_compliance_certificate_expiry_days < 30
           for: 10m
           labels:
             severity: warning
