@@ -133,21 +133,19 @@ jobs:
           TAG="${{ github.event.release.tag_name }}"
           REPO="${{ github.repository }}"
           EXISTING_BODY=$(gh release view "$TAG" --json body --jq '.body')
-          read -r -d '' INSTALL_SECTION << 'SECTION' || true
+          read -r -d '' INSTALL_SECTION << SECTION || true
           ## Quick Install
 
-          ```bash
-          kubectl apply -f https://github.com/REPO_PLACEHOLDER/releases/download/TAG_PLACEHOLDER/install.yaml
-          ```
+          \`\`\`bash
+          kubectl apply -f https://github.com/${REPO}/releases/download/${TAG}/install.yaml
+          \`\`\`
 
           To uninstall:
 
-          ```bash
-          kubectl delete -f https://github.com/REPO_PLACEHOLDER/releases/download/TAG_PLACEHOLDER/install.yaml
-          ```
+          \`\`\`bash
+          kubectl delete -f https://github.com/${REPO}/releases/download/${TAG}/install.yaml
+          \`\`\`
           SECTION
           INSTALL_SECTION=$(echo "$INSTALL_SECTION" | sed 's/^          //')
-          INSTALL_SECTION="${INSTALL_SECTION//REPO_PLACEHOLDER/$REPO}"
-          INSTALL_SECTION="${INSTALL_SECTION//TAG_PLACEHOLDER/$TAG}"
           printf '%s\n\n%s' "$INSTALL_SECTION" "$EXISTING_BODY" > /tmp/release-body.md
           gh release edit "$TAG" --notes-file /tmp/release-body.md
