@@ -252,6 +252,37 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 	})
 
+	Context("Positive: ExternalName Service Detection", Label("service-detection"), func() {
+		It("should create report for an ExternalName Service", func() {
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(`apiVersion: v1
+kind: Service
+metadata:
+  name: test-external-api
+  namespace: default
+spec:
+  type: ExternalName
+  externalName: kubernetes.default.svc.cluster.local
+`)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "service", "test-external-api",
+					"-n", "default", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					"jsonpath={range .items[*]}{.spec.host},{.spec.port},{.spec.sourceName}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("kubernetes.default.svc.cluster.local,443,test-external-api"))
+			}).Should(Succeed())
+		})
+	})
+
 	Context("Positive: Pod Detection", Label("pod-detection"), func() {
 		const agnhostImage = "registry.k8s.io/e2e-test-images/agnhost:2.53"
 
