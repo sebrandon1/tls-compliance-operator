@@ -51,6 +51,26 @@ spec:
             description: "The 95th percentile scan cycle duration is {{ $value | humanizeDuration }}, exceeding the 5-minute threshold."
             runbook_url: "https://github.com/sebrandon1/tls-compliance-operator#compliance-logic"
 
+        - alert: TLSScanCycleStalled
+          expr: time() - tls_compliance_scan_cycle_last_completed_timestamp > 7200
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "TLS periodic scan cycle is stalled"
+            description: "No scan cycle has completed in over 2 hours (default interval is 1 hour). The periodic scan goroutine may be stuck or crashed."
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator#compliance-logic"
+
+        - alert: TLSCleanupCycleStalled
+          expr: time() - tls_compliance_cleanup_cycle_last_completed_timestamp > 600
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "TLS cleanup cycle is stalled"
+            description: "No cleanup cycle has completed in over 10 minutes (default interval is 5 minutes). The cleanup goroutine may be stuck or crashed."
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator#compliance-logic"
+
         - alert: TLSEndpointUnreachable
           expr: tls_compliance_endpoints_total{status="Unreachable"} > 0
           for: 24h

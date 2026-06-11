@@ -883,6 +883,8 @@ func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval tim
 
 				if err := r.scanAllEndpoints(ctx); err != nil {
 					logger.Error(err, "failed to complete periodic scan")
+				} else {
+					metrics.RecordScanCycleCompleted()
 				}
 
 				duration := time.Since(start)
@@ -1037,6 +1039,8 @@ func (r *EndpointReconciler) StartCleanupLoop(ctx context.Context, interval time
 			case <-ticker.C:
 				if err := r.cleanupOrphanedCRs(ctx); err != nil {
 					logger.Error(err, "failed to cleanup orphaned CRs")
+				} else {
+					metrics.RecordCleanupCycleCompleted()
 				}
 			}
 		}
