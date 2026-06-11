@@ -113,6 +113,21 @@ jobs:
             --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}
 
+      - name: Generate SBOM
+        if: github.event_name == 'release'
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-push.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Upload SBOM to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ github.event.release.tag_name }} sbom.spdx.json --clobber
+
       - name: Generate install manifest
         if: github.event_name == 'release'
         run: |
