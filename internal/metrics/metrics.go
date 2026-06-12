@@ -137,6 +137,24 @@ var (
 		},
 		[]string{"source_kind", "error_type"},
 	)
+
+	// ScanCycleLastCompletedTimestamp records the Unix timestamp of the last successful periodic scan
+	ScanCycleLastCompletedTimestamp = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: MetricsNamespace,
+			Name:      "scan_cycle_last_completed_timestamp",
+			Help:      "Unix timestamp of the last completed periodic scan cycle",
+		},
+	)
+
+	// CleanupCycleLastCompletedTimestamp records the Unix timestamp of the last successful cleanup
+	CleanupCycleLastCompletedTimestamp = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: MetricsNamespace,
+			Name:      "cleanup_cycle_last_completed_timestamp",
+			Help:      "Unix timestamp of the last completed cleanup cycle",
+		},
+	)
 )
 
 func init() {
@@ -152,6 +170,8 @@ func init() {
 		CheckRetriesTotal,
 		CheckRetriesExhaustedTotal,
 		ReconcileErrorsTotal,
+		ScanCycleLastCompletedTimestamp,
+		CleanupCycleLastCompletedTimestamp,
 	)
 }
 
@@ -223,4 +243,14 @@ func RecordRetriesExhausted() {
 // RecordReconcileError records an error during resource reconciliation
 func RecordReconcileError(sourceKind, errorType string) {
 	ReconcileErrorsTotal.WithLabelValues(sourceKind, errorType).Inc()
+}
+
+// RecordScanCycleCompleted sets the scan cycle timestamp to the current time
+func RecordScanCycleCompleted() {
+	ScanCycleLastCompletedTimestamp.SetToCurrentTime()
+}
+
+// RecordCleanupCycleCompleted sets the cleanup cycle timestamp to the current time
+func RecordCleanupCycleCompleted() {
+	CleanupCycleLastCompletedTimestamp.SetToCurrentTime()
 }

@@ -10,6 +10,8 @@ All metrics use the `tls_compliance_` prefix.
 | `tls_compliance_version_support` | Gauge | `host`, `port`, `version` | TLS version support (1=yes, 0=no) |
 | `tls_compliance_reconcile_total` | Counter | `result` | Reconciliation attempts |
 | `tls_compliance_scan_cycle_duration_seconds` | Histogram | - | Full scan cycle duration |
+| `tls_compliance_scan_cycle_last_completed_timestamp` | Gauge | - | Unix timestamp of last successful scan cycle |
+| `tls_compliance_cleanup_cycle_last_completed_timestamp` | Gauge | - | Unix timestamp of last successful cleanup cycle |
 
 ## Example PromQL Queries
 
@@ -25,6 +27,9 @@ tls_compliance_version_support{version="1.0"} == 1
 
 # Average TLS check duration
 histogram_quantile(0.95, rate(tls_compliance_check_duration_seconds_bucket[5m]))
+
+# Detect stalled scan loop (no completion in 2 hours)
+time() - tls_compliance_scan_cycle_last_completed_timestamp > 7200
 ```
 
 ## ServiceMonitor
