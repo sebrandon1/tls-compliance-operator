@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout upstream tls-scanner
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: openshift/tls-scanner
 
