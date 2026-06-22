@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Clone the code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Go
         uses: actions/setup-go@v6
@@ -110,7 +110,7 @@ jobs:
 
       - name: Clone the code
         if: ${{ env.SKIP_OCP != 'true' }}
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Go
         if: ${{ env.SKIP_OCP != 'true' }}
