@@ -1746,5 +1746,148 @@ func TestEndpointReconciler_RetryBackoffCap(t *testing.T) {
 	}
 }
 
+func TestPeriodicScan_UpdatesCRStatus(t *testing.T) {
+	scheme := newTestScheme()
+
+	cr := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "scan-target-cr",
+		},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host:            "api.example.com",
+			Port:            443,
+			SourceKind:      securityv1alpha1.SourceKindService,
+			SourceNamespace: testNamespace,
+			SourceName:      "api-svc",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{
+			ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cr).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+		TLSChecker: &MockTLSChecker{
+			Result: &tlscheck.TLSCheckResult{
+				SupportsTLS12: true,
+				SupportsTLS13: true,
+				CipherSuites:  map[string][]string{"TLS 1.3": {"TLS_AES_128_GCM_SHA256"}},
+			},
+		},
+		CertExpiryDays: 30,
+		Workers:        1,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	reconciler.StartPeriodicScan(ctx, 50*time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+	time.Sleep(50 * time.Millisecond)
+
+	var updated securityv1alpha1.TLSComplianceReport
+	if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "scan-target-cr"}, &updated); err != nil {
+		t.Fatalf("failed to get CR: %v", err)
+	}
+	if updated.Status.ComplianceStatus != securityv1alpha1.ComplianceStatusCompliant {
+		t.Errorf("ComplianceStatus = %v, want Compliant", updated.Status.ComplianceStatus)
+	}
+	if !updated.Status.TLSVersions.TLS13 {
+		t.Error("expected TLSVersions.TLS13 = true")
+	}
+}
+
+func TestCleanupLoop_RemovesOrphanedCRs(t *testing.T) {
+	scheme := newTestScheme()
+
+	existingSvc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "alive-svc",
+			Namespace: testNamespace,
+		},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{{Port: 443}},
+		},
+	}
+
+	aliveCR := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "alive-cr"},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host:            "alive-svc.default",
+			Port:            443,
+			SourceKind:      securityv1alpha1.SourceKindService,
+			SourceNamespace: testNamespace,
+			SourceName:      "alive-svc",
+		},
+	}
+
+	orphanedCR := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "orphaned-cr"},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host:            "gone-svc.default",
+			Port:            443,
+			SourceKind:      securityv1alpha1.SourceKindService,
+			SourceNamespace: testNamespace,
+			SourceName:      "gone-svc",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(existingSvc, aliveCR, orphanedCR).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	reconciler.StartCleanupLoop(ctx, 50*time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+	time.Sleep(50 * time.Millisecond)
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(context.Background(), &crList); err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(crList.Items) != 1 {
+		t.Fatalf("expected 1 CR after cleanup loop, got %d", len(crList.Items))
+	}
+	if crList.Items[0].Name != "alive-cr" {
+		t.Errorf("expected surviving CR to be 'alive-cr', got %q", crList.Items[0].Name)
+	}
+}
+
+func TestPeriodicScan_RespectsContextCancellation(t *testing.T) {
+	scheme := newTestScheme()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+		TLSChecker: &MockTLSChecker{
+			Result: &tlscheck.TLSCheckResult{SupportsTLS13: true},
+		},
+		CertExpiryDays: 30,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	reconciler.StartPeriodicScan(ctx, 1*time.Hour)
+	cancel()
+	time.Sleep(50 * time.Millisecond)
+}
+
 // Ensure _ satisfies the client.Object interface for compile-time check
 var _ client.Object = &securityv1alpha1.TLSComplianceReport{}
