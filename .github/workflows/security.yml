@@ -20,7 +20,6 @@ jobs:
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
       - name: Run govulncheck
-        continue-on-error: true
         run: govulncheck ./...
 
   trivy:
@@ -33,7 +32,7 @@ jobs:
           scan-type: fs
           scan-ref: .
           format: table
-          exit-code: "0"
+          exit-code: "1"
           severity: CRITICAL,HIGH
       - name: Build image for scanning
         run: make docker-build IMG=tls-compliance-operator:scan
@@ -43,5 +42,5 @@ jobs:
           scan-type: image
           image-ref: tls-compliance-operator:scan
           format: table
-          exit-code: "0"
+          exit-code: "1"
           severity: CRITICAL,HIGH

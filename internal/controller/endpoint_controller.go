@@ -84,6 +84,7 @@ type EndpointReconciler struct {
 	MaxBackoff        time.Duration
 	ManagerCtx        context.Context
 	checkSem          chan struct{}
+	checkSemOnce      sync.Once
 }
 
 func (r *EndpointReconciler) updateStatusWithRetry(ctx context.Context, name string, mutateFn func(*securityv1alpha1.TLSComplianceReport)) error {
@@ -156,53 +157,33 @@ func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	return ctrl.Result{}, nil
 }
 
-func (r *EndpointReconciler) handleService(ctx context.Context, svc *corev1.Service) (ctrl.Result, error) {
+func (r *EndpointReconciler) handleEndpoints(ctx context.Context, endpoints []endpoint.Endpoint, sourceKind string) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
+	for _, ep := range endpoints {
+		if err := r.processEndpoint(ctx, ep); err != nil {
+			logger.Error(err, "failed to process endpoint", "host", ep.Host, "port", ep.Port)
+			metrics.RecordReconcileError(sourceKind, "process")
+		}
+	}
+	metrics.RecordReconcile("success")
+	return ctrl.Result{}, nil
+}
 
+func (r *EndpointReconciler) handleService(ctx context.Context, svc *corev1.Service) (ctrl.Result, error) {
 	endpoints := endpoint.ExtractFromService(svc)
 	if len(endpoints) == 0 {
 		metrics.RecordReconcile("success")
 		return ctrl.Result{}, nil
 	}
-
-	for _, ep := range endpoints {
-		if err := r.processEndpoint(ctx, ep); err != nil {
-			logger.Error(err, "failed to process endpoint", "host", ep.Host, "port", ep.Port)
-		}
-	}
-
-	metrics.RecordReconcile("success")
-	return ctrl.Result{}, nil
+	return r.handleEndpoints(ctx, endpoints, "Service")
 }
 
 func (r *EndpointReconciler) handleIngress(ctx context.Context, ing *networkingv1.Ingress) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
-	endpoints := endpoint.ExtractFromIngress(ing)
-	for _, ep := range endpoints {
-		if err := r.processEndpoint(ctx, ep); err != nil {
-			logger.Error(err, "failed to process Ingress endpoint", "host", ep.Host)
-			metrics.RecordReconcileError("Ingress", "process")
-		}
-	}
-
-	metrics.RecordReconcile("success")
-	return ctrl.Result{}, nil
+	return r.handleEndpoints(ctx, endpoint.ExtractFromIngress(ing), "Ingress")
 }
 
 func (r *EndpointReconciler) handleRoute(ctx context.Context, route *unstructured.Unstructured) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
-	endpoints := endpoint.ExtractFromRoute(route)
-	for _, ep := range endpoints {
-		if err := r.processEndpoint(ctx, ep); err != nil {
-			logger.Error(err, "failed to process Route endpoint", "host", ep.Host)
-			metrics.RecordReconcileError("Route", "process")
-		}
-	}
-
-	metrics.RecordReconcile("success")
-	return ctrl.Result{}, nil
+	return r.handleEndpoints(ctx, endpoint.ExtractFromRoute(route), "Route")
 }
 
 func (r *EndpointReconciler) handleTarget(ctx context.Context, target *securityv1alpha1.TLSComplianceTarget) (ctrl.Result, error) {
@@ -827,13 +808,13 @@ func (r *EndpointReconciler) emitComplianceEvents(cr *securityv1alpha1.TLSCompli
 // through the controller-runtime work queue (bounded concurrency, back-pressure).
 // Route events use WatchesRawSource because the Route API may not be present.
 func (r *EndpointReconciler) initCheckSemaphore() {
-	if r.checkSem == nil {
+	r.checkSemOnce.Do(func() {
 		workers := r.Workers
 		if workers <= 0 {
 			workers = 5
 		}
 		r.checkSem = make(chan struct{}, workers)
-	}
+	})
 }
 
 func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
