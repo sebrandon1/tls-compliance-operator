@@ -318,6 +318,101 @@ func TestFilterReports_CombinedWithPQC(t *testing.T) {
 	}
 }
 
+func TestFilterReports_ByIssuer(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "a.test", Port: 443, SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				CertificateInfo: &securityv1alpha1.CertificateInfo{Issuer: "CN=Let's Encrypt Authority X3,O=Let's Encrypt,C=US"},
+			},
+		},
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "b.test", Port: 443, SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				CertificateInfo: &securityv1alpha1.CertificateInfo{Issuer: "CN=DigiCert Global Root G2,O=DigiCert Inc,C=US"},
+			},
+		},
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{Host: "c.test", Port: 443, SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{},
+		},
+	}
+
+	filtered, _ := FilterReports(reports, FilterOptions{Issuer: "let's encrypt"})
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 report, got %d", len(filtered))
+	}
+	if filtered[0].Spec.Host != "a.test" {
+		t.Errorf("expected a.test, got %s", filtered[0].Spec.Host)
+	}
+}
+
+func TestFilterReports_BySubject(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "a.test", Port: 443, SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				CertificateInfo: &securityv1alpha1.CertificateInfo{Subject: "CN=api.example.com"},
+			},
+		},
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "b.test", Port: 443, SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				CertificateInfo: &securityv1alpha1.CertificateInfo{Subject: "CN=*.internal.corp"},
+			},
+		},
+	}
+
+	filtered, _ := FilterReports(reports, FilterOptions{Subject: "example.com"})
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 report, got %d", len(filtered))
+	}
+	if filtered[0].Spec.Host != "a.test" {
+		t.Errorf("expected a.test, got %s", filtered[0].Spec.Host)
+	}
+}
+
+func TestFilterReports_CombinedIssuerAndStatus(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "a.test", Port: 443, SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				CertificateInfo:  &securityv1alpha1.CertificateInfo{Issuer: "CN=Self-Signed"},
+			},
+		},
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "b.test", Port: 443, SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusNonCompliant,
+				CertificateInfo:  &securityv1alpha1.CertificateInfo{Issuer: "CN=Self-Signed"},
+			},
+		},
+	}
+
+	filtered, _ := FilterReports(reports, FilterOptions{Issuer: "self-signed", Status: "NonCompliant"})
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 report, got %d", len(filtered))
+	}
+	if filtered[0].Spec.Host != "b.test" {
+		t.Errorf("expected b.test, got %s", filtered[0].Spec.Host)
+	}
+}
+
+func TestFilterReports_NoCertExcludedByIssuer(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{Host: "nocert.test", Port: 443, SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{},
+		},
+	}
+
+	filtered, _ := FilterReports(reports, FilterOptions{Issuer: "anything"})
+	if len(filtered) != 0 {
+		t.Errorf("expected 0 reports for nil cert info, got %d", len(filtered))
+	}
+}
+
 func TestParseExpiresWithin(t *testing.T) {
 	tests := []struct {
 		input string

@@ -39,12 +39,17 @@ type FilterOptions struct {
 	ExpiresWithin string
 	// Expired filters to only expired certificates.
 	Expired bool
+	// Issuer filters by certificate issuer (case-insensitive substring match).
+	Issuer string
+	// Subject filters by certificate subject (case-insensitive substring match).
+	Subject string
 }
 
 // IsEmpty returns true if no filters are set.
 func (o FilterOptions) IsEmpty() bool {
 	return o.Namespace == "" && o.Status == "" && o.Source == "" &&
-		o.PQCStatus == "" && o.ExpiresWithin == "" && !o.Expired
+		o.PQCStatus == "" && o.ExpiresWithin == "" && !o.Expired &&
+		o.Issuer == "" && o.Subject == ""
 }
 
 // FilterReports returns the subset of reports matching all non-empty filter criteria.
@@ -117,6 +122,16 @@ func matchesFilter(r *securityv1alpha1.TLSComplianceReport, opts FilterOptions, 
 		}
 		expiry := r.Status.CertificateInfo.NotAfter.Time
 		if expiry.Before(now) || expiry.After(now.Add(expiresWithin)) {
+			return false
+		}
+	}
+	if opts.Issuer != "" {
+		if r.Status.CertificateInfo == nil || !strings.Contains(strings.ToLower(r.Status.CertificateInfo.Issuer), strings.ToLower(opts.Issuer)) {
+			return false
+		}
+	}
+	if opts.Subject != "" {
+		if r.Status.CertificateInfo == nil || !strings.Contains(strings.ToLower(r.Status.CertificateInfo.Subject), strings.ToLower(opts.Subject)) {
 			return false
 		}
 	}
