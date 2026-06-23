@@ -33,7 +33,7 @@ const (
 	FailureReasonTimeout FailureReason = "Timeout"
 	// FailureReasonClosed indicates the port is not listening (connection refused)
 	FailureReasonClosed FailureReason = "Closed"
-	// FailureReasonFiltered indicates no response and no explicit refusal (e.g. firewall drop)
+	// FailureReasonFiltered is reserved for future use — not currently produced by classifyFailure
 	FailureReasonFiltered FailureReason = "Filtered"
 	// FailureReasonNoTLS indicates the port is open but does not speak TLS
 	FailureReasonNoTLS FailureReason = "NoTLS"

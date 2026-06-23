@@ -13,9 +13,8 @@ kubectl logs deployment/tls-compliance-operator-controller-manager \
 ```
 
 **Check for NetworkPolicy restrictions.** The default install includes a
-NetworkPolicy that only allows egress to common TLS ports (443, 6443, 8443,
-9443). If your services use non-standard ports, either update the NetworkPolicy
-or remove it:
+NetworkPolicy that allows egress to all ports. If your cluster policy requires
+tighter restrictions, you can replace or remove the default NetworkPolicy:
 
 ```bash
 kubectl delete networkpolicy tls-compliance-operator-controller-manager \

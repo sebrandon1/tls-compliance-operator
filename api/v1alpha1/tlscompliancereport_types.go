@@ -37,11 +37,11 @@ const (
 type ComplianceStatus string
 
 const (
-	// ComplianceStatusCompliant means TLS 1.3 supported AND no TLS 1.0/1.1
+	// ComplianceStatusCompliant means TLS 1.2 or 1.3 is supported (legacy versions alongside are acceptable)
 	ComplianceStatusCompliant ComplianceStatus = "Compliant"
-	// ComplianceStatusNonCompliant means TLS 1.0 or 1.1 is supported
+	// ComplianceStatusNonCompliant means only legacy TLS (1.0/1.1/SSL 3.0) is supported with no TLS 1.2 or 1.3
 	ComplianceStatusNonCompliant ComplianceStatus = "NonCompliant"
-	// ComplianceStatusWarning means TLS 1.3 not supported but no legacy TLS
+	// ComplianceStatusWarning is reserved for future use (not currently produced by the controller)
 	ComplianceStatusWarning ComplianceStatus = "Warning"
 	// ComplianceStatusUnreachable means the endpoint could not be reached (generic failure)
 	ComplianceStatusUnreachable ComplianceStatus = "Unreachable"
@@ -49,7 +49,7 @@ const (
 	ComplianceStatusTimeout ComplianceStatus = "Timeout"
 	// ComplianceStatusClosed means the port is not listening (connection refused)
 	ComplianceStatusClosed ComplianceStatus = "Closed"
-	// ComplianceStatusFiltered means no response and no explicit refusal (e.g. firewall drop)
+	// ComplianceStatusFiltered is reserved for future use — mapped but not currently produced by the checker
 	ComplianceStatusFiltered ComplianceStatus = "Filtered"
 	// ComplianceStatusNoTLS means the port is open but does not speak TLS
 	ComplianceStatusNoTLS ComplianceStatus = "NoTLS"
