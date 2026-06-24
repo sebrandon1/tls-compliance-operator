@@ -41,6 +41,8 @@ func init() {
 	utilruntime.Must(securityv1alpha1.AddToScheme(scheme))
 }
 
+var version = "dev"
+
 var (
 	filterOpts  export.FilterOptions
 	sortBy      string
@@ -84,6 +86,7 @@ Use --kubeconfig and --context to target a specific cluster.`,
 	rootCmd.AddCommand(newSummaryCmd())
 	rootCmd.AddCommand(newGetCmd())
 	rootCmd.AddCommand(newDescribeCmd())
+	rootCmd.AddCommand(newVersionCmd())
 
 	return rootCmd
 }
@@ -114,6 +117,16 @@ func newGetCmd() *cobra.Command {
   # Get non-compliant endpoints in a namespace
   kubectl tlsreport get --status NonCompliant -n production`,
 		RunE: runGet,
+	}
+}
+
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the plugin version",
+		Run: func(_ *cobra.Command, _ []string) {
+			fmt.Println("kubectl-tlsreport " + version)
+		},
 	}
 }
 

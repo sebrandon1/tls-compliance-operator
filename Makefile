@@ -117,9 +117,11 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 build: manifests generate fmt vet ## Build manager binary.
 	go build -o bin/manager cmd/main.go
 
+PLUGIN_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
 .PHONY: build-plugin
 build-plugin: fmt vet ## Build kubectl-tlsreport plugin binary.
-	go build -o bin/kubectl-tlsreport ./cmd/kubectl-tlsreport
+	go build -ldflags "-X main.version=$(PLUGIN_VERSION)" -o bin/kubectl-tlsreport ./cmd/kubectl-tlsreport
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
