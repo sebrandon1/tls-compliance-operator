@@ -50,6 +50,7 @@ var (
 	kubeconfig    string
 	kubecontext   string
 	labelSelector string
+	outputFormat  string
 )
 
 func main() {
@@ -108,11 +109,17 @@ func newSummaryCmd() *cobra.Command {
 }
 
 func newGetCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "get [name]",
 		Short: "Display TLS compliance reports in a table",
 		Example: `  # List all reports
   kubectl tlsreport get
+
+  # Get reports as JSON
+  kubectl tlsreport get -o json
+
+  # Get reports with extra columns
+  kubectl tlsreport get -o wide
 
   # Get a specific report
   kubectl tlsreport get my-service-443-abc12345
@@ -121,6 +128,9 @@ func newGetCmd() *cobra.Command {
   kubectl tlsreport get --status NonCompliant -n production`,
 		RunE: runGet,
 	}
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "table", "Output format: table, wide, json")
+
+	return cmd
 }
 
 func newVersionCmd() *cobra.Command {
@@ -208,7 +218,7 @@ func runGet(_ *cobra.Command, args []string) error {
 		name := args[0]
 		for _, r := range reports {
 			if r.Name == name {
-				return printReportTable([]securityv1alpha1.TLSComplianceReport{r})
+				return outputReports([]securityv1alpha1.TLSComplianceReport{r})
 			}
 		}
 		return fmt.Errorf("report %q not found", name)
@@ -221,7 +231,20 @@ func runGet(_ *cobra.Command, args []string) error {
 
 	export.SortReports(reports, sortBy)
 
-	return printReportTable(reports)
+	return outputReports(reports)
+}
+
+func outputReports(reports []securityv1alpha1.TLSComplianceReport) error {
+	switch outputFormat {
+	case "json":
+		return export.WriteJSON(os.Stdout, reports)
+	case "wide":
+		return printReportTableWide(reports)
+	case "table", "":
+		return printReportTable(reports)
+	default:
+		return fmt.Errorf("unknown output format: %s (supported: table, wide, json)", outputFormat)
+	}
 }
 
 func printReportTable(reports []securityv1alpha1.TLSComplianceReport) error {
@@ -246,6 +269,46 @@ func printReportTable(reports []securityv1alpha1.TLSComplianceReport) error {
 			tls12, tls13,
 			string(r.Status.PQCReadiness),
 			r.Status.OverallCipherGrade,
+		)
+	}
+	return w.Flush()
+}
+
+func printReportTableWide(reports []securityv1alpha1.TLSComplianceReport) error {
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "NAME\tHOST\tPORT\tSOURCE\tSTATUS\tTLS 1.2\tTLS 1.3\tPQC\tGRADE\tISSUER\tEXPIRY")
+	for _, r := range reports {
+		tls12 := "-"
+		tls13 := "-"
+		if r.Status.TLSVersions.TLS12 {
+			tls12 = "true"
+		}
+		if r.Status.TLSVersions.TLS13 {
+			tls13 = "true"
+		}
+
+		issuer := "-"
+		expiry := "-"
+		if r.Status.CertificateInfo != nil {
+			if r.Status.CertificateInfo.Issuer != "" {
+				issuer = r.Status.CertificateInfo.Issuer
+			}
+			if r.Status.CertificateInfo.NotAfter != nil {
+				expiry = r.Status.CertificateInfo.NotAfter.Format("2006-01-02")
+			}
+		}
+
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			r.Name,
+			r.Spec.Host,
+			r.Spec.Port,
+			string(r.Spec.SourceKind),
+			string(r.Status.ComplianceStatus),
+			tls12, tls13,
+			string(r.Status.PQCReadiness),
+			r.Status.OverallCipherGrade,
+			issuer,
+			expiry,
 		)
 	}
 	return w.Flush()
