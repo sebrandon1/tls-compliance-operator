@@ -152,6 +152,10 @@ spec:
               certificateInfo:
                 description: CertificateInfo contains details about the TLS certificate
                 properties:
+                  chainLength:
+                    description: ChainLength is the number of certificates in the
+                      peer certificate chain
+                    type: integer
                   daysUntilExpiry:
                     description: DaysUntilExpiry is the number of days until the certificate
                       expires
@@ -181,6 +185,17 @@ spec:
                     description: NotBefore is the start of the certificate's validity
                       period
                     format: date-time
+                    type: string
+                  publicKeyAlgorithm:
+                    description: PublicKeyAlgorithm is the certificate's public key
+                      algorithm (e.g. RSA, ECDSA, Ed25519)
+                    type: string
+                  publicKeyBits:
+                    description: PublicKeyBits is the size of the public key in bits
+                    type: integer
+                  signatureAlgorithm:
+                    description: SignatureAlgorithm is the algorithm used to sign
+                      the certificate (e.g. SHA256-RSA, ECDSA-SHA256)
                     type: string
                   subject:
                     description: Subject is the certificate subject

@@ -371,6 +371,15 @@ func TestParseCertificate(t *testing.T) {
 	if len(details.DNSNames) == 0 {
 		t.Error("expected DNS names to be populated")
 	}
+	if details.PublicKeyAlgorithm == "" {
+		t.Error("expected public key algorithm to be populated")
+	}
+	if details.PublicKeyBits <= 0 {
+		t.Errorf("expected positive public key bits, got %d", details.PublicKeyBits)
+	}
+	if details.SignatureAlgorithm == "" {
+		t.Error("expected signature algorithm to be populated")
+	}
 }
 
 func TestParseCertificate_KubernetesSuffixMatch(t *testing.T) {

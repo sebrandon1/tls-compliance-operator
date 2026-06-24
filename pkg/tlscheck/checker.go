@@ -225,6 +225,7 @@ func (c *TLSChecker) tryTLSVersion(ctx context.Context, addr, serverName string,
 	var certDetails *CertificateDetails
 	if len(state.PeerCertificates) > 0 {
 		certDetails = ParseCertificate(state.PeerCertificates[0], serverName)
+		certDetails.ChainLength = len(state.PeerCertificates)
 	}
 
 	return true, cipherSuiteName, curve, certDetails, nil

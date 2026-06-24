@@ -34,6 +34,7 @@ var CSVHeader = []string{
 	"TLS1.3", "TLS1.2", "TLS1.1", "TLS1.0", "SSL3.0",
 	"QuantumReady", "PQCReadiness",
 	"CertExpiry", "CertIssuer",
+	"PubKeyAlgorithm", "PubKeyBits", "SignatureAlgorithm", "ChainLength",
 }
 
 // WriteCSV writes TLSComplianceReport items as CSV to the given writer.
@@ -89,6 +90,18 @@ func formatKeyExchangeTypes(keTypes map[string]string) string {
 func reportToCSVRow(r *securityv1alpha1.TLSComplianceReport) []string {
 	certExpiry, certIssuer := extractCertInfo(r)
 
+	pubKeyAlg, pubKeyBits, sigAlg, chainLen := "", "", "", ""
+	if r.Status.CertificateInfo != nil {
+		pubKeyAlg = r.Status.CertificateInfo.PublicKeyAlgorithm
+		if r.Status.CertificateInfo.PublicKeyBits > 0 {
+			pubKeyBits = strconv.Itoa(r.Status.CertificateInfo.PublicKeyBits)
+		}
+		sigAlg = r.Status.CertificateInfo.SignatureAlgorithm
+		if r.Status.CertificateInfo.ChainLength > 0 {
+			chainLen = strconv.Itoa(r.Status.CertificateInfo.ChainLength)
+		}
+	}
+
 	return []string{
 		r.Spec.Host,
 		strconv.Itoa(int(r.Spec.Port)),
@@ -108,5 +121,9 @@ func reportToCSVRow(r *securityv1alpha1.TLSComplianceReport) []string {
 		string(r.Status.PQCReadiness),
 		certExpiry,
 		certIssuer,
+		pubKeyAlg,
+		pubKeyBits,
+		sigAlg,
+		chainLen,
 	}
 }

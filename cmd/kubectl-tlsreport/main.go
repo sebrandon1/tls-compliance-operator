@@ -368,6 +368,15 @@ func printReportDetail(r securityv1alpha1.TLSComplianceReport) error {
 		if cert.HostnameMatch != nil {
 			_, _ = fmt.Fprintf(w, "  Hostname Match:   %v\n", *cert.HostnameMatch)
 		}
+		if cert.PublicKeyAlgorithm != "" {
+			_, _ = fmt.Fprintf(w, "  Public Key:       %s (%d bits)\n", cert.PublicKeyAlgorithm, cert.PublicKeyBits)
+		}
+		if cert.SignatureAlgorithm != "" {
+			_, _ = fmt.Fprintf(w, "  Signature Alg:    %s\n", cert.SignatureAlgorithm)
+		}
+		if cert.ChainLength > 0 {
+			_, _ = fmt.Fprintf(w, "  Chain Length:     %d\n", cert.ChainLength)
+		}
 		if len(cert.DNSNames) > 0 {
 			_, _ = fmt.Fprintf(w, "  DNS Names:        %s\n", strings.Join(cert.DNSNames, ", "))
 		}
