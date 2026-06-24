@@ -120,6 +120,18 @@ type CertificateInfo struct {
 	// HostnameMatch indicates whether the certificate is valid for the tested endpoint hostname
 	// +optional
 	HostnameMatch *bool `json:"hostnameMatch,omitempty"`
+	// ChainLength is the number of certificates in the peer certificate chain
+	// +optional
+	ChainLength int `json:"chainLength,omitempty"`
+	// PublicKeyAlgorithm is the certificate's public key algorithm (e.g. RSA, ECDSA, Ed25519)
+	// +optional
+	PublicKeyAlgorithm string `json:"publicKeyAlgorithm,omitempty"`
+	// PublicKeyBits is the size of the public key in bits
+	// +optional
+	PublicKeyBits int `json:"publicKeyBits,omitempty"`
+	// SignatureAlgorithm is the algorithm used to sign the certificate (e.g. SHA256-RSA, ECDSA-SHA256)
+	// +optional
+	SignatureAlgorithm string `json:"signatureAlgorithm,omitempty"`
 }
 
 // TLSProfileComplianceResult contains the result of checking an endpoint

@@ -17,6 +17,9 @@ limitations under the License.
 package tlscheck
 
 import (
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/rsa"
 	"crypto/x509"
 	"time"
 )
@@ -80,14 +83,18 @@ type TLSCheckResult struct {
 
 // CertificateDetails contains parsed certificate information
 type CertificateDetails struct {
-	Issuer          string
-	Subject         string
-	NotBefore       time.Time
-	NotAfter        time.Time
-	DNSNames        []string
-	IsExpired       bool
-	DaysUntilExpiry int
-	HostnameMatch   bool
+	Issuer             string
+	Subject            string
+	NotBefore          time.Time
+	NotAfter           time.Time
+	DNSNames           []string
+	IsExpired          bool
+	DaysUntilExpiry    int
+	HostnameMatch      bool
+	ChainLength        int
+	PublicKeyAlgorithm string
+	PublicKeyBits      int
+	SignatureAlgorithm string
 }
 
 // ParseCertificate extracts CertificateDetails from an x509 certificate.
@@ -110,13 +117,29 @@ func ParseCertificate(cert *x509.Certificate, hostname string) *CertificateDetai
 	}
 
 	return &CertificateDetails{
-		Issuer:          cert.Issuer.String(),
-		Subject:         cert.Subject.String(),
-		NotBefore:       cert.NotBefore,
-		NotAfter:        cert.NotAfter,
-		DNSNames:        cert.DNSNames,
-		IsExpired:       now.After(cert.NotAfter),
-		DaysUntilExpiry: daysUntilExpiry,
-		HostnameMatch:   hostnameMatch,
+		Issuer:             cert.Issuer.String(),
+		Subject:            cert.Subject.String(),
+		NotBefore:          cert.NotBefore,
+		NotAfter:           cert.NotAfter,
+		DNSNames:           cert.DNSNames,
+		IsExpired:          now.After(cert.NotAfter),
+		DaysUntilExpiry:    daysUntilExpiry,
+		HostnameMatch:      hostnameMatch,
+		PublicKeyAlgorithm: cert.PublicKeyAlgorithm.String(),
+		PublicKeyBits:      publicKeyBits(cert),
+		SignatureAlgorithm: cert.SignatureAlgorithm.String(),
+	}
+}
+
+func publicKeyBits(cert *x509.Certificate) int {
+	switch key := cert.PublicKey.(type) {
+	case *rsa.PublicKey:
+		return key.N.BitLen()
+	case *ecdsa.PublicKey:
+		return key.Curve.Params().BitSize
+	case ed25519.PublicKey:
+		return 256
+	default:
+		return 0
 	}
 }

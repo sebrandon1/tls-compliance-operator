@@ -507,14 +507,18 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 			notAfter := metav1.NewTime(result.Certificate.NotAfter)
 			hostnameMatch := result.Certificate.HostnameMatch
 			cr.Status.CertificateInfo = &securityv1alpha1.CertificateInfo{
-				Issuer:          result.Certificate.Issuer,
-				Subject:         result.Certificate.Subject,
-				NotBefore:       &notBefore,
-				NotAfter:        &notAfter,
-				DNSNames:        result.Certificate.DNSNames,
-				IsExpired:       result.Certificate.IsExpired,
-				DaysUntilExpiry: result.Certificate.DaysUntilExpiry,
-				HostnameMatch:   &hostnameMatch,
+				Issuer:             result.Certificate.Issuer,
+				Subject:            result.Certificate.Subject,
+				NotBefore:          &notBefore,
+				NotAfter:           &notAfter,
+				DNSNames:           result.Certificate.DNSNames,
+				IsExpired:          result.Certificate.IsExpired,
+				DaysUntilExpiry:    result.Certificate.DaysUntilExpiry,
+				HostnameMatch:      &hostnameMatch,
+				ChainLength:        result.Certificate.ChainLength,
+				PublicKeyAlgorithm: result.Certificate.PublicKeyAlgorithm,
+				PublicKeyBits:      result.Certificate.PublicKeyBits,
+				SignatureAlgorithm: result.Certificate.SignatureAlgorithm,
 			}
 		}
 

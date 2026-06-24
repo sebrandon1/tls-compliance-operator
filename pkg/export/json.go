@@ -27,24 +27,28 @@ import (
 
 // JSONReport is the JSON representation of a single TLS compliance report.
 type JSONReport struct {
-	Host             string            `json:"host"`
-	Port             string            `json:"port"`
-	Source           string            `json:"source"`
-	Namespace        string            `json:"namespace"`
-	Name             string            `json:"name"`
-	Compliance       string            `json:"compliance"`
-	Grade            string            `json:"grade"`
-	ForwardSecrecy   bool              `json:"forwardSecrecy"`
-	KeyExchangeTypes map[string]string `json:"keyExchangeTypes,omitempty"`
-	TLS13            bool              `json:"tls13"`
-	TLS12            bool              `json:"tls12"`
-	TLS11            bool              `json:"tls11"`
-	TLS10            bool              `json:"tls10"`
-	SSL30            bool              `json:"ssl30"`
-	QuantumReady     bool              `json:"quantumReady"`
-	PQCReadiness     string            `json:"pqcReadiness"`
-	CertExpiry       string            `json:"certExpiry"`
-	CertIssuer       string            `json:"certIssuer"`
+	Host               string            `json:"host"`
+	Port               string            `json:"port"`
+	Source             string            `json:"source"`
+	Namespace          string            `json:"namespace"`
+	Name               string            `json:"name"`
+	Compliance         string            `json:"compliance"`
+	Grade              string            `json:"grade"`
+	ForwardSecrecy     bool              `json:"forwardSecrecy"`
+	KeyExchangeTypes   map[string]string `json:"keyExchangeTypes,omitempty"`
+	TLS13              bool              `json:"tls13"`
+	TLS12              bool              `json:"tls12"`
+	TLS11              bool              `json:"tls11"`
+	TLS10              bool              `json:"tls10"`
+	SSL30              bool              `json:"ssl30"`
+	QuantumReady       bool              `json:"quantumReady"`
+	PQCReadiness       string            `json:"pqcReadiness"`
+	CertExpiry         string            `json:"certExpiry"`
+	CertIssuer         string            `json:"certIssuer"`
+	PublicKeyAlgorithm string            `json:"publicKeyAlgorithm,omitempty"`
+	PublicKeyBits      int               `json:"publicKeyBits,omitempty"`
+	SignatureAlgorithm string            `json:"signatureAlgorithm,omitempty"`
+	ChainLength        int               `json:"chainLength,omitempty"`
 }
 
 // WriteJSON writes TLSComplianceReport items as pretty-printed JSON to the given writer.
@@ -66,7 +70,7 @@ func WriteJSON(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) erro
 func reportToJSON(r *securityv1alpha1.TLSComplianceReport) JSONReport {
 	certExpiry, certIssuer := extractCertInfo(r)
 
-	return JSONReport{
+	jr := JSONReport{
 		Host:             r.Spec.Host,
 		Port:             strconv.Itoa(int(r.Spec.Port)),
 		Source:           string(r.Spec.SourceKind),
@@ -86,4 +90,13 @@ func reportToJSON(r *securityv1alpha1.TLSComplianceReport) JSONReport {
 		CertExpiry:       certExpiry,
 		CertIssuer:       certIssuer,
 	}
+
+	if r.Status.CertificateInfo != nil {
+		jr.PublicKeyAlgorithm = r.Status.CertificateInfo.PublicKeyAlgorithm
+		jr.PublicKeyBits = r.Status.CertificateInfo.PublicKeyBits
+		jr.SignatureAlgorithm = r.Status.CertificateInfo.SignatureAlgorithm
+		jr.ChainLength = r.Status.CertificateInfo.ChainLength
+	}
+
+	return jr
 }
