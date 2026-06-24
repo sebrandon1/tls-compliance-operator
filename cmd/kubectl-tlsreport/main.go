@@ -24,6 +24,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -44,10 +45,11 @@ func init() {
 var version = "dev"
 
 var (
-	filterOpts  export.FilterOptions
-	sortBy      string
-	kubeconfig  string
-	kubecontext string
+	filterOpts    export.FilterOptions
+	sortBy        string
+	kubeconfig    string
+	kubecontext   string
+	labelSelector string
 )
 
 func main() {
@@ -82,6 +84,7 @@ Use --kubeconfig and --context to target a specific cluster.`,
 	rootCmd.PersistentFlags().StringVar(&sortBy, "sort-by", "", "Sort results by field (host, port, compliance, expiry, grade, pqc)")
 	rootCmd.PersistentFlags().StringVar(&kubeconfig, "kubeconfig", "", "Path to the kubeconfig file to use")
 	rootCmd.PersistentFlags().StringVar(&kubecontext, "context", "", "The kubeconfig context to use")
+	rootCmd.PersistentFlags().StringVarP(&labelSelector, "selector", "l", "", "Label selector to filter reports (e.g. host-network=true)")
 
 	rootCmd.AddCommand(newSummaryCmd())
 	rootCmd.AddCommand(newGetCmd())
@@ -409,8 +412,17 @@ func fetchReports() ([]securityv1alpha1.TLSComplianceReport, error) {
 		return nil, fmt.Errorf("creating client: %w", err)
 	}
 
+	listOpts := []client.ListOption{}
+	if labelSelector != "" {
+		sel, err := labels.Parse(labelSelector)
+		if err != nil {
+			return nil, fmt.Errorf("parsing label selector: %w", err)
+		}
+		listOpts = append(listOpts, client.MatchingLabelsSelector{Selector: sel})
+	}
+
 	var reportList securityv1alpha1.TLSComplianceReportList
-	if err := c.List(context.Background(), &reportList); err != nil {
+	if err := c.List(context.Background(), &reportList, listOpts...); err != nil {
 		return nil, fmt.Errorf("listing TLSComplianceReports: %w", err)
 	}
 
