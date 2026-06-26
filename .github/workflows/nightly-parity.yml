@@ -22,7 +22,7 @@ jobs:
           cache: true
 
       - name: Create Kubernetes cluster
-        uses: palmsoftware/quick-k8s@v0.0.71
+        uses: palmsoftware/quick-k8s@v0.0.73
         with:
           numControlPlaneNodes: 1
           numWorkerNodes: 1
