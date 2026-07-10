@@ -18,7 +18,7 @@ resources:
 - metrics_service.yaml
 # [NETWORK] NetworkPolicy to restrict ingress/egress traffic.
 - networkpolicy.yaml
-# [PDB] PodDisruptionBudget for HA deployments with leader election.
+# [PDB] PodDisruptionBudget to protect availability during voluntary disruptions.
 - pdb.yaml
 
 patches:
