@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"fmt"
@@ -60,189 +61,188 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
-// nolint:gocyclo
-func main() {
-	var metricsAddr string
-	var metricsCertPath, metricsCertName, metricsCertKey string
-	var webhookCertPath, webhookCertName, webhookCertKey string
-	var enableLeaderElection bool
-	var probeAddr string
-	var secureMetrics bool
-	var enableHTTP2 bool
-	var tlsOpts []func(*tls.Config)
+type operatorConfig struct {
+	metricsAddr     string
+	metricsCertPath string
+	metricsCertName string
+	metricsCertKey  string
+	webhookCertPath string
+	webhookCertName string
+	webhookCertKey  string
+	probeAddr       string
 
-	// TLS compliance operator configuration flags
-	var scanInterval time.Duration
-	var cleanupInterval time.Duration
-	var tlsCheckTimeout time.Duration
-	var rateLimit float64
-	var rateBurst int
-	var includeNamespaces string
-	var excludeNamespaces string
-	var certExpiryWarningDays int
-	var profileRefreshInterval time.Duration
-	var workers int
-	var maxRetries int
-	var retryBackoff time.Duration
-	var maxBackoff time.Duration
-	var extraTLSPortsStr string
-	var logFormat string
+	enableLeaderElection bool
+	secureMetrics        bool
+	enableHTTP2          bool
 
-	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
+	scanInterval           time.Duration
+	cleanupInterval        time.Duration
+	tlsCheckTimeout        time.Duration
+	rateLimit              float64
+	rateBurst              int
+	includeNamespaces      string
+	excludeNamespaces      string
+	certExpiryWarningDays  int
+	profileRefreshInterval time.Duration
+	workers                int
+	maxRetries             int
+	retryBackoff           time.Duration
+	maxBackoff             time.Duration
+	extraTLSPortsStr       string
+	logFormat              string
+
+	zapOpts zap.Options
+}
+
+func parseFlags() *operatorConfig {
+	cfg := &operatorConfig{}
+
+	flag.StringVar(&cfg.metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
-	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
-	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
+	flag.StringVar(&cfg.probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
+	flag.BoolVar(&cfg.enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
-	flag.BoolVar(&secureMetrics, "metrics-secure", true,
+	flag.BoolVar(&cfg.secureMetrics, "metrics-secure", true,
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
-	flag.StringVar(&webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
-	flag.StringVar(&webhookCertName, "webhook-cert-name", "tls.crt", "The name of the webhook certificate file.")
-	flag.StringVar(&webhookCertKey, "webhook-cert-key", "tls.key", "The name of the webhook key file.")
-	flag.StringVar(&metricsCertPath, "metrics-cert-path", "",
+	flag.StringVar(&cfg.webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
+	flag.StringVar(&cfg.webhookCertName, "webhook-cert-name", "tls.crt", "The name of the webhook certificate file.")
+	flag.StringVar(&cfg.webhookCertKey, "webhook-cert-key", "tls.key", "The name of the webhook key file.")
+	flag.StringVar(&cfg.metricsCertPath, "metrics-cert-path", "",
 		"The directory that contains the metrics server certificate.")
-	flag.StringVar(&metricsCertName, "metrics-cert-name", "tls.crt", "The name of the metrics server certificate file.")
-	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
-	flag.BoolVar(&enableHTTP2, "enable-http2", false,
+	flag.StringVar(&cfg.metricsCertName, "metrics-cert-name", "tls.crt", "The name of the metrics server certificate file.")
+	flag.StringVar(&cfg.metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
+	flag.BoolVar(&cfg.enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 
-	// Operator-specific flags
-	flag.DurationVar(&scanInterval, "scan-interval", 1*time.Hour,
+	flag.DurationVar(&cfg.scanInterval, "scan-interval", 1*time.Hour,
 		"Interval for periodic TLS endpoint rescans")
-	flag.DurationVar(&cleanupInterval, "cleanup-interval", 5*time.Minute,
+	flag.DurationVar(&cfg.cleanupInterval, "cleanup-interval", 5*time.Minute,
 		"Interval for cleaning up stale TLSComplianceReport resources")
-	flag.DurationVar(&tlsCheckTimeout, "tls-check-timeout", 5*time.Second,
+	flag.DurationVar(&cfg.tlsCheckTimeout, "tls-check-timeout", 5*time.Second,
 		"Timeout for individual TLS connection attempts")
-	flag.Float64Var(&rateLimit, "rate-limit", 10.0,
+	flag.Float64Var(&cfg.rateLimit, "rate-limit", 10.0,
 		"Rate limit for TLS checks per second")
-	flag.IntVar(&rateBurst, "rate-burst", 20,
+	flag.IntVar(&cfg.rateBurst, "rate-burst", 20,
 		"Burst size for TLS check rate limiting")
-	flag.StringVar(&includeNamespaces, "include-namespaces", "",
+	flag.StringVar(&cfg.includeNamespaces, "include-namespaces", "",
 		"Comma-separated list of namespaces to exclusively monitor (overrides exclude-namespaces)")
-	flag.StringVar(&excludeNamespaces, "exclude-namespaces", "",
+	flag.StringVar(&cfg.excludeNamespaces, "exclude-namespaces", "",
 		"Comma-separated list of namespaces to exclude from TLS monitoring")
-	flag.IntVar(&certExpiryWarningDays, "cert-expiry-warning-days", 30,
+	flag.IntVar(&cfg.certExpiryWarningDays, "cert-expiry-warning-days", 30,
 		"Number of days before certificate expiry to emit a warning")
-	flag.DurationVar(&profileRefreshInterval, "profile-refresh-interval", 5*time.Minute,
+	flag.DurationVar(&cfg.profileRefreshInterval, "profile-refresh-interval", 5*time.Minute,
 		"Interval for refreshing OpenShift TLS security profile configuration (OpenShift only)")
-	flag.IntVar(&workers, "workers", 5,
+	flag.IntVar(&cfg.workers, "workers", 5,
 		"Number of concurrent workers for periodic TLS scans (1-50)")
-	flag.IntVar(&maxRetries, "max-retries", 3,
+	flag.IntVar(&cfg.maxRetries, "max-retries", 3,
 		"Maximum number of retries for transient TLS check failures (0-10)")
-	flag.DurationVar(&retryBackoff, "retry-backoff", 30*time.Second,
+	flag.DurationVar(&cfg.retryBackoff, "retry-backoff", 30*time.Second,
 		"Base backoff duration between retries (exponential: base * 2^attempt)")
-	flag.DurationVar(&maxBackoff, "max-backoff", 5*time.Minute,
+	flag.DurationVar(&cfg.maxBackoff, "max-backoff", 5*time.Minute,
 		"Maximum backoff duration between retries (caps exponential growth)")
-	flag.StringVar(&extraTLSPortsStr, "extra-tls-ports", "",
+	flag.StringVar(&cfg.extraTLSPortsStr, "extra-tls-ports", "",
 		"Comma-separated list of additional port numbers to treat as TLS endpoints (e.g., 9443,6380,5671)")
-	flag.StringVar(&logFormat, "log-format", "text",
+	flag.StringVar(&cfg.logFormat, "log-format", "text",
 		"Log output format: text or json")
 
-	opts := zap.Options{
-		Development: true,
-	}
-	opts.BindFlags(flag.CommandLine)
+	cfg.zapOpts = zap.Options{Development: true}
+	cfg.zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
-	// Apply environment variable overrides before logger creation so that
-	// TLS_COMPLIANCE_LOG_FORMAT=json takes effect on the logger.
 	envOverrides := resolveEnvConfig(flag.CommandLine, os.LookupEnv)
 
-	// Validate log format (after env overrides may have changed it)
-	if logFormat != "text" && logFormat != "json" {
-		fmt.Fprintf(os.Stderr, "invalid --log-format value, must be text or json, got %q\n", logFormat)
+	if cfg.logFormat != "text" && cfg.logFormat != "json" {
+		fmt.Fprintf(os.Stderr, "invalid --log-format value, must be text or json, got %q\n", cfg.logFormat)
 		os.Exit(1)
 	}
 
-	if logFormat == "json" {
-		opts.Development = false
+	if cfg.logFormat == "json" {
+		cfg.zapOpts.Development = false
 	}
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&cfg.zapOpts)))
 
 	for _, msg := range envOverrides {
 		setupLog.Info(msg)
 	}
 
-	// Parse and apply extra TLS ports
-	if extraTLSPortsStr != "" {
-		ports, err := parsePortList(extraTLSPortsStr)
+	return cfg
+}
+
+func validateConfig(cfg *operatorConfig) {
+	if cfg.extraTLSPortsStr != "" {
+		ports, err := parsePortList(cfg.extraTLSPortsStr)
 		if err != nil {
 			setupLog.Error(err, "invalid --extra-tls-ports value")
 			os.Exit(1)
 		}
 		endpoint.SetExtraTLSPorts(ports)
-		setupLog.Info("extra TLS ports configured", "ports", extraTLSPortsStr)
+		setupLog.Info("extra TLS ports configured", "ports", cfg.extraTLSPortsStr)
 	}
 
-	// Validate workers flag
-	if workers < 1 || workers > 50 {
-		setupLog.Error(nil, "invalid --workers value, must be between 1 and 50", "workers", workers)
+	if cfg.workers < 1 || cfg.workers > 50 {
+		setupLog.Error(nil, "invalid --workers value, must be between 1 and 50", "workers", cfg.workers)
 		os.Exit(1)
 	}
 
-	// Validate max-retries flag
-	if maxRetries < 0 || maxRetries > 10 {
-		setupLog.Error(nil, "invalid --max-retries value, must be between 0 and 10", "maxRetries", maxRetries)
+	if cfg.maxRetries < 0 || cfg.maxRetries > 10 {
+		setupLog.Error(nil, "invalid --max-retries value, must be between 0 and 10", "maxRetries", cfg.maxRetries)
 		os.Exit(1)
 	}
+}
 
-	// if the enable-http2 flag is false (the default), http/2 should be disabled
-	// due to its vulnerabilities. More specifically, disabling http/2 will
-	// prevent from being vulnerable to the HTTP/2 Stream Cancellation and
-	// Rapid Reset CVEs. For more information see:
-	// - https://github.com/advisories/GHSA-qppj-fm5r-hxr3
-	// - https://github.com/advisories/GHSA-4374-p667-p6c8
-	disableHTTP2 := func(c *tls.Config) {
-		setupLog.Info("disabling http/2")
-		c.NextProtos = []string{"http/1.1"}
+func buildTLSOpts(cfg *operatorConfig) []func(*tls.Config) {
+	var tlsOpts []func(*tls.Config)
+
+	// Disabling http/2 prevents the HTTP/2 Stream Cancellation and Rapid Reset CVEs.
+	// https://github.com/advisories/GHSA-qppj-fm5r-hxr3
+	// https://github.com/advisories/GHSA-4374-p667-p6c8
+	if !cfg.enableHTTP2 {
+		tlsOpts = append(tlsOpts, func(c *tls.Config) {
+			setupLog.Info("disabling http/2")
+			c.NextProtos = []string{"http/1.1"}
+		})
 	}
 
-	if !enableHTTP2 {
-		tlsOpts = append(tlsOpts, disableHTTP2)
-	}
+	return tlsOpts
+}
 
-	// Initial webhook TLS options
-	webhookTLSOpts := tlsOpts
+func setupManager(ctx context.Context, cfg *operatorConfig) ctrl.Manager {
+	tlsOpts := buildTLSOpts(cfg)
+
 	webhookServerOptions := webhook.Options{
-		TLSOpts: webhookTLSOpts,
+		TLSOpts: tlsOpts,
 	}
-
-	if len(webhookCertPath) > 0 {
+	if len(cfg.webhookCertPath) > 0 {
 		setupLog.Info("Initializing webhook certificate watcher using provided certificates",
-			"webhook-cert-path", webhookCertPath, "webhook-cert-name", webhookCertName, "webhook-cert-key", webhookCertKey)
-
-		webhookServerOptions.CertDir = webhookCertPath
-		webhookServerOptions.CertName = webhookCertName
-		webhookServerOptions.KeyName = webhookCertKey
+			"webhook-cert-path", cfg.webhookCertPath, "webhook-cert-name", cfg.webhookCertName, "webhook-cert-key", cfg.webhookCertKey)
+		webhookServerOptions.CertDir = cfg.webhookCertPath
+		webhookServerOptions.CertName = cfg.webhookCertName
+		webhookServerOptions.KeyName = cfg.webhookCertKey
 	}
-
-	webhookServer := webhook.NewServer(webhookServerOptions)
 
 	metricsServerOptions := metricsserver.Options{
-		BindAddress:   metricsAddr,
-		SecureServing: secureMetrics,
+		BindAddress:   cfg.metricsAddr,
+		SecureServing: cfg.secureMetrics,
 		TLSOpts:       tlsOpts,
 	}
-
-	if secureMetrics {
+	if cfg.secureMetrics {
 		metricsServerOptions.FilterProvider = filters.WithAuthenticationAndAuthorization
 	}
-
-	if len(metricsCertPath) > 0 {
+	if len(cfg.metricsCertPath) > 0 {
 		setupLog.Info("Initializing metrics certificate watcher using provided certificates",
-			"metrics-cert-path", metricsCertPath, "metrics-cert-name", metricsCertName, "metrics-cert-key", metricsCertKey)
-
-		metricsServerOptions.CertDir = metricsCertPath
-		metricsServerOptions.CertName = metricsCertName
-		metricsServerOptions.KeyName = metricsCertKey
+			"metrics-cert-path", cfg.metricsCertPath, "metrics-cert-name", cfg.metricsCertName, "metrics-cert-key", cfg.metricsCertKey)
+		metricsServerOptions.CertDir = cfg.metricsCertPath
+		metricsServerOptions.CertName = cfg.metricsCertName
+		metricsServerOptions.KeyName = cfg.metricsCertKey
 	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
-		WebhookServer:          webhookServer,
-		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
+		WebhookServer:          webhook.NewServer(webhookServerOptions),
+		HealthProbeBindAddress: cfg.probeAddr,
+		LeaderElection:         cfg.enableLeaderElection,
 		LeaderElectionID:       "tls-compliance.telco.openshift.io",
 	})
 	if err != nil {
@@ -250,9 +250,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Detect Route API availability
-	routeAPIAvailable := false
 	restMapper := mgr.GetRESTMapper()
+
+	routeAPIAvailable := false
 	_, err = restMapper.RESTMapping(schema.GroupKind{
 		Group: "route.openshift.io",
 		Kind:  "Route",
@@ -264,7 +264,6 @@ func main() {
 		setupLog.Info("OpenShift Route API not detected, skipping Route monitoring")
 	}
 
-	// Detect OpenShift Config API availability for TLS security profile monitoring
 	var profileFetcher *tlsprofile.Fetcher
 	_, err = restMapper.RESTMapping(schema.GroupKind{
 		Group: "config.openshift.io",
@@ -277,35 +276,28 @@ func main() {
 		setupLog.Info("OpenShift Config API not detected, skipping TLS security profile monitoring")
 	}
 
-	// Parse namespace filters
-	includedNS := controller.ParseNamespaceList(includeNamespaces)
-	excludedNS := controller.ParseNamespaceList(excludeNamespaces)
-
+	includedNS := controller.ParseNamespaceList(cfg.includeNamespaces)
+	excludedNS := controller.ParseNamespaceList(cfg.excludeNamespaces)
 	if len(includedNS) > 0 && len(excludedNS) > 0 {
 		setupLog.Info("WARNING: both --include-namespaces and --exclude-namespaces are set; --include-namespaces takes precedence")
 	}
 
-	// Initialize TLS checker with rate limiting
-	baseChecker := tlscheck.NewTLSChecker(tlsCheckTimeout)
-	checker := tlscheck.NewRateLimitedChecker(baseChecker, rateLimit, rateBurst)
+	baseChecker := tlscheck.NewTLSChecker(cfg.tlsCheckTimeout)
+	checker := tlscheck.NewRateLimitedChecker(baseChecker, cfg.rateLimit, cfg.rateBurst)
 
 	setupLog.Info("TLS checker configured",
-		"timeout", tlsCheckTimeout,
-		"rateLimit", rateLimit,
-		"rateBurst", rateBurst,
-		"scanInterval", scanInterval,
-		"cleanupInterval", cleanupInterval,
-		"certExpiryWarningDays", certExpiryWarningDays,
+		"timeout", cfg.tlsCheckTimeout,
+		"rateLimit", cfg.rateLimit,
+		"rateBurst", cfg.rateBurst,
+		"scanInterval", cfg.scanInterval,
+		"cleanupInterval", cfg.cleanupInterval,
+		"certExpiryWarningDays", cfg.certExpiryWarningDays,
 		"includeNamespaces", includedNS,
 		"excludeNamespaces", excludedNS,
-		"workers", workers,
-		"maxRetries", maxRetries,
-		"retryBackoff", retryBackoff)
+		"workers", cfg.workers,
+		"maxRetries", cfg.maxRetries,
+		"retryBackoff", cfg.retryBackoff)
 
-	// Set up signal-aware context for the operator lifecycle
-	ctx := ctrl.SetupSignalHandler()
-
-	// Set up the endpoint controller
 	endpointReconciler := &controller.EndpointReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
@@ -313,13 +305,13 @@ func main() {
 		Recorder:          mgr.GetEventRecorderFor("tls-compliance-controller"), //nolint:staticcheck
 		IncludeNamespaces: includedNS,
 		ExcludeNamespaces: excludedNS,
-		CertExpiryDays:    certExpiryWarningDays,
+		CertExpiryDays:    cfg.certExpiryWarningDays,
 		RouteAPIAvailable: routeAPIAvailable,
 		ProfileFetcher:    profileFetcher,
-		Workers:           workers,
-		MaxRetries:        maxRetries,
-		RetryBackoff:      retryBackoff,
-		MaxBackoff:        maxBackoff,
+		Workers:           cfg.workers,
+		MaxRetries:        cfg.maxRetries,
+		RetryBackoff:      cfg.retryBackoff,
+		MaxBackoff:        cfg.maxBackoff,
 		ManagerCtx:        ctx,
 	}
 
@@ -328,11 +320,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Start background loops
-	endpointReconciler.StartPeriodicScan(ctx, scanInterval)
-	endpointReconciler.StartCleanupLoop(ctx, cleanupInterval)
+	endpointReconciler.StartPeriodicScan(ctx, cfg.scanInterval)
+	endpointReconciler.StartCleanupLoop(ctx, cfg.cleanupInterval)
 	if profileFetcher != nil {
-		profileFetcher.StartPeriodicRefresh(ctx, profileRefreshInterval)
+		profileFetcher.StartPeriodicRefresh(ctx, cfg.profileRefreshInterval)
 	}
 
 	// +kubebuilder:scaffold:builder
@@ -345,6 +336,16 @@ func main() {
 		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)
 	}
+
+	return mgr
+}
+
+func main() {
+	cfg := parseFlags()
+	validateConfig(cfg)
+
+	ctx := ctrl.SetupSignalHandler()
+	mgr := setupManager(ctx, cfg)
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctx); err != nil {
