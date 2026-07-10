@@ -62,6 +62,7 @@ kubectl delete -f https://github.com/sebrandon1/tls-compliance-operator/releases
 - Kubernetes v1.28+ or OpenShift 4.x
 - kubectl or oc CLI
 - Cluster-admin privileges (for CRD installation)
+- Go 1.26+ (for development)
 
 ## Development
 
