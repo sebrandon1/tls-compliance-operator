@@ -396,6 +396,13 @@ func printReportDetail(r securityv1alpha1.TLSComplianceReport) error {
 		}
 	}
 
+	if len(r.Status.ALPNProtocols) > 0 {
+		_, _ = fmt.Fprintf(w, "\nALPN Protocols:\n")
+		for version, proto := range r.Status.ALPNProtocols {
+			_, _ = fmt.Fprintf(w, "  %s: %s\n", version, proto)
+		}
+	}
+
 	if len(r.Status.NegotiatedCurves) > 0 {
 		_, _ = fmt.Fprintf(w, "\nNegotiated Curves:\n")
 		for curve, info := range r.Status.NegotiatedCurves {

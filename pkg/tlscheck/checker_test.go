@@ -71,20 +71,32 @@ func generateTestCert(t *testing.T) (tls.Certificate, *x509.Certificate) {
 	}, parsedCert
 }
 
-// startTLSServer starts a TLS server with the given min/max TLS versions
-func startTLSServer(t *testing.T, cert tls.Certificate, minVersion, maxVersion uint16) (string, int, func()) {
-	return startTLSServerWithCurves(t, cert, minVersion, maxVersion, nil)
+type testServerOpts struct {
+	curves     []tls.CurveID
+	alpnProtos []string
 }
 
-// startTLSServerWithCurves starts a TLS server with explicit curve preferences
+func startTLSServer(t *testing.T, cert tls.Certificate, minVersion, maxVersion uint16) (string, int, func()) {
+	return startTLSServerWithOpts(t, cert, minVersion, maxVersion, testServerOpts{})
+}
+
 func startTLSServerWithCurves(t *testing.T, cert tls.Certificate, minVersion, maxVersion uint16, curves []tls.CurveID) (string, int, func()) {
+	return startTLSServerWithOpts(t, cert, minVersion, maxVersion, testServerOpts{curves: curves})
+}
+
+func startTLSServerWithALPN(t *testing.T, cert tls.Certificate, minVersion, maxVersion uint16, alpnProtos []string) (string, int, func()) {
+	return startTLSServerWithOpts(t, cert, minVersion, maxVersion, testServerOpts{alpnProtos: alpnProtos})
+}
+
+func startTLSServerWithOpts(t *testing.T, cert tls.Certificate, minVersion, maxVersion uint16, opts testServerOpts) (string, int, func()) {
 	t.Helper()
 
 	tlsConfig := &tls.Config{
 		Certificates:     []tls.Certificate{cert},
 		MinVersion:       minVersion,
 		MaxVersion:       maxVersion,
-		CurvePreferences: curves,
+		CurvePreferences: opts.curves,
+		NextProtos:       opts.alpnProtos,
 	}
 
 	listener, err := tls.Listen("tcp", "127.0.0.1:0", tlsConfig)
@@ -527,5 +539,63 @@ func TestTLSChecker_CertificateExpiry(t *testing.T) {
 	// Test certificate is valid for 24 hours
 	if result.Certificate.DaysUntilExpiry > 1 {
 		t.Errorf("expected days until expiry to be 0 or 1, got %d", result.Certificate.DaysUntilExpiry)
+	}
+}
+
+func TestTLSChecker_ALPNProtocols(t *testing.T) {
+	cert, _ := generateTestCert(t)
+	host, port, cleanup := startTLSServerWithALPN(t, cert, tls.VersionTLS12, tls.VersionTLS13, []string{"h2", "http/1.1"})
+	defer cleanup()
+
+	checker := NewTLSChecker(2 * time.Second)
+	result, err := checker.CheckEndpoint(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("CheckEndpoint() error = %v", err)
+	}
+
+	if len(result.ALPNProtocols) == 0 {
+		t.Fatal("expected ALPNProtocols to be populated")
+	}
+
+	for version, proto := range result.ALPNProtocols {
+		if proto != "h2" && proto != "http/1.1" {
+			t.Errorf("unexpected ALPN protocol for %s: %q", version, proto)
+		}
+	}
+}
+
+func TestTLSChecker_ALPNProtocols_NoServerSupport(t *testing.T) {
+	cert, _ := generateTestCert(t)
+	host, port, cleanup := startTLSServer(t, cert, tls.VersionTLS12, tls.VersionTLS12)
+	defer cleanup()
+
+	checker := NewTLSChecker(2 * time.Second)
+	result, err := checker.CheckEndpoint(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("CheckEndpoint() error = %v", err)
+	}
+
+	if len(result.ALPNProtocols) != 0 {
+		t.Errorf("expected ALPNProtocols to be empty when server has no ALPN, got %v", result.ALPNProtocols)
+	}
+}
+
+func TestTLSChecker_ALPNProtocols_HTTP11Only(t *testing.T) {
+	cert, _ := generateTestCert(t)
+	host, port, cleanup := startTLSServerWithALPN(t, cert, tls.VersionTLS12, tls.VersionTLS12, []string{"http/1.1"})
+	defer cleanup()
+
+	checker := NewTLSChecker(2 * time.Second)
+	result, err := checker.CheckEndpoint(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("CheckEndpoint() error = %v", err)
+	}
+
+	proto, ok := result.ALPNProtocols["TLS 1.2"]
+	if !ok {
+		t.Fatal("expected TLS 1.2 ALPN entry")
+	}
+	if proto != "http/1.1" {
+		t.Errorf("expected http/1.1, got %q", proto)
 	}
 }

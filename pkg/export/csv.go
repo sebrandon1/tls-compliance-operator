@@ -35,6 +35,7 @@ var CSVHeader = []string{
 	"QuantumReady", "PQCReadiness", "MLKEMSupported",
 	"CertExpiry", "CertIssuer",
 	"PubKeyAlgorithm", "PubKeyBits", "SignatureAlgorithm", "ChainLength",
+	"ALPNProtocols",
 	"ScanDuration",
 }
 
@@ -68,21 +69,35 @@ func extractCertInfo(r *securityv1alpha1.TLSComplianceReport) (certExpiry, certI
 	return
 }
 
-// formatKeyExchangeTypes returns a compact string of unique key exchange types
-// across all TLS versions, sorted alphabetically (e.g. "ECDHE,TLS13").
 func formatKeyExchangeTypes(keTypes map[string]string) string {
-	if len(keTypes) == 0 {
+	return formatUniqueMapValues(keTypes, true)
+}
+
+func formatALPNProtocols(alpn map[string]string) string {
+	return formatUniqueMapValues(alpn, false)
+}
+
+// formatUniqueMapValues returns a compact, sorted, comma-joined string of
+// unique values from a map[string]string. When splitCommas is true, each
+// value is itself split on commas before deduplication (used for fields
+// like KeyExchangeTypes where a single value can be "ECDHE,RSA").
+func formatUniqueMapValues(m map[string]string, splitCommas bool) string {
+	if len(m) == 0 {
 		return ""
 	}
 	seen := make(map[string]bool)
-	for _, ke := range keTypes {
-		for _, part := range strings.Split(ke, ",") {
-			seen[part] = true
+	for _, v := range m {
+		if splitCommas {
+			for _, part := range strings.Split(v, ",") {
+				seen[part] = true
+			}
+		} else {
+			seen[v] = true
 		}
 	}
 	unique := make([]string, 0, len(seen))
-	for ke := range seen {
-		unique = append(unique, ke)
+	for v := range seen {
+		unique = append(unique, v)
 	}
 	sort.Strings(unique)
 	return strings.Join(unique, ",")
@@ -127,6 +142,7 @@ func reportToCSVRow(r *securityv1alpha1.TLSComplianceReport) []string {
 		pubKeyBits,
 		sigAlg,
 		chainLen,
+		formatALPNProtocols(r.Status.ALPNProtocols),
 		r.Status.ScanDuration,
 	}
 }

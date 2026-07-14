@@ -36,6 +36,9 @@ type Checker interface {
 // DefaultTimeout is the default timeout for individual TLS connection attempts
 const DefaultTimeout = 5 * time.Second
 
+// DefaultALPNProtos is the list of ALPN protocols offered during TLS probing.
+var DefaultALPNProtos = []string{"h2", "http/1.1"}
+
 // TLSChecker implements Checker using Go's crypto/tls
 type TLSChecker struct {
 	Timeout time.Duration
@@ -68,6 +71,7 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 
 	result := &TLSCheckResult{
 		CipherSuites:     make(map[string][]string),
+		ALPNProtocols:    make(map[string]string),
 		NegotiatedCurves: make(map[string]string),
 	}
 
@@ -81,13 +85,16 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 		default:
 		}
 
-		supported, cipherSuite, curveName, cert, err := c.tryTLSVersion(ctx, addr, host, vi.version)
+		supported, cipherSuite, curveName, alpnProto, cert, err := c.tryTLSVersion(ctx, addr, host, vi.version)
 		vi.field(result, supported)
 
 		if supported && err == nil {
 			anySuccess = true
 			if cipherSuite != "" {
 				result.CipherSuites[vi.name] = append(result.CipherSuites[vi.name], cipherSuite)
+			}
+			if alpnProto != "" {
+				result.ALPNProtocols[vi.name] = alpnProto
 			}
 			if curveName != "" {
 				result.NegotiatedCurves[vi.name] = curveName
@@ -199,7 +206,7 @@ func isMTLSError(err error) bool {
 }
 
 // tryTLSVersion attempts to connect with a specific TLS version
-func (c *TLSChecker) tryTLSVersion(ctx context.Context, addr, serverName string, version uint16) (supported bool, cipherSuite string, curveName string, cert *CertificateDetails, err error) {
+func (c *TLSChecker) tryTLSVersion(ctx context.Context, addr, serverName string, version uint16) (supported bool, cipherSuite string, curveName string, alpnProto string, cert *CertificateDetails, err error) {
 	dialer := &net.Dialer{
 		Timeout: c.Timeout,
 	}
@@ -209,15 +216,16 @@ func (c *TLSChecker) tryTLSVersion(ctx context.Context, addr, serverName string,
 		MaxVersion:         version,
 		InsecureSkipVerify: true, //nolint:gosec // We report cert info but don't enforce trust
 		ServerName:         serverName,
+		NextProtos:         DefaultALPNProtos,
 	}
 
 	conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
 	if err != nil {
 		// mTLS: server requires a client certificate but we proved it speaks this TLS version
 		if isMTLSError(err) {
-			return true, "", "", nil, err
+			return true, "", "", "", nil, err
 		}
-		return false, "", "", nil, err
+		return false, "", "", "", nil, err
 	}
 	defer conn.Close() //nolint:errcheck
 
@@ -236,7 +244,7 @@ func (c *TLSChecker) tryTLSVersion(ctx context.Context, addr, serverName string,
 		certDetails.ChainLength = len(state.PeerCertificates)
 	}
 
-	return true, cipherSuiteName, curve, certDetails, nil
+	return true, cipherSuiteName, curve, state.NegotiatedProtocol, certDetails, nil
 }
 
 // probeMLKEM performs a TLS 1.3 handshake offering only ML-KEM key exchange

@@ -504,6 +504,7 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 		cr.Status.OverallCipherGrade = overallGrade
 		cr.Status.ForwardSecrecy = forwardSecrecy
 		cr.Status.KeyExchangeTypes = keyExchangeTypes
+		cr.Status.ALPNProtocols = result.ALPNProtocols
 		cr.Status.NegotiatedCurves = result.NegotiatedCurves
 		cr.Status.PQCReadiness = pqcReadiness
 		cr.Status.QuantumReady = pqcReadiness == securityv1alpha1.PQCReadinessPQCReady

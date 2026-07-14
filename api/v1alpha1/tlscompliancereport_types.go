@@ -208,6 +208,11 @@ type TLSComplianceReportStatus struct {
 	// +optional
 	KeyExchangeTypes map[string]string `json:"keyExchangeTypes,omitempty"`
 
+	// ALPNProtocols maps TLS version to the negotiated ALPN protocol
+	// (e.g. "h2", "http/1.1")
+	// +optional
+	ALPNProtocols map[string]string `json:"alpnProtocols,omitempty"`
+
 	// NegotiatedCurves maps TLS version to the negotiated key exchange curve
 	// (e.g. X25519, P-256, X25519MLKEM768)
 	// +optional
