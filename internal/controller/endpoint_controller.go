@@ -33,6 +33,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/record"
+
+	"golang.org/x/time/rate"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -70,21 +72,23 @@ const (
 // EndpointReconciler reconciles Service, Ingress, and Route resources
 type EndpointReconciler struct {
 	client.Client
-	Scheme            *runtime.Scheme
-	TLSChecker        tlscheck.Checker
-	Recorder          record.EventRecorder
-	IncludeNamespaces map[string]bool
-	ExcludeNamespaces map[string]bool
-	CertExpiryDays    int
-	RouteAPIAvailable bool
-	ProfileFetcher    *tlsprofile.Fetcher
-	Workers           int
-	MaxRetries        int
-	RetryBackoff      time.Duration
-	MaxBackoff        time.Duration
-	ManagerCtx        context.Context
-	checkSem          chan struct{}
-	checkSemOnce      sync.Once
+	Scheme                *runtime.Scheme
+	TLSChecker            tlscheck.Checker
+	Recorder              record.EventRecorder
+	IncludeNamespaces     map[string]bool
+	ExcludeNamespaces     map[string]bool
+	CertExpiryDays        int
+	RouteAPIAvailable     bool
+	ProfileFetcher        *tlsprofile.Fetcher
+	Workers               int
+	MaxRetries            int
+	RetryBackoff          time.Duration
+	MaxBackoff            time.Duration
+	NamespaceRateLimiters map[string]*rate.Limiter
+	DefaultNamespaceRate  *rate.Limiter
+	ManagerCtx            context.Context
+	checkSem              chan struct{}
+	checkSemOnce          sync.Once
 }
 
 func (r *EndpointReconciler) updateStatusWithRetry(ctx context.Context, name string, mutateFn func(*securityv1alpha1.TLSComplianceReport)) error {
@@ -107,6 +111,15 @@ func (r *EndpointReconciler) updateWithRetry(ctx context.Context, name string, m
 		mutateFn(&cr)
 		return r.Update(ctx, &cr)
 	})
+}
+
+func (r *EndpointReconciler) getNamespaceLimiter(namespace string) *rate.Limiter {
+	if r.NamespaceRateLimiters != nil {
+		if limiter, ok := r.NamespaceRateLimiters[namespace]; ok {
+			return limiter
+		}
+	}
+	return r.DefaultNamespaceRate
 }
 
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
@@ -331,7 +344,7 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep endpoint.En
 		case r.checkSem <- struct{}{}:
 			go func() {
 				defer func() { <-r.checkSem }()
-				r.performTLSCheck(checkCtx, crName, ep.Host, int(ep.Port))
+				r.performTLSCheck(checkCtx, crName, ep.Host, int(ep.Port), ep.SourceNamespace)
 			}()
 		default:
 			logger.V(1).Info("TLS check deferred to next scan cycle (workers busy)", "host", ep.Host, "port", ep.Port)
@@ -353,11 +366,18 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep endpoint.En
 
 // performTLSCheck runs the TLS check and updates the CR status.
 // On transient failures, it retries with exponential backoff up to MaxRetries times.
-func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host string, port int) {
+func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host string, port int, namespace string) {
 	logger := log.FromContext(ctx).WithValues("crName", crName)
 
 	if r.TLSChecker == nil {
 		return
+	}
+
+	if limiter := r.getNamespaceLimiter(namespace); limiter != nil {
+		if err := limiter.Wait(ctx); err != nil {
+			logger.V(1).Info("namespace rate limiter cancelled", "namespace", namespace, "error", err)
+			return
+		}
 	}
 
 	maxAttempts := 1 + r.MaxRetries
@@ -958,15 +978,16 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 	}
 
 	type scanItem struct {
-		name string
-		host string
-		port int
+		name      string
+		host      string
+		port      int
+		namespace string
 	}
 
 	items := make(chan scanItem, len(crList.Items))
 	for i := range crList.Items {
 		cr := &crList.Items[i]
-		items <- scanItem{name: cr.Name, host: cr.Spec.Host, port: int(cr.Spec.Port)}
+		items <- scanItem{name: cr.Name, host: cr.Spec.Host, port: int(cr.Spec.Port), namespace: cr.Spec.SourceNamespace}
 	}
 	close(items)
 
@@ -981,7 +1002,7 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 					return
 				default:
 				}
-				r.performTLSCheck(ctx, item.name, item.host, item.port)
+				r.performTLSCheck(ctx, item.name, item.host, item.port, item.namespace)
 			}
 		}()
 	}
