@@ -50,6 +50,7 @@ type JSONReport struct {
 	PublicKeyBits      int               `json:"publicKeyBits,omitempty"`
 	SignatureAlgorithm string            `json:"signatureAlgorithm,omitempty"`
 	ChainLength        int               `json:"chainLength,omitempty"`
+	ScanDuration       string            `json:"scanDuration,omitempty"`
 }
 
 // WriteJSON writes TLSComplianceReport items as pretty-printed JSON to the given writer.
@@ -99,6 +100,8 @@ func reportToJSON(r *securityv1alpha1.TLSComplianceReport) JSONReport {
 		jr.SignatureAlgorithm = r.Status.CertificateInfo.SignatureAlgorithm
 		jr.ChainLength = r.Status.CertificateInfo.ChainLength
 	}
+
+	jr.ScanDuration = r.Status.ScanDuration
 
 	return jr
 }

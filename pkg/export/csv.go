@@ -35,6 +35,7 @@ var CSVHeader = []string{
 	"QuantumReady", "PQCReadiness", "MLKEMSupported",
 	"CertExpiry", "CertIssuer",
 	"PubKeyAlgorithm", "PubKeyBits", "SignatureAlgorithm", "ChainLength",
+	"ScanDuration",
 }
 
 // WriteCSV writes TLSComplianceReport items as CSV to the given writer.
@@ -126,5 +127,6 @@ func reportToCSVRow(r *securityv1alpha1.TLSComplianceReport) []string {
 		pubKeyBits,
 		sigAlg,
 		chainLen,
+		r.Status.ScanDuration,
 	}
 }
