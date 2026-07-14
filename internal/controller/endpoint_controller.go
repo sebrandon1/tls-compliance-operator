@@ -70,21 +70,22 @@ const (
 // EndpointReconciler reconciles Service, Ingress, and Route resources
 type EndpointReconciler struct {
 	client.Client
-	Scheme            *runtime.Scheme
-	TLSChecker        tlscheck.Checker
-	Recorder          record.EventRecorder
-	IncludeNamespaces map[string]bool
-	ExcludeNamespaces map[string]bool
-	CertExpiryDays    int
-	RouteAPIAvailable bool
-	ProfileFetcher    *tlsprofile.Fetcher
-	Workers           int
-	MaxRetries        int
-	RetryBackoff      time.Duration
-	MaxBackoff        time.Duration
-	ManagerCtx        context.Context
-	checkSem          chan struct{}
-	checkSemOnce      sync.Once
+	Scheme              *runtime.Scheme
+	TLSChecker          tlscheck.Checker
+	Recorder            record.EventRecorder
+	IncludeNamespaces   map[string]bool
+	ExcludeNamespaces   map[string]bool
+	CertExpiryDays      int
+	RouteAPIAvailable   bool
+	ProfileFetcher      *tlsprofile.Fetcher
+	Workers             int
+	MaxRetries          int
+	RetryBackoff        time.Duration
+	MaxBackoff          time.Duration
+	ReportRetentionDays int
+	ManagerCtx          context.Context
+	checkSem            chan struct{}
+	checkSemOnce        sync.Once
 }
 
 func (r *EndpointReconciler) updateStatusWithRetry(ctx context.Context, name string, mutateFn func(*securityv1alpha1.TLSComplianceReport)) error {
@@ -1137,6 +1138,28 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 				"sourceKind", cr.Spec.SourceKind, "sourceName", cr.Spec.SourceName)
 			if err := r.Delete(ctx, cr); err != nil && !apierrors.IsNotFound(err) {
 				logger.Error(err, "failed to delete orphaned TLSComplianceReport", "name", cr.Name)
+			}
+		}
+	}
+
+	if r.ReportRetentionDays > 0 {
+		cutoff := time.Now().Add(-time.Duration(r.ReportRetentionDays) * 24 * time.Hour)
+		for i := range crList.Items {
+			cr := &crList.Items[i]
+			var lastActivity time.Time
+			if cr.Status.LastCheckAt != nil {
+				lastActivity = cr.Status.LastCheckAt.Time
+			} else {
+				lastActivity = cr.CreationTimestamp.Time
+			}
+			if lastActivity.Before(cutoff) {
+				logger.Info("deleting expired TLSComplianceReport", "name", cr.Name,
+					"lastActivity", lastActivity, "retentionDays", r.ReportRetentionDays)
+				if err := r.Delete(ctx, cr); err != nil && !apierrors.IsNotFound(err) {
+					logger.Error(err, "failed to delete expired TLSComplianceReport", "name", cr.Name)
+				} else {
+					metrics.RecordReportTTLDeleted()
+				}
 			}
 		}
 	}

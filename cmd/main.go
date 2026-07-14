@@ -89,6 +89,7 @@ type operatorConfig struct {
 	retryBackoff           time.Duration
 	maxBackoff             time.Duration
 	extraTLSPortsStr       string
+	reportRetentionDays    int
 	logFormat              string
 
 	zapOpts zap.Options
@@ -143,6 +144,8 @@ func parseFlags() *operatorConfig {
 		"Maximum backoff duration between retries (caps exponential growth)")
 	flag.StringVar(&cfg.extraTLSPortsStr, "extra-tls-ports", "",
 		"Comma-separated list of additional port numbers to treat as TLS endpoints (e.g., 9443,6380,5671)")
+	flag.IntVar(&cfg.reportRetentionDays, "report-retention-days", 0,
+		"Auto-delete TLSComplianceReports older than this many days (0=disabled)")
 	flag.StringVar(&cfg.logFormat, "log-format", "text",
 		"Log output format: text or json")
 
@@ -299,20 +302,21 @@ func setupManager(ctx context.Context, cfg *operatorConfig) ctrl.Manager {
 		"retryBackoff", cfg.retryBackoff)
 
 	endpointReconciler := &controller.EndpointReconciler{
-		Client:            mgr.GetClient(),
-		Scheme:            mgr.GetScheme(),
-		TLSChecker:        checker,
-		Recorder:          mgr.GetEventRecorderFor("tls-compliance-controller"), //nolint:staticcheck
-		IncludeNamespaces: includedNS,
-		ExcludeNamespaces: excludedNS,
-		CertExpiryDays:    cfg.certExpiryWarningDays,
-		RouteAPIAvailable: routeAPIAvailable,
-		ProfileFetcher:    profileFetcher,
-		Workers:           cfg.workers,
-		MaxRetries:        cfg.maxRetries,
-		RetryBackoff:      cfg.retryBackoff,
-		MaxBackoff:        cfg.maxBackoff,
-		ManagerCtx:        ctx,
+		Client:              mgr.GetClient(),
+		Scheme:              mgr.GetScheme(),
+		TLSChecker:          checker,
+		Recorder:            mgr.GetEventRecorderFor("tls-compliance-controller"), //nolint:staticcheck
+		IncludeNamespaces:   includedNS,
+		ExcludeNamespaces:   excludedNS,
+		CertExpiryDays:      cfg.certExpiryWarningDays,
+		RouteAPIAvailable:   routeAPIAvailable,
+		ProfileFetcher:      profileFetcher,
+		Workers:             cfg.workers,
+		MaxRetries:          cfg.maxRetries,
+		RetryBackoff:        cfg.retryBackoff,
+		MaxBackoff:          cfg.maxBackoff,
+		ReportRetentionDays: cfg.reportRetentionDays,
+		ManagerCtx:          ctx,
 	}
 
 	if err = endpointReconciler.SetupWithManager(mgr); err != nil {
@@ -373,6 +377,7 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_RETRY_BACKOFF", "retry-backoff"},
 	{"TLS_COMPLIANCE_MAX_BACKOFF", "max-backoff"},
 	{"TLS_COMPLIANCE_EXTRA_TLS_PORTS", "extra-tls-ports"},
+	{"TLS_COMPLIANCE_REPORT_RETENTION_DAYS", "report-retention-days"},
 	{"TLS_COMPLIANCE_LOG_FORMAT", "log-format"},
 }
 
@@ -444,6 +449,8 @@ func validateEnvValue(flagName, value string) error {
 	case "extra-tls-ports":
 		_, err := parsePortList(value)
 		return err
+	case "report-retention-days":
+		return validateIntRange(value, 0, 3650)
 	case "log-format":
 		if value != "text" && value != "json" {
 			return fmt.Errorf("must be text or json, got %q", value)

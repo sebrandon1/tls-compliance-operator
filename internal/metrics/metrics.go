@@ -155,6 +155,15 @@ var (
 			Help:      "Unix timestamp of the last completed cleanup cycle",
 		},
 	)
+
+	// ReportsTTLDeletedTotal tracks reports deleted by retention policy
+	ReportsTTLDeletedTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: MetricsNamespace,
+			Name:      "reports_ttl_deleted_total",
+			Help:      "Total number of TLSComplianceReports deleted by retention policy",
+		},
+	)
 )
 
 func init() {
@@ -172,6 +181,7 @@ func init() {
 		ReconcileErrorsTotal,
 		ScanCycleLastCompletedTimestamp,
 		CleanupCycleLastCompletedTimestamp,
+		ReportsTTLDeletedTotal,
 	)
 }
 
@@ -253,4 +263,9 @@ func RecordScanCycleCompleted() {
 // RecordCleanupCycleCompleted sets the cleanup cycle timestamp to the current time
 func RecordCleanupCycleCompleted() {
 	CleanupCycleLastCompletedTimestamp.SetToCurrentTime()
+}
+
+// RecordReportTTLDeleted records a report deleted by the retention policy
+func RecordReportTTLDeleted() {
+	ReportsTTLDeletedTotal.Inc()
 }
