@@ -25,7 +25,8 @@ import (
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 )
 
-// JSONReport is the JSON representation of a single TLS compliance report.
+// JSONReport is the structured representation of a single TLS compliance report,
+// used by both JSON and YAML export (yaml.v3 falls back to json tags).
 type JSONReport struct {
 	Host               string            `json:"host"`
 	Port               string            `json:"port"`
@@ -52,16 +53,19 @@ type JSONReport struct {
 	ChainLength        int               `json:"chainLength,omitempty"`
 }
 
-// WriteJSON writes TLSComplianceReport items as pretty-printed JSON to the given writer.
-func WriteJSON(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) error {
+func buildExportSlice(reports []securityv1alpha1.TLSComplianceReport) []JSONReport {
 	out := make([]JSONReport, 0, len(reports))
 	for i := range reports {
 		out = append(out, reportToJSON(&reports[i]))
 	}
+	return out
+}
 
+// WriteJSON writes TLSComplianceReport items as pretty-printed JSON to the given writer.
+func WriteJSON(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(out); err != nil {
+	if err := enc.Encode(buildExportSlice(reports)); err != nil {
 		return fmt.Errorf("encoding JSON: %w", err)
 	}
 

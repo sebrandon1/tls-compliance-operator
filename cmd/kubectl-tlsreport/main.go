@@ -61,11 +61,11 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:   "kubectl-tlsreport [csv|json|junit|markdown|md]",
+		Use:   "kubectl-tlsreport [csv|json|yaml|junit|markdown|md]",
 		Short: "Export TLS compliance reports from the cluster",
 		Long: `Export TLS compliance reports from the cluster in various formats.
 
-Supported formats: csv (default), json, junit, markdown (or md)
+Supported formats: csv (default), json, yaml, junit, markdown (or md)
 
 Use --kubeconfig and --context to target a specific cluster.`,
 		Args:          cobra.MaximumNArgs(1),
@@ -128,7 +128,7 @@ func newGetCmd() *cobra.Command {
   kubectl tlsreport get --status NonCompliant -n production`,
 		RunE: runGet,
 	}
-	cmd.Flags().StringVarP(&outputFormat, "output", "o", "table", "Output format: table, wide, json")
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "table", "Output format: table, wide, json, yaml")
 
 	return cmd
 }
@@ -161,9 +161,9 @@ func runExport(cmd *cobra.Command, args []string) error {
 	}
 
 	switch format {
-	case "csv", "json", "junit", "markdown", "md":
+	case "csv", "json", "yaml", "junit", "markdown", "md":
 	default:
-		return fmt.Errorf("unknown format: %s (supported: csv, json, junit, markdown, md)", format)
+		return fmt.Errorf("unknown format: %s (supported: csv, json, yaml, junit, markdown, md)", format)
 	}
 
 	reports, err := fetchReports()
@@ -183,6 +183,8 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return export.WriteCSV(os.Stdout, reports)
 	case "json":
 		return export.WriteJSON(os.Stdout, reports)
+	case "yaml":
+		return export.WriteYAML(os.Stdout, reports)
 	case "junit":
 		return export.WriteJUnit(os.Stdout, reports)
 	case "markdown", "md":
@@ -238,12 +240,14 @@ func outputReports(reports []securityv1alpha1.TLSComplianceReport) error {
 	switch outputFormat {
 	case "json":
 		return export.WriteJSON(os.Stdout, reports)
+	case "yaml":
+		return export.WriteYAML(os.Stdout, reports)
 	case "wide":
 		return printReportTableWide(reports)
 	case "table", "":
 		return printReportTable(reports)
 	default:
-		return fmt.Errorf("unknown output format: %s (supported: table, wide, json)", outputFormat)
+		return fmt.Errorf("unknown output format: %s (supported: table, wide, json, yaml)", outputFormat)
 	}
 }
 
