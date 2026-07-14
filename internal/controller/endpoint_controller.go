@@ -439,6 +439,9 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 					TLS12: result.SupportsTLS12,
 					TLS13: result.SupportsTLS13,
 				}
+				if result.CheckDuration > 0 {
+					cr.Status.ScanDuration = result.CheckDuration.String()
+				}
 			}
 
 			cr.Status.ComplianceStatus = failureReasonToComplianceStatus(failReason)
@@ -481,6 +484,9 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 		cr.Status.NextRetryAt = nil
 		cr.Status.ConsecutiveErrors = 0
 		cr.Status.LastError = ""
+		if result.CheckDuration > 0 {
+			cr.Status.ScanDuration = result.CheckDuration.String()
+		}
 
 		oldComplianceStatus = cr.Status.ComplianceStatus
 		oldPQCReadiness = cr.Status.PQCReadiness

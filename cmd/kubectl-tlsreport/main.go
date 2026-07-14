@@ -440,6 +440,9 @@ func printReportDetail(r securityv1alpha1.TLSComplianceReport) error {
 		_, _ = fmt.Fprintf(w, "  Last Check:         %s\n", r.Status.LastCheckAt.Format("2006-01-02 15:04:05 UTC"))
 	}
 	_, _ = fmt.Fprintf(w, "  Check Count:        %d\n", r.Status.CheckCount)
+	if r.Status.ScanDuration != "" {
+		_, _ = fmt.Fprintf(w, "  Scan Duration:      %s\n", r.Status.ScanDuration)
+	}
 	_, _ = fmt.Fprintf(w, "  Consecutive Errors: %d\n", r.Status.ConsecutiveErrors)
 	if r.Status.RetryCount > 0 {
 		_, _ = fmt.Fprintf(w, "  Retry Count:        %d\n", r.Status.RetryCount)

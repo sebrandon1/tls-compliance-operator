@@ -249,6 +249,10 @@ type TLSComplianceReportStatus struct {
 	// +optional
 	CheckCount int64 `json:"checkCount,omitempty"`
 
+	// ScanDuration is the wall-clock time taken by the last TLS check (e.g. "1.23s")
+	// +optional
+	ScanDuration string `json:"scanDuration,omitempty"`
+
 	// ConsecutiveErrors is the number of consecutive check errors
 	// +optional
 	ConsecutiveErrors int `json:"consecutiveErrors,omitempty"`
