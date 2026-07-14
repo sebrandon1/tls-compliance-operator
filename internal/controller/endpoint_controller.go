@@ -25,6 +25,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -112,6 +113,7 @@ func (r *EndpointReconciler) updateWithRetry(ctx context.Context, name string, m
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers,verbs=get;list;watch
@@ -170,7 +172,40 @@ func (r *EndpointReconciler) handleEndpoints(ctx context.Context, endpoints []en
 }
 
 func (r *EndpointReconciler) handleService(ctx context.Context, svc *corev1.Service) (ctrl.Result, error) {
+	if endpoint.IsHeadlessService(svc) {
+		return r.handleHeadlessService(ctx, svc)
+	}
 	endpoints := endpoint.ExtractFromService(svc)
+	if len(endpoints) == 0 {
+		metrics.RecordReconcile("success")
+		return ctrl.Result{}, nil
+	}
+	return r.handleEndpoints(ctx, endpoints, "Service")
+}
+
+func (r *EndpointReconciler) handleHeadlessService(ctx context.Context, svc *corev1.Service) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	var epSlices discoveryv1.EndpointSliceList
+	if err := r.List(ctx, &epSlices,
+		client.InNamespace(svc.Namespace),
+		client.MatchingLabels{"kubernetes.io/service-name": svc.Name},
+	); err != nil {
+		logger.Error(err, "failed to list EndpointSlices for headless service", "service", svc.Name)
+		return ctrl.Result{}, nil
+	}
+
+	var addresses []string
+	for i := range epSlices.Items {
+		for _, ep := range epSlices.Items[i].Endpoints {
+			if ep.Conditions.Ready != nil && !*ep.Conditions.Ready {
+				continue
+			}
+			addresses = append(addresses, ep.Addresses...)
+		}
+	}
+
+	endpoints := endpoint.ExtractFromHeadlessService(svc, addresses)
 	if len(endpoints) == 0 {
 		metrics.RecordReconcile("success")
 		return ctrl.Result{}, nil
@@ -839,11 +874,23 @@ func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return []ctrl.Request{{NamespacedName: client.ObjectKeyFromObject(obj)}}
 	}
 
+	enqueueOwnerService := func(_ context.Context, obj client.Object) []ctrl.Request {
+		svcName := obj.GetLabels()["kubernetes.io/service-name"]
+		if svcName == "" {
+			return nil
+		}
+		return []ctrl.Request{{NamespacedName: client.ObjectKey{
+			Namespace: obj.GetNamespace(),
+			Name:      svcName,
+		}}}
+	}
+
 	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Service{}).
 		Named("endpoint").
 		WithOptions(controller.Options{MaxConcurrentReconciles: r.Workers}).
 		Watches(&networkingv1.Ingress{}, handler.EnqueueRequestsFromMapFunc(enqueueObject)).
+		Watches(&discoveryv1.EndpointSlice{}, handler.EnqueueRequestsFromMapFunc(enqueueOwnerService)).
 		Watches(&securityv1alpha1.TLSComplianceTarget{}, handler.EnqueueRequestsFromMapFunc(enqueueObject))
 
 	if r.RouteAPIAvailable {

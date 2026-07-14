@@ -44,6 +44,32 @@ const MaxCRNameLength = 63
 // sanitizeRegex matches characters not allowed in Kubernetes names
 var sanitizeRegex = regexp.MustCompile(`[^a-z0-9-]`)
 
+// IsHeadlessService returns true if the service has ClusterIP set to "None".
+func IsHeadlessService(svc *corev1.Service) bool {
+	return svc.Spec.ClusterIP == corev1.ClusterIPNone
+}
+
+// ExtractFromHeadlessService returns TLS endpoints for each address of a
+// headless service. Each address × TLS port yields one endpoint.
+func ExtractFromHeadlessService(svc *corev1.Service, addresses []string) []Endpoint {
+	var endpoints []Endpoint
+	for _, port := range svc.Spec.Ports {
+		if !isTLSPort(port) {
+			continue
+		}
+		for _, addr := range addresses {
+			endpoints = append(endpoints, Endpoint{
+				Host:            addr,
+				Port:            port.Port,
+				SourceKind:      "Service",
+				SourceNamespace: svc.Namespace,
+				SourceName:      svc.Name,
+			})
+		}
+	}
+	return endpoints
+}
+
 // ExtractFromService returns TLS endpoints from a Service.
 // It looks for ports that are 443, 8443, or named https/https-*.
 // For ExternalName services, the host is spec.externalName and
