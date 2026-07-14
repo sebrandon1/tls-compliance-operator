@@ -38,7 +38,8 @@ const DefaultTimeout = 5 * time.Second
 
 // TLSChecker implements Checker using Go's crypto/tls
 type TLSChecker struct {
-	Timeout time.Duration
+	Timeout    time.Duration
+	ClientCert *tls.Certificate
 }
 
 // NewTLSChecker creates a new TLSChecker with the given timeout
@@ -209,6 +210,9 @@ func (c *TLSChecker) tryTLSVersion(ctx context.Context, addr, serverName string,
 		MaxVersion:         version,
 		InsecureSkipVerify: true, //nolint:gosec // We report cert info but don't enforce trust
 		ServerName:         serverName,
+	}
+	if c.ClientCert != nil {
+		tlsConfig.Certificates = []tls.Certificate{*c.ClientCert}
 	}
 
 	conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)

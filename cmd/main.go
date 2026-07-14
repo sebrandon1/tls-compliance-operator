@@ -89,6 +89,8 @@ type operatorConfig struct {
 	retryBackoff           time.Duration
 	maxBackoff             time.Duration
 	extraTLSPortsStr       string
+	clientCertPath         string
+	clientKeyPath          string
 	logFormat              string
 
 	zapOpts zap.Options
@@ -143,6 +145,10 @@ func parseFlags() *operatorConfig {
 		"Maximum backoff duration between retries (caps exponential growth)")
 	flag.StringVar(&cfg.extraTLSPortsStr, "extra-tls-ports", "",
 		"Comma-separated list of additional port numbers to treat as TLS endpoints (e.g., 9443,6380,5671)")
+	flag.StringVar(&cfg.clientCertPath, "client-cert", "",
+		"Path to a PEM-encoded client certificate for mTLS endpoint probing")
+	flag.StringVar(&cfg.clientKeyPath, "client-key", "",
+		"Path to a PEM-encoded client private key for mTLS endpoint probing")
 	flag.StringVar(&cfg.logFormat, "log-format", "text",
 		"Log output format: text or json")
 
@@ -283,6 +289,16 @@ func setupManager(ctx context.Context, cfg *operatorConfig) ctrl.Manager {
 	}
 
 	baseChecker := tlscheck.NewTLSChecker(cfg.tlsCheckTimeout)
+	if cfg.clientCertPath != "" && cfg.clientKeyPath != "" {
+		clientCert, err := tls.LoadX509KeyPair(cfg.clientCertPath, cfg.clientKeyPath)
+		if err != nil {
+			setupLog.Error(err, "failed to load client certificate for mTLS probing")
+			os.Exit(1)
+		}
+		baseChecker.ClientCert = &clientCert
+		setupLog.Info("mTLS client certificate configured for endpoint probing",
+			"certPath", cfg.clientCertPath)
+	}
 	checker := tlscheck.NewRateLimitedChecker(baseChecker, cfg.rateLimit, cfg.rateBurst)
 
 	setupLog.Info("TLS checker configured",
@@ -373,6 +389,8 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_RETRY_BACKOFF", "retry-backoff"},
 	{"TLS_COMPLIANCE_MAX_BACKOFF", "max-backoff"},
 	{"TLS_COMPLIANCE_EXTRA_TLS_PORTS", "extra-tls-ports"},
+	{"TLS_COMPLIANCE_CLIENT_CERT", "client-cert"},
+	{"TLS_COMPLIANCE_CLIENT_KEY", "client-key"},
 	{"TLS_COMPLIANCE_LOG_FORMAT", "log-format"},
 }
 

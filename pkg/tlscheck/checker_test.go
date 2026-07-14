@@ -529,3 +529,94 @@ func TestTLSChecker_CertificateExpiry(t *testing.T) {
 		t.Errorf("expected days until expiry to be 0 or 1, got %d", result.Certificate.DaysUntilExpiry)
 	}
 }
+
+func generateCACert(t *testing.T) (tls.Certificate, *x509.Certificate) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "Test CA"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
+		DNSNames:              []string{"localhost"},
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("failed to create CA certificate: %v", err)
+	}
+	parsed, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		t.Fatalf("failed to parse CA certificate: %v", err)
+	}
+	return tls.Certificate{Certificate: [][]byte{certDER}, PrivateKey: key}, parsed
+}
+
+func TestTLSChecker_ClientCert_mTLSEndpoint(t *testing.T) {
+	caCert, caParsed := generateCACert(t)
+
+	caPool := x509.NewCertPool()
+	caPool.AddCert(caParsed)
+
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{caCert},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    caPool,
+		MinVersion:   tls.VersionTLS12,
+		MaxVersion:   tls.VersionTLS12,
+	}
+
+	listener, err := tls.Listen("tcp", "127.0.0.1:0", tlsConfig)
+	if err != nil {
+		t.Fatalf("failed to start mTLS listener: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			tlsConn, ok := conn.(*tls.Conn)
+			if ok {
+				_ = tlsConn.Handshake()
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	addr := listener.Addr().(*net.TCPAddr)
+
+	// Without client cert — should fail (the exact classification depends
+	// on the TLS alert the server sends; we just verify it fails)
+	checker := NewTLSChecker(2 * time.Second)
+	_, err = checker.CheckEndpoint(context.Background(), addr.IP.String(), addr.Port)
+	if err == nil {
+		t.Fatal("expected error without client cert")
+	}
+
+	// With client cert — should succeed and report full TLS details
+	checkerWithCert := NewTLSChecker(2 * time.Second)
+	checkerWithCert.ClientCert = &caCert
+	result, err := checkerWithCert.CheckEndpoint(context.Background(), addr.IP.String(), addr.Port)
+	if err != nil {
+		t.Fatalf("expected success with client cert, got error: %v", err)
+	}
+	if !result.SupportsTLS12 {
+		t.Error("expected TLS 1.2 to be supported with client cert")
+	}
+	if result.Certificate == nil {
+		t.Error("expected server certificate info to be populated")
+	}
+	if len(result.CipherSuites) == 0 {
+		t.Error("expected cipher suites to be populated with client cert")
+	}
+}
