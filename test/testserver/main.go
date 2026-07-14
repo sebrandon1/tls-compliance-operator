@@ -73,6 +73,7 @@ type config struct {
 	maxVersion      string
 	tlsEnabled      bool
 	mtlsRequired    bool
+	disableMLKEM    bool
 	port            int
 	certExpired     bool
 	certExpiryHours int
@@ -85,6 +86,7 @@ func loadConfig() config {
 		maxVersion:   envOrDefault("TLS_MAX_VERSION", "1.3"),
 		tlsEnabled:   envOrDefault("TLS_ENABLED", "true") == "true",
 		mtlsRequired: envOrDefault("MTLS_REQUIRED", "false") == "true",
+		disableMLKEM: envOrDefault("DISABLE_MLKEM", "false") == "true",
 		certExpired:  envOrDefault("CERT_EXPIRED", "false") == "true",
 		certCN:       envOrDefault("CERT_CN", "tls-test-server"),
 	}
@@ -139,6 +141,10 @@ func buildTLSConfig(cfg config) (*tls.Config, error) {
 		MinVersion:   minVer,
 		MaxVersion:   maxVer,
 		Certificates: []tls.Certificate{serverCert},
+	}
+
+	if cfg.disableMLKEM {
+		tlsCfg.CurvePreferences = []tls.CurveID{tls.X25519, tls.CurveP256}
 	}
 
 	if cfg.mtlsRequired {

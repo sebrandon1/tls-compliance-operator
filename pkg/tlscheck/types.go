@@ -71,6 +71,10 @@ type TLSCheckResult struct {
 	// NegotiatedCurves maps TLS version to the negotiated key exchange curve name
 	NegotiatedCurves map[string]string
 
+	// MLKEMSupported indicates whether the endpoint accepted an ML-KEM
+	// key exchange when explicitly offered via active probing
+	MLKEMSupported bool
+
 	// Certificate details (from the first successful connection)
 	Certificate *CertificateDetails
 

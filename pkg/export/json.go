@@ -43,6 +43,7 @@ type JSONReport struct {
 	SSL30              bool              `json:"ssl30"`
 	QuantumReady       bool              `json:"quantumReady"`
 	PQCReadiness       string            `json:"pqcReadiness"`
+	MLKEMSupported     bool              `json:"mlkemSupported"`
 	CertExpiry         string            `json:"certExpiry"`
 	CertIssuer         string            `json:"certIssuer"`
 	PublicKeyAlgorithm string            `json:"publicKeyAlgorithm,omitempty"`
@@ -87,6 +88,7 @@ func reportToJSON(r *securityv1alpha1.TLSComplianceReport) JSONReport {
 		SSL30:            r.Status.TLSVersions.SSL30,
 		QuantumReady:     r.Status.QuantumReady,
 		PQCReadiness:     string(r.Status.PQCReadiness),
+		MLKEMSupported:   r.Status.MLKEMSupported,
 		CertExpiry:       certExpiry,
 		CertIssuer:       certIssuer,
 	}

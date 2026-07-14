@@ -104,6 +104,14 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 		}
 	}
 
+	if result.SupportsTLS13 && ctx.Err() == nil {
+		if strings.Contains(result.NegotiatedCurves["TLS 1.3"], "MLKEM") {
+			result.MLKEMSupported = true
+		} else {
+			result.MLKEMSupported = c.probeMLKEM(ctx, addr, host)
+		}
+	}
+
 	// Probe SSLv3 via raw socket (Go's crypto/tls removed SSLv3 support)
 	if ctx.Err() == nil {
 		result.SupportsSSL30 = c.ProbeSSL30(ctx, addr)
@@ -229,6 +237,30 @@ func (c *TLSChecker) tryTLSVersion(ctx context.Context, addr, serverName string,
 	}
 
 	return true, cipherSuiteName, curve, certDetails, nil
+}
+
+// probeMLKEM performs a TLS 1.3 handshake offering only ML-KEM key exchange
+// to determine whether the server actively supports post-quantum key exchange.
+func (c *TLSChecker) probeMLKEM(ctx context.Context, addr, serverName string) bool {
+	dialer := &net.Dialer{
+		Timeout: c.Timeout,
+	}
+
+	tlsConfig := &tls.Config{
+		MinVersion:         tls.VersionTLS13,
+		MaxVersion:         tls.VersionTLS13,
+		CurvePreferences:   []tls.CurveID{tls.X25519MLKEM768},
+		InsecureSkipVerify: true, //nolint:gosec // We probe capabilities, not trust
+		ServerName:         serverName,
+	}
+
+	conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
+	if err != nil {
+		return false
+	}
+	conn.Close() //nolint:errcheck
+
+	return true
 }
 
 // RateLimitedChecker wraps a Checker with rate limiting

@@ -501,6 +501,7 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 		cr.Status.NegotiatedCurves = result.NegotiatedCurves
 		cr.Status.PQCReadiness = pqcReadiness
 		cr.Status.QuantumReady = pqcReadiness == securityv1alpha1.PQCReadinessPQCReady
+		cr.Status.MLKEMSupported = result.MLKEMSupported
 
 		if result.Certificate != nil {
 			notBefore := metav1.NewTime(result.Certificate.NotBefore)
@@ -600,7 +601,7 @@ func determinePQCReadiness(result *tlscheck.TLSCheckResult) securityv1alpha1.PQC
 	if !result.SupportsTLS13 {
 		return securityv1alpha1.PQCReadinessLegacyTLS
 	}
-	if isQuantumReady(result.NegotiatedCurves) {
+	if result.MLKEMSupported || isQuantumReady(result.NegotiatedCurves) {
 		return securityv1alpha1.PQCReadinessPQCReady
 	}
 	return securityv1alpha1.PQCReadinessTLS13Capable
@@ -705,7 +706,11 @@ func (r *EndpointReconciler) updateConditions(cr *securityv1alpha1.TLSCompliance
 	case securityv1alpha1.PQCReadinessPQCReady:
 		pqcCondition.Status = metav1.ConditionTrue
 		pqcCondition.Reason = "PQCReady"
-		pqcCondition.Message = "Endpoint supports TLS 1.3 with post-quantum key exchange (ML-KEM)"
+		if result.MLKEMSupported {
+			pqcCondition.Message = "Endpoint supports TLS 1.3 with ML-KEM key exchange (verified by active probe)"
+		} else {
+			pqcCondition.Message = "Endpoint supports TLS 1.3 with post-quantum key exchange (ML-KEM)"
+		}
 	case securityv1alpha1.PQCReadinessTLS13Capable:
 		pqcCondition.Status = metav1.ConditionFalse
 		pqcCondition.Reason = "TLS13Capable"

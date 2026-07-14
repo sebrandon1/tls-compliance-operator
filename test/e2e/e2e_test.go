@@ -508,6 +508,100 @@ spec:
 	})
 
 	// =========================================================================
+	// ML-KEM PROBING TESTS — verify active post-quantum key exchange detection
+	// =========================================================================
+
+	Context("ML-KEM Active Probing", Label("compliance-positive"), func() {
+		const testNS = "tls-e2e-mlkem"
+
+		BeforeAll(func() {
+			cmd := exec.Command("kubectl", "create", "ns", testNS)
+			_, _ = utils.Run(cmd)
+			cmd = exec.Command("kubectl", "label", "--overwrite", "ns", testNS,
+				"pod-security.kubernetes.io/enforce=privileged")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		AfterAll(func() {
+			cmd := exec.Command("kubectl", "delete", "ns", testNS, "--ignore-not-found", "--timeout=60s")
+			_, _ = utils.Run(cmd)
+		})
+
+		deployTestServer := func(name string, port int, env map[string]string) {
+			manifest := renderManifest("testserver-pod.yaml", struct {
+				Name, Namespace, Image string
+				Port                  int
+				Env                   map[string]string
+			}{name, testNS, testServerImage, port, env})
+			kubectlApplyManifest(manifest, "test server pod "+name)
+		}
+
+		createTestService := func(name string, port int) {
+			manifest := renderManifest("testserver-service.yaml", struct {
+				Name, Namespace string
+				Port            int
+			}{name, testNS, port})
+			kubectlApplyManifest(manifest, "test server service "+name)
+		}
+
+		waitForPodRunning := func(name string) {
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "pod", name, "-n", testNS,
+					"-o", "jsonpath={.status.phase}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(output)).To(Equal("Running"))
+			}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+		}
+
+		It("should report PQCReady and mlkemSupported=true for ML-KEM capable endpoint", func() {
+			name := "test-mlkem-enabled"
+			deployTestServer(name, 8443, map[string]string{
+				"TLS_MIN_VERSION": "1.3", "TLS_MAX_VERSION": "1.3",
+			})
+			createTestService(name, 8443)
+			waitForPodRunning(name)
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "pod,svc", name, "-n", testNS, "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport",
+					"-o", "jsonpath={range .items[*]}{.spec.host},{.spec.port},{.status.pqcReadiness},{.status.mlkemSupported}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring(
+					fmt.Sprintf("%s.%s,%d,%s,%s", name, testNS, 8443, "PQCReady", "true")))
+			}).WithTimeout(5 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
+		})
+
+		It("should report TLS13Capable and mlkemSupported=false when ML-KEM is disabled", func() {
+			name := "test-mlkem-disabled"
+			deployTestServer(name, 8443, map[string]string{
+				"TLS_MIN_VERSION": "1.3", "TLS_MAX_VERSION": "1.3",
+				"DISABLE_MLKEM": "true",
+			})
+			createTestService(name, 8443)
+			waitForPodRunning(name)
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "pod,svc", name, "-n", testNS, "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport",
+					"-o", "jsonpath={range .items[*]}{.spec.host},{.spec.port},{.status.pqcReadiness},{.status.mlkemSupported}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring(
+					fmt.Sprintf("%s.%s,%d,%s,%s", name, testNS, 8443, "TLS13Capable", "false")))
+			}).WithTimeout(5 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
+		})
+	})
+
+	// =========================================================================
 	// NEGATIVE TESTS — verify reports are NOT created or are cleaned up
 	// =========================================================================
 

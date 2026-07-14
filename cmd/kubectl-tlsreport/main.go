@@ -249,25 +249,18 @@ func outputReports(reports []securityv1alpha1.TLSComplianceReport) error {
 
 func printReportTable(reports []securityv1alpha1.TLSComplianceReport) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "NAME\tHOST\tPORT\tSOURCE\tSTATUS\tTLS 1.2\tTLS 1.3\tPQC\tGRADE")
+	_, _ = fmt.Fprintln(w, "NAME\tHOST\tPORT\tSOURCE\tSTATUS\tTLS 1.2\tTLS 1.3\tPQC\tMLKEM\tGRADE")
 	for _, r := range reports {
-		tls12 := "-"
-		tls13 := "-"
-		if r.Status.TLSVersions.TLS12 {
-			tls12 = "true"
-		}
-		if r.Status.TLSVersions.TLS13 {
-			tls13 = "true"
-		}
-
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			r.Name,
 			r.Spec.Host,
 			r.Spec.Port,
 			string(r.Spec.SourceKind),
 			string(r.Status.ComplianceStatus),
-			tls12, tls13,
+			boolDash(r.Status.TLSVersions.TLS12),
+			boolDash(r.Status.TLSVersions.TLS13),
 			string(r.Status.PQCReadiness),
+			boolDash(r.Status.MLKEMSupported),
 			r.Status.OverallCipherGrade,
 		)
 	}
@@ -276,17 +269,8 @@ func printReportTable(reports []securityv1alpha1.TLSComplianceReport) error {
 
 func printReportTableWide(reports []securityv1alpha1.TLSComplianceReport) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "NAME\tHOST\tPORT\tSOURCE\tSTATUS\tTLS 1.2\tTLS 1.3\tPQC\tGRADE\tISSUER\tEXPIRY")
+	_, _ = fmt.Fprintln(w, "NAME\tHOST\tPORT\tSOURCE\tSTATUS\tTLS 1.2\tTLS 1.3\tPQC\tMLKEM\tGRADE\tISSUER\tEXPIRY")
 	for _, r := range reports {
-		tls12 := "-"
-		tls13 := "-"
-		if r.Status.TLSVersions.TLS12 {
-			tls12 = "true"
-		}
-		if r.Status.TLSVersions.TLS13 {
-			tls13 = "true"
-		}
-
 		issuer := "-"
 		expiry := "-"
 		if r.Status.CertificateInfo != nil {
@@ -298,14 +282,16 @@ func printReportTableWide(reports []securityv1alpha1.TLSComplianceReport) error 
 			}
 		}
 
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			r.Name,
 			r.Spec.Host,
 			r.Spec.Port,
 			string(r.Spec.SourceKind),
 			string(r.Status.ComplianceStatus),
-			tls12, tls13,
+			boolDash(r.Status.TLSVersions.TLS12),
+			boolDash(r.Status.TLSVersions.TLS13),
 			string(r.Status.PQCReadiness),
+			boolDash(r.Status.MLKEMSupported),
 			r.Status.OverallCipherGrade,
 			issuer,
 			expiry,
@@ -342,6 +328,7 @@ func printReportDetail(r securityv1alpha1.TLSComplianceReport) error {
 	_, _ = fmt.Fprintf(w, "  Status:          %s\n", r.Status.ComplianceStatus)
 	_, _ = fmt.Fprintf(w, "  PQC Readiness:   %s\n", r.Status.PQCReadiness)
 	_, _ = fmt.Fprintf(w, "  Quantum Ready:   %v\n", r.Status.QuantumReady)
+	_, _ = fmt.Fprintf(w, "  ML-KEM Supported: %v\n", r.Status.MLKEMSupported)
 	_, _ = fmt.Fprintf(w, "  Cipher Grade:    %s\n", r.Status.OverallCipherGrade)
 	_, _ = fmt.Fprintf(w, "  Forward Secrecy: %v\n", r.Status.ForwardSecrecy)
 
@@ -461,6 +448,13 @@ func printReportDetail(r securityv1alpha1.TLSComplianceReport) error {
 	}
 
 	return nil
+}
+
+func boolDash(b bool) string {
+	if b {
+		return "true"
+	}
+	return "-"
 }
 
 func fetchReports() ([]securityv1alpha1.TLSComplianceReport, error) {

@@ -388,6 +388,11 @@ spec:
                 description: LastSeenAt is when this endpoint was last observed
                 format: date-time
                 type: string
+              mlkemSupported:
+                description: |-
+                  MLKEMSupported indicates whether the endpoint accepted an ML-KEM
+                  key exchange when explicitly offered via active probing
+                type: boolean
               negotiatedCurves:
                 additionalProperties:
                   type: string

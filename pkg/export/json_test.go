@@ -389,6 +389,7 @@ func TestWriteJSON_PQCReadinessValues(t *testing.T) {
 			Status: securityv1alpha1.TLSComplianceReportStatus{
 				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
 				PQCReadiness:     pqc,
+				MLKEMSupported:   pqc == securityv1alpha1.PQCReadinessPQCReady,
 			},
 		})
 	}
@@ -406,6 +407,10 @@ func TestWriteJSON_PQCReadinessValues(t *testing.T) {
 	for i, pqc := range pqcValues {
 		if result[i].PQCReadiness != string(pqc) {
 			t.Errorf("item %d: expected PQCReadiness %q, got %q", i, pqc, result[i].PQCReadiness)
+		}
+		expectMLKEM := pqc == securityv1alpha1.PQCReadinessPQCReady
+		if result[i].MLKEMSupported != expectMLKEM {
+			t.Errorf("item %d: expected MLKEMSupported %v, got %v", i, expectMLKEM, result[i].MLKEMSupported)
 		}
 	}
 }

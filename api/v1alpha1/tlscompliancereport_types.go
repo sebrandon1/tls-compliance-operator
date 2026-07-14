@@ -218,6 +218,11 @@ type TLSComplianceReportStatus struct {
 	// +optional
 	QuantumReady bool `json:"quantumReady"`
 
+	// MLKEMSupported indicates whether the endpoint accepted an ML-KEM
+	// key exchange when explicitly offered via active probing
+	// +optional
+	MLKEMSupported bool `json:"mlkemSupported"`
+
 	// PQCReadiness classifies the endpoint's post-quantum cryptography readiness:
 	// PQCReady (TLS 1.3 + ML-KEM), TLS13Capable (TLS 1.3 without ML-KEM),
 	// LegacyTLS (TLS 1.2 or older only), or NoPQC (no TLS detected)

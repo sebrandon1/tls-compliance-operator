@@ -73,12 +73,18 @@ func generateTestCert(t *testing.T) (tls.Certificate, *x509.Certificate) {
 
 // startTLSServer starts a TLS server with the given min/max TLS versions
 func startTLSServer(t *testing.T, cert tls.Certificate, minVersion, maxVersion uint16) (string, int, func()) {
+	return startTLSServerWithCurves(t, cert, minVersion, maxVersion, nil)
+}
+
+// startTLSServerWithCurves starts a TLS server with explicit curve preferences
+func startTLSServerWithCurves(t *testing.T, cert tls.Certificate, minVersion, maxVersion uint16, curves []tls.CurveID) (string, int, func()) {
 	t.Helper()
 
 	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   minVersion,
-		MaxVersion:   maxVersion,
+		Certificates:     []tls.Certificate{cert},
+		MinVersion:       minVersion,
+		MaxVersion:       maxVersion,
+		CurvePreferences: curves,
 	}
 
 	listener, err := tls.Listen("tcp", "127.0.0.1:0", tlsConfig)
@@ -92,7 +98,6 @@ func startTLSServer(t *testing.T, cert tls.Certificate, minVersion, maxVersion u
 			if err != nil {
 				return
 			}
-			// Complete the TLS handshake before closing
 			tlsConn, ok := conn.(*tls.Conn)
 			if ok {
 				_ = tlsConn.Handshake()
@@ -432,6 +437,62 @@ func TestParseCertificate_KubernetesSuffixMatch(t *testing.T) {
 				t.Errorf("ParseCertificate(%q).HostnameMatch = %v, want %v", tt.hostname, details.HostnameMatch, tt.want)
 			}
 		})
+	}
+}
+
+func TestTLSChecker_ProbeMLKEM_Supported(t *testing.T) {
+	cert, _ := generateTestCert(t)
+	// Default CurvePreferences in Go 1.24+ include X25519MLKEM768
+	host, port, cleanup := startTLSServer(t, cert, tls.VersionTLS13, tls.VersionTLS13)
+	defer cleanup()
+
+	checker := NewTLSChecker(2 * time.Second)
+	result, err := checker.CheckEndpoint(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("CheckEndpoint() error = %v", err)
+	}
+
+	if !result.SupportsTLS13 {
+		t.Fatal("expected TLS 1.3 to be supported")
+	}
+	if !result.MLKEMSupported {
+		t.Error("expected MLKEMSupported to be true (server uses Go defaults which include X25519MLKEM768)")
+	}
+}
+
+func TestTLSChecker_ProbeMLKEM_NotSupported(t *testing.T) {
+	cert, _ := generateTestCert(t)
+	host, port, cleanup := startTLSServerWithCurves(t, cert, tls.VersionTLS13, tls.VersionTLS13,
+		[]tls.CurveID{tls.X25519, tls.CurveP256})
+	defer cleanup()
+
+	checker := NewTLSChecker(2 * time.Second)
+	result, err := checker.CheckEndpoint(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("CheckEndpoint() error = %v", err)
+	}
+
+	if !result.SupportsTLS13 {
+		t.Fatal("expected TLS 1.3 to be supported")
+	}
+	if result.MLKEMSupported {
+		t.Error("expected MLKEMSupported to be false (server only allows classical curves)")
+	}
+}
+
+func TestTLSChecker_ProbeMLKEM_TLS12Only(t *testing.T) {
+	cert, _ := generateTestCert(t)
+	host, port, cleanup := startTLSServer(t, cert, tls.VersionTLS12, tls.VersionTLS12)
+	defer cleanup()
+
+	checker := NewTLSChecker(2 * time.Second)
+	result, err := checker.CheckEndpoint(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("CheckEndpoint() error = %v", err)
+	}
+
+	if result.MLKEMSupported {
+		t.Error("expected MLKEMSupported to be false (TLS 1.2 only, probe should be skipped)")
 	}
 }
 
