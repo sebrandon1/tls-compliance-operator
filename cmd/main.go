@@ -89,6 +89,7 @@ type operatorConfig struct {
 	retryBackoff           time.Duration
 	maxBackoff             time.Duration
 	extraTLSPortsStr       string
+	enumerateCiphers       bool
 	logFormat              string
 
 	zapOpts zap.Options
@@ -143,6 +144,8 @@ func parseFlags() *operatorConfig {
 		"Maximum backoff duration between retries (caps exponential growth)")
 	flag.StringVar(&cfg.extraTLSPortsStr, "extra-tls-ports", "",
 		"Comma-separated list of additional port numbers to treat as TLS endpoints (e.g., 9443,6380,5671)")
+	flag.BoolVar(&cfg.enumerateCiphers, "enumerate-ciphers", true,
+		"Enumerate all supported cipher suites per TLS version (disable for faster scans)")
 	flag.StringVar(&cfg.logFormat, "log-format", "text",
 		"Log output format: text or json")
 
@@ -283,10 +286,12 @@ func setupManager(ctx context.Context, cfg *operatorConfig) ctrl.Manager {
 	}
 
 	baseChecker := tlscheck.NewTLSChecker(cfg.tlsCheckTimeout)
+	baseChecker.EnumerateCiphers = cfg.enumerateCiphers
 	checker := tlscheck.NewRateLimitedChecker(baseChecker, cfg.rateLimit, cfg.rateBurst)
 
 	setupLog.Info("TLS checker configured",
 		"timeout", cfg.tlsCheckTimeout,
+		"enumerateCiphers", cfg.enumerateCiphers,
 		"rateLimit", cfg.rateLimit,
 		"rateBurst", cfg.rateBurst,
 		"scanInterval", cfg.scanInterval,
@@ -373,6 +378,7 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_RETRY_BACKOFF", "retry-backoff"},
 	{"TLS_COMPLIANCE_MAX_BACKOFF", "max-backoff"},
 	{"TLS_COMPLIANCE_EXTRA_TLS_PORTS", "extra-tls-ports"},
+	{"TLS_COMPLIANCE_ENUMERATE_CIPHERS", "enumerate-ciphers"},
 	{"TLS_COMPLIANCE_LOG_FORMAT", "log-format"},
 }
 
@@ -444,6 +450,10 @@ func validateEnvValue(flagName, value string) error {
 	case "extra-tls-ports":
 		_, err := parsePortList(value)
 		return err
+	case "enumerate-ciphers":
+		if value != "true" && value != "false" {
+			return fmt.Errorf("must be true or false, got %q", value)
+		}
 	case "log-format":
 		if value != "text" && value != "json" {
 			return fmt.Errorf("must be text or json, got %q", value)

@@ -529,3 +529,98 @@ func TestTLSChecker_CertificateExpiry(t *testing.T) {
 		t.Errorf("expected days until expiry to be 0 or 1, got %d", result.Certificate.DaysUntilExpiry)
 	}
 }
+
+func startTLSServerWithCipherSuites(t *testing.T, cert tls.Certificate, version uint16, cipherSuites []uint16) (string, int, func()) {
+	t.Helper()
+
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   version,
+		MaxVersion:   version,
+		CipherSuites: cipherSuites,
+	}
+
+	listener, err := tls.Listen("tcp", "127.0.0.1:0", tlsConfig)
+	if err != nil {
+		t.Fatalf("failed to start TLS listener: %v", err)
+	}
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			tlsConn, ok := conn.(*tls.Conn)
+			if ok {
+				_ = tlsConn.Handshake()
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	addr := listener.Addr().(*net.TCPAddr)
+	return addr.IP.String(), addr.Port, func() { _ = listener.Close() }
+}
+
+func TestTLSChecker_EnumerateCiphers_MultipleSuites(t *testing.T) {
+	cert, _ := generateTestCert(t)
+	serverCiphers := []uint16{
+		tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+		tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+		tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+	}
+	host, port, cleanup := startTLSServerWithCipherSuites(t, cert, tls.VersionTLS12, serverCiphers)
+	defer cleanup()
+
+	checker := NewTLSChecker(2 * time.Second)
+	result, err := checker.CheckEndpoint(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("CheckEndpoint() error = %v", err)
+	}
+
+	suites := result.CipherSuites["TLS 1.2"]
+	if len(suites) < 2 {
+		t.Errorf("expected at least 2 cipher suites with enumeration, got %d: %v", len(suites), suites)
+	}
+}
+
+func TestTLSChecker_EnumerateCiphers_Disabled(t *testing.T) {
+	cert, _ := generateTestCert(t)
+	serverCiphers := []uint16{
+		tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+		tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+		tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+	}
+	host, port, cleanup := startTLSServerWithCipherSuites(t, cert, tls.VersionTLS12, serverCiphers)
+	defer cleanup()
+
+	checker := NewTLSChecker(2 * time.Second)
+	checker.EnumerateCiphers = false
+	result, err := checker.CheckEndpoint(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("CheckEndpoint() error = %v", err)
+	}
+
+	suites := result.CipherSuites["TLS 1.2"]
+	if len(suites) != 1 {
+		t.Errorf("expected exactly 1 cipher suite with enumeration disabled, got %d: %v", len(suites), suites)
+	}
+}
+
+func TestTLSChecker_EnumerateCiphers_TLS13NotEnumerated(t *testing.T) {
+	cert, _ := generateTestCert(t)
+	host, port, cleanup := startTLSServer(t, cert, tls.VersionTLS13, tls.VersionTLS13)
+	defer cleanup()
+
+	checker := NewTLSChecker(2 * time.Second)
+	result, err := checker.CheckEndpoint(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("CheckEndpoint() error = %v", err)
+	}
+
+	suites := result.CipherSuites["TLS 1.3"]
+	if len(suites) != 1 {
+		t.Errorf("expected exactly 1 cipher suite for TLS 1.3 (not enumerable), got %d: %v", len(suites), suites)
+	}
+}
