@@ -158,6 +158,99 @@ func ExtractFromRoute(obj *unstructured.Unstructured) []Endpoint {
 	return endpoints
 }
 
+// ExtractFromHTTPRoute extracts TLS endpoints from a Gateway API HTTPRoute (unstructured).
+// It uses hostnames from spec.hostnames and assumes port 443.
+func ExtractFromHTTPRoute(obj *unstructured.Unstructured) []Endpoint {
+	hostnames, _, _ := unstructured.NestedStringSlice(obj.Object, "spec", "hostnames")
+	if len(hostnames) == 0 {
+		return nil
+	}
+
+	var endpoints []Endpoint
+	for _, host := range hostnames {
+		endpoints = append(endpoints, Endpoint{
+			Host:            host,
+			Port:            443,
+			SourceKind:      "HTTPRoute",
+			SourceNamespace: obj.GetNamespace(),
+			SourceName:      obj.GetName(),
+		})
+	}
+	return endpoints
+}
+
+// ExtractFromTLSRoute extracts TLS endpoints from a Gateway API TLSRoute (unstructured).
+func ExtractFromTLSRoute(obj *unstructured.Unstructured) []Endpoint {
+	hostnames, _, _ := unstructured.NestedStringSlice(obj.Object, "spec", "hostnames")
+	if len(hostnames) == 0 {
+		return nil
+	}
+
+	var endpoints []Endpoint
+	for _, host := range hostnames {
+		endpoints = append(endpoints, Endpoint{
+			Host:            host,
+			Port:            443,
+			SourceKind:      "TLSRoute",
+			SourceNamespace: obj.GetNamespace(),
+			SourceName:      obj.GetName(),
+		})
+	}
+	return endpoints
+}
+
+// ExtractFromGateway extracts TLS endpoints from a Gateway API Gateway (unstructured).
+// It scans listeners for TLS-configured entries.
+func ExtractFromGateway(obj *unstructured.Unstructured) []Endpoint {
+	listeners, _, _ := unstructured.NestedSlice(obj.Object, "spec", "listeners")
+	if len(listeners) == 0 {
+		return nil
+	}
+
+	addresses, _, _ := unstructured.NestedSlice(obj.Object, "status", "addresses")
+	host := ""
+	for _, addr := range addresses {
+		addrMap, ok := addr.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if v, ok := addrMap["value"].(string); ok && v != "" {
+			host = v
+			break
+		}
+	}
+	if host == "" {
+		host = obj.GetName()
+	}
+
+	var endpoints []Endpoint
+	for _, l := range listeners {
+		listener, ok := l.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		protocol, _, _ := unstructured.NestedString(listener, "protocol")
+		if protocol != "HTTPS" && protocol != "TLS" {
+			continue
+		}
+
+		port, found, _ := unstructured.NestedInt64(listener, "port")
+		if !found || port < 1 || port > 65535 {
+			continue
+		}
+
+		endpoints = append(endpoints, Endpoint{
+			Host:            host,
+			Port:            int32(port),
+			SourceKind:      "Gateway",
+			SourceNamespace: obj.GetNamespace(),
+			SourceName:      obj.GetName(),
+		})
+	}
+	return endpoints
+}
+
 // GenerateCRName creates a deterministic CR name from an endpoint.
 // Format: <sanitized-host>-<port>-<8-char-hash>
 // The hash is derived from sourceKind/sourceNamespace/sourceName/host/port.

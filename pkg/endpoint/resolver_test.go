@@ -1108,3 +1108,123 @@ func TestExtraTLSPorts_PodExtraction(t *testing.T) {
 		t.Errorf("port = %d, want 7777", endpoints[0].Port)
 	}
 }
+
+func TestExtractFromHTTPRoute(t *testing.T) {
+	route := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "gateway.networking.k8s.io/v1",
+			"kind":       "HTTPRoute",
+			"metadata":   map[string]interface{}{"name": "my-route", "namespace": "default"},
+			"spec": map[string]interface{}{
+				"hostnames": []interface{}{"app.example.com", "api.example.com"},
+			},
+		},
+	}
+
+	endpoints := ExtractFromHTTPRoute(route)
+	if len(endpoints) != 2 {
+		t.Fatalf("expected 2 endpoints, got %d", len(endpoints))
+	}
+	if endpoints[0].Host != "app.example.com" {
+		t.Errorf("host = %q, want app.example.com", endpoints[0].Host)
+	}
+	if endpoints[0].SourceKind != "HTTPRoute" {
+		t.Errorf("sourceKind = %q, want HTTPRoute", endpoints[0].SourceKind)
+	}
+}
+
+func TestExtractFromHTTPRoute_NoHostnames(t *testing.T) {
+	route := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "gateway.networking.k8s.io/v1",
+			"kind":       "HTTPRoute",
+			"metadata":   map[string]interface{}{"name": "my-route", "namespace": "default"},
+			"spec":       map[string]interface{}{},
+		},
+	}
+
+	endpoints := ExtractFromHTTPRoute(route)
+	if len(endpoints) != 0 {
+		t.Errorf("expected 0 endpoints for HTTPRoute without hostnames, got %d", len(endpoints))
+	}
+}
+
+func TestExtractFromTLSRoute(t *testing.T) {
+	route := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "gateway.networking.k8s.io/v1alpha2",
+			"kind":       "TLSRoute",
+			"metadata":   map[string]interface{}{"name": "my-tls-route", "namespace": "default"},
+			"spec": map[string]interface{}{
+				"hostnames": []interface{}{"secure.example.com"},
+			},
+		},
+	}
+
+	endpoints := ExtractFromTLSRoute(route)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(endpoints))
+	}
+	if endpoints[0].SourceKind != "TLSRoute" {
+		t.Errorf("sourceKind = %q, want TLSRoute", endpoints[0].SourceKind)
+	}
+}
+
+func TestExtractFromGateway(t *testing.T) {
+	gw := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "gateway.networking.k8s.io/v1",
+			"kind":       "Gateway",
+			"metadata":   map[string]interface{}{"name": "my-gw", "namespace": "default"},
+			"spec": map[string]interface{}{
+				"listeners": []interface{}{
+					map[string]interface{}{"protocol": "HTTPS", "port": int64(443)},
+					map[string]interface{}{"protocol": "HTTP", "port": int64(80)},
+					map[string]interface{}{"protocol": "TLS", "port": int64(8443)},
+				},
+			},
+			"status": map[string]interface{}{
+				"addresses": []interface{}{
+					map[string]interface{}{"value": "10.0.0.1"},
+				},
+			},
+		},
+	}
+
+	endpoints := ExtractFromGateway(gw)
+	if len(endpoints) != 2 {
+		t.Fatalf("expected 2 endpoints (HTTPS + TLS), got %d", len(endpoints))
+	}
+	if endpoints[0].Host != "10.0.0.1" {
+		t.Errorf("host = %q, want 10.0.0.1", endpoints[0].Host)
+	}
+	if endpoints[0].Port != 443 {
+		t.Errorf("port = %d, want 443", endpoints[0].Port)
+	}
+	if endpoints[0].SourceKind != "Gateway" {
+		t.Errorf("sourceKind = %q, want Gateway", endpoints[0].SourceKind)
+	}
+}
+
+func TestExtractFromGateway_FallbackToName(t *testing.T) {
+	gw := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "gateway.networking.k8s.io/v1",
+			"kind":       "Gateway",
+			"metadata":   map[string]interface{}{"name": "my-gw", "namespace": "default"},
+			"spec": map[string]interface{}{
+				"listeners": []interface{}{
+					map[string]interface{}{"protocol": "HTTPS", "port": int64(443)},
+				},
+			},
+		},
+	}
+
+	endpoints := ExtractFromGateway(gw)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(endpoints))
+	}
+	if endpoints[0].Host != "my-gw" {
+		t.Errorf("host = %q, want my-gw (gateway name fallback)", endpoints[0].Host)
+	}
+}

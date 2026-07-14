@@ -264,6 +264,18 @@ func setupManager(ctx context.Context, cfg *operatorConfig) ctrl.Manager {
 		setupLog.Info("OpenShift Route API not detected, skipping Route monitoring")
 	}
 
+	gatewayAPIAvailable := false
+	_, err = restMapper.RESTMapping(schema.GroupKind{
+		Group: "gateway.networking.k8s.io",
+		Kind:  "HTTPRoute",
+	})
+	if err == nil {
+		gatewayAPIAvailable = true
+		setupLog.Info("Gateway API detected, enabling HTTPRoute/TLSRoute/Gateway monitoring")
+	} else {
+		setupLog.Info("Gateway API not detected, skipping Gateway resource monitoring")
+	}
+
 	var profileFetcher *tlsprofile.Fetcher
 	_, err = restMapper.RESTMapping(schema.GroupKind{
 		Group: "config.openshift.io",
@@ -299,20 +311,21 @@ func setupManager(ctx context.Context, cfg *operatorConfig) ctrl.Manager {
 		"retryBackoff", cfg.retryBackoff)
 
 	endpointReconciler := &controller.EndpointReconciler{
-		Client:            mgr.GetClient(),
-		Scheme:            mgr.GetScheme(),
-		TLSChecker:        checker,
-		Recorder:          mgr.GetEventRecorderFor("tls-compliance-controller"), //nolint:staticcheck
-		IncludeNamespaces: includedNS,
-		ExcludeNamespaces: excludedNS,
-		CertExpiryDays:    cfg.certExpiryWarningDays,
-		RouteAPIAvailable: routeAPIAvailable,
-		ProfileFetcher:    profileFetcher,
-		Workers:           cfg.workers,
-		MaxRetries:        cfg.maxRetries,
-		RetryBackoff:      cfg.retryBackoff,
-		MaxBackoff:        cfg.maxBackoff,
-		ManagerCtx:        ctx,
+		Client:              mgr.GetClient(),
+		Scheme:              mgr.GetScheme(),
+		TLSChecker:          checker,
+		Recorder:            mgr.GetEventRecorderFor("tls-compliance-controller"), //nolint:staticcheck
+		IncludeNamespaces:   includedNS,
+		ExcludeNamespaces:   excludedNS,
+		CertExpiryDays:      cfg.certExpiryWarningDays,
+		RouteAPIAvailable:   routeAPIAvailable,
+		GatewayAPIAvailable: gatewayAPIAvailable,
+		ProfileFetcher:      profileFetcher,
+		Workers:             cfg.workers,
+		MaxRetries:          cfg.maxRetries,
+		RetryBackoff:        cfg.retryBackoff,
+		MaxBackoff:          cfg.maxBackoff,
+		ManagerCtx:          ctx,
 	}
 
 	if err = endpointReconciler.SetupWithManager(mgr); err != nil {
