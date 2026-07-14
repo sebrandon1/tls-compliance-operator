@@ -219,6 +219,7 @@ func TestComputeSummary_PQCReadiness(t *testing.T) {
 			Status: securityv1alpha1.TLSComplianceReportStatus{
 				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
 				PQCReadiness:     securityv1alpha1.PQCReadinessPQCReady,
+				MLKEMSupported:   true,
 			},
 		},
 		{
@@ -260,6 +261,9 @@ func TestComputeSummary_PQCReadiness(t *testing.T) {
 	}
 	if s.PQCReadyPercent != 25 {
 		t.Errorf("expected 25%% PQC ready, got %f", s.PQCReadyPercent)
+	}
+	if s.MLKEMProbeCount != 1 {
+		t.Errorf("expected 1 MLKEM probe count, got %d", s.MLKEMProbeCount)
 	}
 }
 
@@ -312,6 +316,7 @@ func TestWriteSummary_PQCSection(t *testing.T) {
 			Status: securityv1alpha1.TLSComplianceReportStatus{
 				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
 				PQCReadiness:     securityv1alpha1.PQCReadinessPQCReady,
+				MLKEMSupported:   true,
 			},
 		},
 		{
@@ -340,6 +345,9 @@ func TestWriteSummary_PQCSection(t *testing.T) {
 	}
 	if !strings.Contains(output, "TLS13Capable:") {
 		t.Error("expected output to contain 'TLS13Capable:'")
+	}
+	if !strings.Contains(output, "ML-KEM Supported (active probe):") {
+		t.Error("expected output to contain 'ML-KEM Supported (active probe):'")
 	}
 }
 

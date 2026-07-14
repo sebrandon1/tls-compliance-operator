@@ -64,6 +64,7 @@ type Summary struct {
 	BySourceKind          map[securityv1alpha1.SourceKind]int
 	ByPQCReadiness        map[securityv1alpha1.PQCReadiness]int
 	ForwardSecrecyCount   int
+	MLKEMProbeCount       int
 	CompliancePercent     float64
 	ForwardSecrecyPercent float64
 	PQCReadyPercent       float64
@@ -89,6 +90,9 @@ func ComputeSummary(reports []securityv1alpha1.TLSComplianceReport, now time.Tim
 		s.BySourceKind[r.Spec.SourceKind]++
 		if r.Status.ForwardSecrecy {
 			s.ForwardSecrecyCount++
+		}
+		if r.Status.MLKEMSupported {
+			s.MLKEMProbeCount++
 		}
 		if r.Status.PQCReadiness != "" {
 			s.ByPQCReadiness[r.Status.PQCReadiness]++
@@ -173,6 +177,7 @@ func WriteSummary(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) e
 		ew.printf("\nPost-Quantum Cryptography Readiness\n")
 		ew.printf("------------------------------------\n")
 		ew.printf("PQC Ready Rate:\t%.1f%%\n", s.PQCReadyPercent)
+		ew.printf("ML-KEM Supported (active probe):\t%d/%d\n", s.MLKEMProbeCount, s.Total)
 		for _, readiness := range knownPQCReadiness {
 			count := s.ByPQCReadiness[readiness]
 			if count > 0 {

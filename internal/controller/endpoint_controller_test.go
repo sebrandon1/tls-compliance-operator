@@ -789,6 +789,25 @@ func TestDeterminePQCReadiness(t *testing.T) {
 			},
 			expected: securityv1alpha1.PQCReadinessPQCReady,
 		},
+		{
+			name: "PQCReady - active probe detected MLKEM but passive negotiation used classical",
+			result: &tlscheck.TLSCheckResult{
+				SupportsTLS13:    true,
+				SupportsTLS12:    true,
+				NegotiatedCurves: map[string]string{"TLS 1.3": "X25519", "TLS 1.2": "P-256"},
+				MLKEMSupported:   true,
+			},
+			expected: securityv1alpha1.PQCReadinessPQCReady,
+		},
+		{
+			name: "TLS13Capable - active probe did not detect MLKEM",
+			result: &tlscheck.TLSCheckResult{
+				SupportsTLS13:    true,
+				NegotiatedCurves: map[string]string{"TLS 1.3": "X25519"},
+				MLKEMSupported:   false,
+			},
+			expected: securityv1alpha1.PQCReadinessTLS13Capable,
+		},
 	}
 
 	for _, tt := range tests {

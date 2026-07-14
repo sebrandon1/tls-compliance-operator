@@ -347,6 +347,7 @@ func TestWriteCSV_AllTLSVersionCombinations(t *testing.T) {
 				ForwardSecrecy: true,
 				QuantumReady:   true,
 				PQCReadiness:   securityv1alpha1.PQCReadinessPQCReady,
+				MLKEMSupported: true,
 			},
 		},
 	}
