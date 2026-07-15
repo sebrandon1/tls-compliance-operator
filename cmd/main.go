@@ -374,6 +374,14 @@ func setupManager(ctx context.Context, cfg *operatorConfig) ctrl.Manager {
 		profileFetcher.StartPeriodicRefresh(ctx, cfg.profileRefreshInterval)
 	}
 
+	if cfg.webhookCertPath != "" {
+		if err = securityv1alpha1.SetupTLSComplianceTargetWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "TLSComplianceTarget")
+			os.Exit(1)
+		}
+		setupLog.Info("TLSComplianceTarget validating webhook enabled")
+	}
+
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
