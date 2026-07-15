@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1081,6 +1082,16 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 		port      int
 		namespace string
 	}
+
+	// Sort pending/never-checked endpoints first so they get scanned before
+	// re-checking already-known endpoints.
+	sort.SliceStable(crList.Items, func(i, j int) bool {
+		iPending := crList.Items[i].Status.ComplianceStatus == securityv1alpha1.ComplianceStatusPending ||
+			crList.Items[i].Status.CheckCount == 0
+		jPending := crList.Items[j].Status.ComplianceStatus == securityv1alpha1.ComplianceStatusPending ||
+			crList.Items[j].Status.CheckCount == 0
+		return iPending && !jPending
+	})
 
 	items := make(chan scanItem, len(crList.Items))
 	for i := range crList.Items {
