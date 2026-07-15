@@ -278,6 +278,24 @@ func setupManager(ctx context.Context, cfg *operatorConfig) ctrl.Manager {
 		setupLog.Info("OpenShift Route API not detected, skipping Route monitoring")
 	}
 
+	var gatewayGVKs []schema.GroupVersionKind
+	for _, gvk := range []struct {
+		group, version, kind string
+	}{
+		{"gateway.networking.k8s.io", "v1", "HTTPRoute"},
+		{"gateway.networking.k8s.io", "v1alpha2", "TLSRoute"},
+		{"gateway.networking.k8s.io", "v1", "Gateway"},
+	} {
+		_, err = restMapper.RESTMapping(schema.GroupKind{Group: gvk.group, Kind: gvk.kind}, gvk.version)
+		if err == nil {
+			gatewayGVKs = append(gatewayGVKs, schema.GroupVersionKind{Group: gvk.group, Version: gvk.version, Kind: gvk.kind})
+			setupLog.Info("Gateway API resource detected", "kind", gvk.kind)
+		}
+	}
+	if len(gatewayGVKs) == 0 {
+		setupLog.Info("Gateway API not detected, skipping Gateway resource monitoring")
+	}
+
 	var profileFetcher *tlsprofile.Fetcher
 	_, err = restMapper.RESTMapping(schema.GroupKind{
 		Group: "config.openshift.io",
@@ -353,6 +371,8 @@ func setupManager(ctx context.Context, cfg *operatorConfig) ctrl.Manager {
 		ExcludeNamespaces:     excludedNS,
 		CertExpiryDays:        cfg.certExpiryWarningDays,
 		RouteAPIAvailable:     routeAPIAvailable,
+		GatewayAPIAvailable:   len(gatewayGVKs) > 0,
+		GatewayGVKs:           gatewayGVKs,
 		ProfileFetcher:        profileFetcher,
 		Workers:               cfg.workers,
 		MaxRetries:            cfg.maxRetries,

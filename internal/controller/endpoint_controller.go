@@ -58,6 +58,12 @@ var routeGVK = schema.GroupVersionKind{
 	Kind:    "Route",
 }
 
+var (
+	httpRouteGVK = schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "HTTPRoute"}
+	tlsRouteGVK  = schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1alpha2", Kind: "TLSRoute"}
+	gatewayGVK   = schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "Gateway"}
+)
+
 // Event reasons for Kubernetes events
 const (
 	EventReasonTLSNonCompliant     = "TLSNonCompliant"
@@ -80,6 +86,8 @@ type EndpointReconciler struct {
 	ExcludeNamespaces     map[string]bool
 	CertExpiryDays        int
 	RouteAPIAvailable     bool
+	GatewayAPIAvailable   bool
+	GatewayGVKs           []schema.GroupVersionKind
 	ProfileFetcher        *tlsprofile.Fetcher
 	Workers               int
 	MaxRetries            int
@@ -120,6 +128,7 @@ func (r *EndpointReconciler) updateWithRetry(ctx context.Context, name string, m
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes;tlsroutes;gateways,verbs=get;list;watch
 // +kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=operator.openshift.io,resources=ingresscontrollers,verbs=get;list;watch
@@ -153,6 +162,16 @@ func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		route.SetGroupVersionKind(routeGVK)
 		if err := r.Get(ctx, req.NamespacedName, route); err == nil {
 			return r.handleRoute(ctx, route)
+		}
+	}
+
+	if len(r.GatewayGVKs) > 0 {
+		for _, gvk := range r.GatewayGVKs {
+			gwObj := &unstructured.Unstructured{}
+			gwObj.SetGroupVersionKind(gvk)
+			if err := r.Get(ctx, req.NamespacedName, gwObj); err == nil {
+				return r.handleGatewayResource(ctx, gwObj, gvk)
+			}
 		}
 	}
 
@@ -224,6 +243,19 @@ func (r *EndpointReconciler) handleIngress(ctx context.Context, ing *networkingv
 
 func (r *EndpointReconciler) handleRoute(ctx context.Context, route *unstructured.Unstructured) (ctrl.Result, error) {
 	return r.handleEndpoints(ctx, endpoint.ExtractFromRoute(route), "Route")
+}
+
+func (r *EndpointReconciler) handleGatewayResource(ctx context.Context, obj *unstructured.Unstructured, gvk schema.GroupVersionKind) (ctrl.Result, error) {
+	var endpoints []endpoint.Endpoint
+	switch gvk.Kind {
+	case "HTTPRoute":
+		endpoints = endpoint.ExtractFromHTTPRoute(obj)
+	case "TLSRoute":
+		endpoints = endpoint.ExtractFromTLSRoute(obj)
+	case "Gateway":
+		endpoints = endpoint.ExtractFromGateway(obj)
+	}
+	return r.handleEndpoints(ctx, endpoints, gvk.Kind)
 }
 
 func (r *EndpointReconciler) handleTarget(ctx context.Context, target *securityv1alpha1.TLSComplianceTarget) (ctrl.Result, error) {
@@ -928,6 +960,20 @@ func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		))
 	}
 
+	if len(r.GatewayGVKs) > 0 {
+		for _, gvk := range r.GatewayGVKs {
+			gwObj := &unstructured.Unstructured{}
+			gwObj.SetGroupVersionKind(gvk)
+			builder = builder.WatchesRawSource(source.Kind(
+				mgr.GetCache(),
+				gwObj,
+				handler.TypedEnqueueRequestsFromMapFunc(func(_ context.Context, obj *unstructured.Unstructured) []ctrl.Request {
+					return []ctrl.Request{{NamespacedName: client.ObjectKeyFromObject(obj)}}
+				}),
+			))
+		}
+	}
+
 	return builder.Complete(r)
 }
 
@@ -1191,6 +1237,29 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 			targetSet[sourceKey("cluster-scoped", targetList.Items[i].Name)] = true
 		}
 		existingSources[securityv1alpha1.SourceKindTarget] = targetSet
+	}
+
+	if r.GatewayAPIAvailable {
+		for _, gvkInfo := range []struct {
+			gvk  schema.GroupVersionKind
+			kind securityv1alpha1.SourceKind
+		}{
+			{httpRouteGVK, securityv1alpha1.SourceKindHTTPRoute},
+			{tlsRouteGVK, securityv1alpha1.SourceKindTLSRoute},
+			{gatewayGVK, securityv1alpha1.SourceKindGateway},
+		} {
+			gwList := &unstructured.UnstructuredList{}
+			gwList.SetGroupVersionKind(gvkInfo.gvk)
+			if err := r.List(ctx, gwList); err != nil {
+				logger.V(1).Info("failed to list Gateway API resources for cleanup", "kind", gvkInfo.gvk.Kind)
+			} else {
+				gwSet := make(map[string]bool, len(gwList.Items))
+				for i := range gwList.Items {
+					gwSet[sourceKey(gwList.Items[i].GetNamespace(), gwList.Items[i].GetName())] = true
+				}
+				existingSources[gvkInfo.kind] = gwSet
+			}
+		}
 	}
 
 	for i := range crList.Items {
