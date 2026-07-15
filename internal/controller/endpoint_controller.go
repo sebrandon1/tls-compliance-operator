@@ -86,6 +86,7 @@ type EndpointReconciler struct {
 	RetryBackoff          time.Duration
 	MaxBackoff            time.Duration
 	ReportRetentionDays   int
+	MetricsPerEndpoint    bool
 	NamespaceRateLimiters map[string]*rate.Limiter
 	DefaultNamespaceRate  *rate.Limiter
 	ManagerCtx            context.Context
@@ -596,15 +597,17 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 
 	// Record metrics (idempotent, safe outside retry)
 	metrics.RecordCheckDuration(result.CheckDuration.Seconds())
-	metrics.RecordVersionSupport(host, portStr, "ssl3.0", result.SupportsSSL30)
-	metrics.RecordVersionSupport(host, portStr, "1.0", result.SupportsTLS10)
-	metrics.RecordVersionSupport(host, portStr, "1.1", result.SupportsTLS11)
-	metrics.RecordVersionSupport(host, portStr, "1.2", result.SupportsTLS12)
-	metrics.RecordVersionSupport(host, portStr, "1.3", result.SupportsTLS13)
-	metrics.RecordForwardSecrecy(host, portStr, forwardSecrecy)
-	metrics.RecordPQCReadiness(host, portStr, pqcReadiness)
-	if result.Certificate != nil {
-		metrics.RecordCertExpiry(host, portStr, float64(result.Certificate.DaysUntilExpiry))
+	if r.MetricsPerEndpoint {
+		metrics.RecordVersionSupport(host, portStr, "ssl3.0", result.SupportsSSL30)
+		metrics.RecordVersionSupport(host, portStr, "1.0", result.SupportsTLS10)
+		metrics.RecordVersionSupport(host, portStr, "1.1", result.SupportsTLS11)
+		metrics.RecordVersionSupport(host, portStr, "1.2", result.SupportsTLS12)
+		metrics.RecordVersionSupport(host, portStr, "1.3", result.SupportsTLS13)
+		metrics.RecordForwardSecrecy(host, portStr, forwardSecrecy)
+		metrics.RecordPQCReadiness(host, portStr, pqcReadiness)
+		if result.Certificate != nil {
+			metrics.RecordCertExpiry(host, portStr, float64(result.Certificate.DaysUntilExpiry))
+		}
 	}
 
 	// Emit events (need fresh CR for event object)
