@@ -102,6 +102,9 @@ spec:
                 - Route
                 - Target
                 - Pod
+                - HTTPRoute
+                - TLSRoute
+                - Gateway
                 type: string
               sourceName:
                 description: SourceName is the name of the source resource

@@ -26,7 +26,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -1906,6 +1908,136 @@ func TestPeriodicScan_RespectsContextCancellation(t *testing.T) {
 	reconciler.StartPeriodicScan(ctx, 1*time.Hour)
 	cancel()
 	time.Sleep(50 * time.Millisecond)
+}
+
+func TestEndpointReconciler_HandleGatewayResource_HTTPRoute(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		CertExpiryDays: 30,
+	}
+
+	httpRoute := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "gateway.networking.k8s.io/v1",
+		"kind":       "HTTPRoute",
+		"metadata":   map[string]interface{}{"name": "test-route", "namespace": "default"},
+		"spec":       map[string]interface{}{"hostnames": []interface{}{"app.example.com", "api.example.com"}},
+	}}
+
+	gvk := schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "HTTPRoute"}
+	_, err := reconciler.handleGatewayResource(ctx, httpRoute, gvk)
+	if err != nil {
+		t.Fatalf("handleGatewayResource() error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("failed to list reports: %v", err)
+	}
+	if len(crList.Items) != 2 {
+		t.Fatalf("expected 2 reports (one per hostname), got %d", len(crList.Items))
+	}
+	for _, cr := range crList.Items {
+		if cr.Spec.SourceKind != securityv1alpha1.SourceKindHTTPRoute {
+			t.Errorf("sourceKind = %q, want HTTPRoute", cr.Spec.SourceKind)
+		}
+		if cr.Spec.SourceName != "test-route" {
+			t.Errorf("sourceName = %q, want test-route", cr.Spec.SourceName)
+		}
+	}
+}
+
+func TestEndpointReconciler_HandleGatewayResource_Gateway(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		CertExpiryDays: 30,
+	}
+
+	gateway := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "gateway.networking.k8s.io/v1",
+		"kind":       "Gateway",
+		"metadata":   map[string]interface{}{"name": "my-gw", "namespace": "default"},
+		"spec": map[string]interface{}{
+			"listeners": []interface{}{
+				map[string]interface{}{"protocol": "HTTPS", "port": int64(443)},
+				map[string]interface{}{"protocol": "HTTP", "port": int64(80)},
+			},
+		},
+	}}
+
+	gvk := schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "Gateway"}
+	_, err := reconciler.handleGatewayResource(ctx, gateway, gvk)
+	if err != nil {
+		t.Fatalf("handleGatewayResource() error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("failed to list reports: %v", err)
+	}
+	if len(crList.Items) != 1 {
+		t.Fatalf("expected 1 report (HTTPS only, HTTP skipped), got %d", len(crList.Items))
+	}
+	if crList.Items[0].Spec.SourceKind != securityv1alpha1.SourceKindGateway {
+		t.Errorf("sourceKind = %q, want Gateway", crList.Items[0].Spec.SourceKind)
+	}
+	if crList.Items[0].Spec.Port != 443 {
+		t.Errorf("port = %d, want 443", crList.Items[0].Spec.Port)
+	}
+}
+
+func TestEndpointReconciler_HandleGatewayResource_EmptyHTTPRoute(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		CertExpiryDays: 30,
+	}
+
+	httpRoute := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "gateway.networking.k8s.io/v1",
+		"kind":       "HTTPRoute",
+		"metadata":   map[string]interface{}{"name": "empty-route", "namespace": "default"},
+		"spec":       map[string]interface{}{},
+	}}
+
+	gvk := schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "HTTPRoute"}
+	_, err := reconciler.handleGatewayResource(ctx, httpRoute, gvk)
+	if err != nil {
+		t.Fatalf("handleGatewayResource() error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("failed to list reports: %v", err)
+	}
+	if len(crList.Items) != 0 {
+		t.Errorf("expected 0 reports for empty HTTPRoute, got %d", len(crList.Items))
+	}
 }
 
 // Ensure _ satisfies the client.Object interface for compile-time check
