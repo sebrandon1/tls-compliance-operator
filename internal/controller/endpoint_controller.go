@@ -1133,31 +1133,40 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 		return nil
 	}
 
+	neededKinds := make(map[securityv1alpha1.SourceKind]bool)
+	for i := range crList.Items {
+		neededKinds[crList.Items[i].Spec.SourceKind] = true
+	}
+
 	existingSources := make(map[securityv1alpha1.SourceKind]map[string]bool)
 
-	var svcList corev1.ServiceList
-	if err := r.List(ctx, &svcList); err != nil {
-		logger.Error(err, "failed to list Services for cleanup")
-	} else {
-		svcSet := make(map[string]bool, len(svcList.Items))
-		for i := range svcList.Items {
-			svcSet[sourceKey(svcList.Items[i].Namespace, svcList.Items[i].Name)] = true
+	if neededKinds[securityv1alpha1.SourceKindService] {
+		var svcList corev1.ServiceList
+		if err := r.List(ctx, &svcList); err != nil {
+			logger.Error(err, "failed to list Services for cleanup")
+		} else {
+			svcSet := make(map[string]bool, len(svcList.Items))
+			for i := range svcList.Items {
+				svcSet[sourceKey(svcList.Items[i].Namespace, svcList.Items[i].Name)] = true
+			}
+			existingSources[securityv1alpha1.SourceKindService] = svcSet
 		}
-		existingSources[securityv1alpha1.SourceKindService] = svcSet
 	}
 
-	var ingList networkingv1.IngressList
-	if err := r.List(ctx, &ingList); err != nil {
-		logger.Error(err, "failed to list Ingresses for cleanup")
-	} else {
-		ingSet := make(map[string]bool, len(ingList.Items))
-		for i := range ingList.Items {
-			ingSet[sourceKey(ingList.Items[i].Namespace, ingList.Items[i].Name)] = true
+	if neededKinds[securityv1alpha1.SourceKindIngress] {
+		var ingList networkingv1.IngressList
+		if err := r.List(ctx, &ingList); err != nil {
+			logger.Error(err, "failed to list Ingresses for cleanup")
+		} else {
+			ingSet := make(map[string]bool, len(ingList.Items))
+			for i := range ingList.Items {
+				ingSet[sourceKey(ingList.Items[i].Namespace, ingList.Items[i].Name)] = true
+			}
+			existingSources[securityv1alpha1.SourceKindIngress] = ingSet
 		}
-		existingSources[securityv1alpha1.SourceKindIngress] = ingSet
 	}
 
-	if r.RouteAPIAvailable {
+	if neededKinds[securityv1alpha1.SourceKindRoute] && r.RouteAPIAvailable {
 		routeList := &unstructured.UnstructuredList{}
 		routeList.SetGroupVersionKind(routeGVK)
 		if err := r.List(ctx, routeList); err != nil {
@@ -1171,26 +1180,30 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 		}
 	}
 
-	var podList corev1.PodList
-	if err := r.List(ctx, &podList); err != nil {
-		logger.Error(err, "failed to list Pods for cleanup")
-	} else {
-		podSet := make(map[string]bool, len(podList.Items))
-		for i := range podList.Items {
-			podSet[sourceKey(podList.Items[i].Namespace, podList.Items[i].Name)] = true
+	if neededKinds[securityv1alpha1.SourceKindPod] {
+		var podList corev1.PodList
+		if err := r.List(ctx, &podList); err != nil {
+			logger.Error(err, "failed to list Pods for cleanup")
+		} else {
+			podSet := make(map[string]bool, len(podList.Items))
+			for i := range podList.Items {
+				podSet[sourceKey(podList.Items[i].Namespace, podList.Items[i].Name)] = true
+			}
+			existingSources[securityv1alpha1.SourceKindPod] = podSet
 		}
-		existingSources[securityv1alpha1.SourceKindPod] = podSet
 	}
 
-	var targetList securityv1alpha1.TLSComplianceTargetList
-	if err := r.List(ctx, &targetList); err != nil {
-		logger.Error(err, "failed to list TLSComplianceTargets for cleanup")
-	} else {
-		targetSet := make(map[string]bool, len(targetList.Items))
-		for i := range targetList.Items {
-			targetSet[sourceKey("cluster-scoped", targetList.Items[i].Name)] = true
+	if neededKinds[securityv1alpha1.SourceKindTarget] {
+		var targetList securityv1alpha1.TLSComplianceTargetList
+		if err := r.List(ctx, &targetList); err != nil {
+			logger.Error(err, "failed to list TLSComplianceTargets for cleanup")
+		} else {
+			targetSet := make(map[string]bool, len(targetList.Items))
+			for i := range targetList.Items {
+				targetSet[sourceKey("cluster-scoped", targetList.Items[i].Name)] = true
+			}
+			existingSources[securityv1alpha1.SourceKindTarget] = targetSet
 		}
-		existingSources[securityv1alpha1.SourceKindTarget] = targetSet
 	}
 
 	for i := range crList.Items {
@@ -1207,6 +1220,8 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 				"sourceKind", cr.Spec.SourceKind, "sourceName", cr.Spec.SourceName)
 			if err := r.Delete(ctx, cr); err != nil && !apierrors.IsNotFound(err) {
 				logger.Error(err, "failed to delete orphaned TLSComplianceReport", "name", cr.Name)
+			} else {
+				metrics.DeleteEndpointMetrics(cr.Spec.Host, fmt.Sprintf("%d", cr.Spec.Port))
 			}
 		}
 	}
@@ -1228,6 +1243,7 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 					logger.Error(err, "failed to delete expired TLSComplianceReport", "name", cr.Name)
 				} else {
 					metrics.RecordReportTTLDeleted()
+					metrics.DeleteEndpointMetrics(cr.Spec.Host, fmt.Sprintf("%d", cr.Spec.Port))
 				}
 			}
 		}

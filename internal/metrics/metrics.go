@@ -265,6 +265,19 @@ func RecordCleanupCycleCompleted() {
 	CleanupCycleLastCompletedTimestamp.SetToCurrentTime()
 }
 
+// DeleteEndpointMetrics removes all per-endpoint metric label sets for a host:port
+// to prevent stale time series from accumulating.
+func DeleteEndpointMetrics(host, port string) {
+	CertificateExpiryDays.DeleteLabelValues(host, port)
+	ForwardSecrecy.DeleteLabelValues(host, port)
+	for _, version := range []string{"ssl3.0", "1.0", "1.1", "1.2", "1.3"} {
+		VersionSupport.DeleteLabelValues(host, port, version)
+	}
+	for _, level := range []string{"PQCReady", "TLS13Capable", "LegacyTLS", "NoPQC"} {
+		PQCReadiness.DeleteLabelValues(host, port, level)
+	}
+}
+
 // RecordReportTTLDeleted records a report deleted by the retention policy
 func RecordReportTTLDeleted() {
 	ReportsTTLDeletedTotal.Inc()
