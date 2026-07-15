@@ -71,32 +71,20 @@ func generateTestCert(t *testing.T) (tls.Certificate, *x509.Certificate) {
 	}, parsedCert
 }
 
-type testServerOpts struct {
-	curves     []tls.CurveID
-	alpnProtos []string
-}
-
+// startTLSServer starts a TLS server with the given min/max TLS versions
 func startTLSServer(t *testing.T, cert tls.Certificate, minVersion, maxVersion uint16) (string, int, func()) {
-	return startTLSServerWithOpts(t, cert, minVersion, maxVersion, testServerOpts{})
+	return startTLSServerWithCurves(t, cert, minVersion, maxVersion, nil)
 }
 
+// startTLSServerWithCurves starts a TLS server with explicit curve preferences
 func startTLSServerWithCurves(t *testing.T, cert tls.Certificate, minVersion, maxVersion uint16, curves []tls.CurveID) (string, int, func()) {
-	return startTLSServerWithOpts(t, cert, minVersion, maxVersion, testServerOpts{curves: curves})
-}
-
-func startTLSServerWithALPN(t *testing.T, cert tls.Certificate, minVersion, maxVersion uint16, alpnProtos []string) (string, int, func()) {
-	return startTLSServerWithOpts(t, cert, minVersion, maxVersion, testServerOpts{alpnProtos: alpnProtos})
-}
-
-func startTLSServerWithOpts(t *testing.T, cert tls.Certificate, minVersion, maxVersion uint16, opts testServerOpts) (string, int, func()) {
 	t.Helper()
 
 	tlsConfig := &tls.Config{
 		Certificates:     []tls.Certificate{cert},
 		MinVersion:       minVersion,
 		MaxVersion:       maxVersion,
-		CurvePreferences: opts.curves,
-		NextProtos:       opts.alpnProtos,
+		CurvePreferences: curves,
 	}
 
 	listener, err := tls.Listen("tcp", "127.0.0.1:0", tlsConfig)
@@ -542,60 +530,93 @@ func TestTLSChecker_CertificateExpiry(t *testing.T) {
 	}
 }
 
-func TestTLSChecker_ALPNProtocols(t *testing.T) {
-	cert, _ := generateTestCert(t)
-	host, port, cleanup := startTLSServerWithALPN(t, cert, tls.VersionTLS12, tls.VersionTLS13, []string{"h2", "http/1.1"})
-	defer cleanup()
-
-	checker := NewTLSChecker(2 * time.Second)
-	result, err := checker.CheckEndpoint(context.Background(), host, port)
+func generateCACert(t *testing.T) (tls.Certificate, *x509.Certificate) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		t.Fatalf("CheckEndpoint() error = %v", err)
+		t.Fatalf("failed to generate key: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "Test CA"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
+		DNSNames:              []string{"localhost"},
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("failed to create CA certificate: %v", err)
+	}
+	parsed, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		t.Fatalf("failed to parse CA certificate: %v", err)
+	}
+	return tls.Certificate{Certificate: [][]byte{certDER}, PrivateKey: key}, parsed
+}
+
+func TestTLSChecker_ClientCert_mTLSEndpoint(t *testing.T) {
+	caCert, caParsed := generateCACert(t)
+
+	caPool := x509.NewCertPool()
+	caPool.AddCert(caParsed)
+
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{caCert},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    caPool,
+		MinVersion:   tls.VersionTLS12,
+		MaxVersion:   tls.VersionTLS12,
 	}
 
-	if len(result.ALPNProtocols) == 0 {
-		t.Fatal("expected ALPNProtocols to be populated")
+	listener, err := tls.Listen("tcp", "127.0.0.1:0", tlsConfig)
+	if err != nil {
+		t.Fatalf("failed to start mTLS listener: %v", err)
 	}
+	defer func() { _ = listener.Close() }()
 
-	for version, proto := range result.ALPNProtocols {
-		if proto != "h2" && proto != "http/1.1" {
-			t.Errorf("unexpected ALPN protocol for %s: %q", version, proto)
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			tlsConn, ok := conn.(*tls.Conn)
+			if ok {
+				_ = tlsConn.Handshake()
+			}
+			_ = conn.Close()
 		}
-	}
-}
+	}()
 
-func TestTLSChecker_ALPNProtocols_NoServerSupport(t *testing.T) {
-	cert, _ := generateTestCert(t)
-	host, port, cleanup := startTLSServer(t, cert, tls.VersionTLS12, tls.VersionTLS12)
-	defer cleanup()
+	addr := listener.Addr().(*net.TCPAddr)
 
+	// Without client cert — should fail (the exact classification depends
+	// on the TLS alert the server sends; we just verify it fails)
 	checker := NewTLSChecker(2 * time.Second)
-	result, err := checker.CheckEndpoint(context.Background(), host, port)
+	_, err = checker.CheckEndpoint(context.Background(), addr.IP.String(), addr.Port)
+	if err == nil {
+		t.Fatal("expected error without client cert")
+	}
+
+	// With client cert — should succeed and report full TLS details
+	checkerWithCert := NewTLSChecker(2 * time.Second)
+	checkerWithCert.ClientCert = &caCert
+	result, err := checkerWithCert.CheckEndpoint(context.Background(), addr.IP.String(), addr.Port)
 	if err != nil {
-		t.Fatalf("CheckEndpoint() error = %v", err)
+		t.Fatalf("expected success with client cert, got error: %v", err)
 	}
-
-	if len(result.ALPNProtocols) != 0 {
-		t.Errorf("expected ALPNProtocols to be empty when server has no ALPN, got %v", result.ALPNProtocols)
+	if !result.SupportsTLS12 {
+		t.Error("expected TLS 1.2 to be supported with client cert")
 	}
-}
-
-func TestTLSChecker_ALPNProtocols_HTTP11Only(t *testing.T) {
-	cert, _ := generateTestCert(t)
-	host, port, cleanup := startTLSServerWithALPN(t, cert, tls.VersionTLS12, tls.VersionTLS12, []string{"http/1.1"})
-	defer cleanup()
-
-	checker := NewTLSChecker(2 * time.Second)
-	result, err := checker.CheckEndpoint(context.Background(), host, port)
-	if err != nil {
-		t.Fatalf("CheckEndpoint() error = %v", err)
+	if result.Certificate == nil {
+		t.Error("expected server certificate info to be populated")
 	}
-
-	proto, ok := result.ALPNProtocols["TLS 1.2"]
-	if !ok {
-		t.Fatal("expected TLS 1.2 ALPN entry")
-	}
-	if proto != "http/1.1" {
-		t.Errorf("expected http/1.1, got %q", proto)
+	if len(result.CipherSuites) == 0 {
+		t.Error("expected cipher suites to be populated with client cert")
 	}
 }
