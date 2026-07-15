@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/record"
 
+	"github.com/go-logr/logr"
 	"golang.org/x/time/rate"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -980,10 +982,15 @@ func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return builder.Complete(r)
 }
 
-// StartPeriodicScan starts a goroutine that periodically re-checks all endpoints
+// StartPeriodicScan starts a goroutine that scans all endpoints immediately
+// on startup, then re-checks on every tick of the configured interval.
 func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval time.Duration) {
 	go func() {
 		logger := log.FromContext(ctx).WithName("periodic-scan")
+
+		logger.Info("running initial TLS scan of all endpoints")
+		r.runScanCycle(ctx, logger)
+
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
@@ -992,21 +999,25 @@ func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval tim
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				logger.Info("starting periodic TLS scan")
-				start := time.Now()
-
-				if err := r.scanAllEndpoints(ctx); err != nil {
-					logger.Error(err, "failed to complete periodic scan")
-				} else {
-					metrics.RecordScanCycleCompleted()
-				}
-
-				duration := time.Since(start)
-				metrics.RecordScanCycleDuration(duration.Seconds())
-				logger.Info("periodic TLS scan completed", "duration", duration)
+				r.runScanCycle(ctx, logger)
 			}
 		}
 	}()
+}
+
+func (r *EndpointReconciler) runScanCycle(ctx context.Context, logger logr.Logger) {
+	logger.Info("starting periodic TLS scan")
+	start := time.Now()
+
+	if err := r.scanAllEndpoints(ctx); err != nil {
+		logger.Error(err, "failed to complete periodic scan")
+	} else {
+		metrics.RecordScanCycleCompleted()
+	}
+
+	duration := time.Since(start)
+	metrics.RecordScanCycleDuration(duration.Seconds())
+	logger.Info("periodic TLS scan completed", "duration", duration)
 }
 
 // scanPodEndpoints discovers TLS endpoints from all pods in the cluster.
@@ -1083,6 +1094,14 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 	}
 
 	items := make(chan scanItem, len(crList.Items))
+	sort.SliceStable(crList.Items, func(i, j int) bool {
+		iPending := crList.Items[i].Status.ComplianceStatus == securityv1alpha1.ComplianceStatusPending ||
+			crList.Items[i].Status.CheckCount == 0
+		jPending := crList.Items[j].Status.ComplianceStatus == securityv1alpha1.ComplianceStatusPending ||
+			crList.Items[j].Status.CheckCount == 0
+		return iPending && !jPending
+	})
+
 	for i := range crList.Items {
 		cr := &crList.Items[i]
 		items <- scanItem{name: cr.Name, host: cr.Spec.Host, port: int(cr.Spec.Port), namespace: cr.Spec.SourceNamespace}
