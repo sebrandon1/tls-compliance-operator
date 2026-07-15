@@ -90,6 +90,7 @@ type operatorConfig struct {
 	maxBackoff             time.Duration
 	extraTLSPortsStr       string
 	reportRetentionDays    int
+	enumerateCiphers       bool
 	logFormat              string
 
 	zapOpts zap.Options
@@ -146,6 +147,8 @@ func parseFlags() *operatorConfig {
 		"Comma-separated list of additional port numbers to treat as TLS endpoints (e.g., 9443,6380,5671)")
 	flag.IntVar(&cfg.reportRetentionDays, "report-retention-days", 0,
 		"Auto-delete TLSComplianceReports older than this many days (0=disabled)")
+	flag.BoolVar(&cfg.enumerateCiphers, "enumerate-ciphers", true,
+		"Enumerate all supported cipher suites per TLS version (disable for faster scans)")
 	flag.StringVar(&cfg.logFormat, "log-format", "text",
 		"Log output format: text or json")
 
@@ -286,6 +289,7 @@ func setupManager(ctx context.Context, cfg *operatorConfig) ctrl.Manager {
 	}
 
 	baseChecker := tlscheck.NewTLSChecker(cfg.tlsCheckTimeout)
+	baseChecker.EnumerateCiphers = cfg.enumerateCiphers
 	checker := tlscheck.NewRateLimitedChecker(baseChecker, cfg.rateLimit, cfg.rateBurst)
 
 	setupLog.Info("TLS checker configured",
@@ -378,6 +382,7 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_MAX_BACKOFF", "max-backoff"},
 	{"TLS_COMPLIANCE_EXTRA_TLS_PORTS", "extra-tls-ports"},
 	{"TLS_COMPLIANCE_REPORT_RETENTION_DAYS", "report-retention-days"},
+	{"TLS_COMPLIANCE_ENUMERATE_CIPHERS", "enumerate-ciphers"},
 	{"TLS_COMPLIANCE_LOG_FORMAT", "log-format"},
 }
 
@@ -451,6 +456,10 @@ func validateEnvValue(flagName, value string) error {
 		return err
 	case "report-retention-days":
 		return validateIntRange(value, 0, 3650)
+	case "enumerate-ciphers":
+		if value != "true" && value != "false" {
+			return fmt.Errorf("must be true or false, got %q", value)
+		}
 	case "log-format":
 		if value != "text" && value != "json" {
 			return fmt.Errorf("must be text or json, got %q", value)

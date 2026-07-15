@@ -41,7 +41,8 @@ var DefaultALPNProtos = []string{"h2", "http/1.1"}
 
 // TLSChecker implements Checker using Go's crypto/tls
 type TLSChecker struct {
-	Timeout time.Duration
+	Timeout          time.Duration
+	EnumerateCiphers bool
 }
 
 // NewTLSChecker creates a new TLSChecker with the given timeout
@@ -49,7 +50,7 @@ func NewTLSChecker(timeout time.Duration) *TLSChecker {
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
-	return &TLSChecker{Timeout: timeout}
+	return &TLSChecker{Timeout: timeout, EnumerateCiphers: true}
 }
 
 // tlsVersionInfo maps TLS version constants to their string names
@@ -85,13 +86,17 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 		default:
 		}
 
-		supported, cipherSuite, curveName, alpnProto, cert, err := c.tryTLSVersion(ctx, addr, host, vi.version)
+		supported, cipherID, cipherSuite, curveName, alpnProto, cert, err := c.tryTLSVersion(ctx, addr, host, vi.version)
 		vi.field(result, supported)
 
 		if supported && err == nil {
 			anySuccess = true
 			if cipherSuite != "" {
-				result.CipherSuites[vi.name] = append(result.CipherSuites[vi.name], cipherSuite)
+				if c.EnumerateCiphers && vi.version < tls.VersionTLS13 {
+					result.CipherSuites[vi.name] = c.enumerateCiphers(ctx, addr, host, vi.version, cipherID)
+				} else {
+					result.CipherSuites[vi.name] = append(result.CipherSuites[vi.name], cipherSuite)
+				}
 			}
 			if alpnProto != "" {
 				result.ALPNProtocols[vi.name] = alpnProto
@@ -206,7 +211,7 @@ func isMTLSError(err error) bool {
 }
 
 // tryTLSVersion attempts to connect with a specific TLS version
-func (c *TLSChecker) tryTLSVersion(ctx context.Context, addr, serverName string, version uint16) (supported bool, cipherSuite string, curveName string, alpnProto string, cert *CertificateDetails, err error) {
+func (c *TLSChecker) tryTLSVersion(ctx context.Context, addr, serverName string, version uint16) (supported bool, cipherSuiteID uint16, cipherSuite string, curveName string, alpnProto string, cert *CertificateDetails, err error) {
 	dialer := &net.Dialer{
 		Timeout: c.Timeout,
 	}
@@ -223,9 +228,9 @@ func (c *TLSChecker) tryTLSVersion(ctx context.Context, addr, serverName string,
 	if err != nil {
 		// mTLS: server requires a client certificate but we proved it speaks this TLS version
 		if isMTLSError(err) {
-			return true, "", "", "", nil, err
+			return true, 0, "", "", "", nil, err
 		}
-		return false, "", "", "", nil, err
+		return false, 0, "", "", "", nil, err
 	}
 	defer conn.Close() //nolint:errcheck
 
@@ -244,7 +249,58 @@ func (c *TLSChecker) tryTLSVersion(ctx context.Context, addr, serverName string,
 		certDetails.ChainLength = len(state.PeerCertificates)
 	}
 
-	return true, cipherSuiteName, curve, state.NegotiatedProtocol, certDetails, nil
+	return true, state.CipherSuite, cipherSuiteName, curve, state.NegotiatedProtocol, certDetails, nil
+}
+
+// enumerateCiphers discovers all cipher suites supported by a server for a
+// given TLS version by reconnecting with previously-negotiated ciphers excluded.
+func (c *TLSChecker) enumerateCiphers(ctx context.Context, addr, serverName string, version, firstCipherID uint16) []string {
+	allSuites := append(tls.CipherSuites(), tls.InsecureCipherSuites()...)
+	discovered := []string{tls.CipherSuiteName(firstCipherID)}
+	seenIDs := map[uint16]bool{firstCipherID: true}
+	dialer := &net.Dialer{Timeout: c.Timeout}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return discovered
+		default:
+		}
+
+		var remaining []uint16
+		for _, cs := range allSuites {
+			if !seenIDs[cs.ID] {
+				remaining = append(remaining, cs.ID)
+			}
+		}
+		if len(remaining) == 0 {
+			break
+		}
+
+		tlsConfig := &tls.Config{
+			MinVersion:         version,
+			MaxVersion:         version,
+			InsecureSkipVerify: true, //nolint:gosec // We probe capabilities, not trust
+			ServerName:         serverName,
+			CipherSuites:       remaining,
+		}
+
+		conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
+		if err != nil {
+			break
+		}
+
+		state := conn.ConnectionState()
+		conn.Close() //nolint:errcheck
+
+		if seenIDs[state.CipherSuite] {
+			break
+		}
+		seenIDs[state.CipherSuite] = true
+		discovered = append(discovered, tls.CipherSuiteName(state.CipherSuite))
+	}
+
+	return discovered
 }
 
 // probeMLKEM performs a TLS 1.3 handshake offering only ML-KEM key exchange
