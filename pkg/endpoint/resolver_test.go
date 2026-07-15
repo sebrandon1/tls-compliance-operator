@@ -1108,3 +1108,59 @@ func TestExtraTLSPorts_PodExtraction(t *testing.T) {
 		t.Errorf("port = %d, want 7777", endpoints[0].Port)
 	}
 }
+
+func TestIsHeadlessService(t *testing.T) {
+	headless := &corev1.Service{Spec: corev1.ServiceSpec{ClusterIP: corev1.ClusterIPNone}}
+	if !IsHeadlessService(headless) {
+		t.Error("expected headless service to be detected")
+	}
+	normal := &corev1.Service{Spec: corev1.ServiceSpec{ClusterIP: "10.96.0.1"}}
+	if IsHeadlessService(normal) {
+		t.Error("expected normal service to not be headless")
+	}
+}
+
+func TestExtractFromHeadlessService(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-db", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			ClusterIP: corev1.ClusterIPNone,
+			Ports: []corev1.ServicePort{
+				{Name: "https", Port: 443, Protocol: corev1.ProtocolTCP},
+				{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP},
+			},
+		},
+	}
+
+	addresses := []string{"10.244.0.5", "10.244.0.6"}
+	endpoints := ExtractFromHeadlessService(svc, addresses)
+
+	if len(endpoints) != 2 {
+		t.Fatalf("expected 2 endpoints (one per address for port 443), got %d", len(endpoints))
+	}
+	for _, ep := range endpoints {
+		if ep.Port != 443 {
+			t.Errorf("port = %d, want 443", ep.Port)
+		}
+		if ep.SourceKind != "Service" {
+			t.Errorf("sourceKind = %s, want Service", ep.SourceKind)
+		}
+	}
+}
+
+func TestExtractFromHeadlessService_NoAddresses(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-db", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			ClusterIP: corev1.ClusterIPNone,
+			Ports: []corev1.ServicePort{
+				{Name: "https", Port: 443, Protocol: corev1.ProtocolTCP},
+			},
+		},
+	}
+
+	endpoints := ExtractFromHeadlessService(svc, nil)
+	if len(endpoints) != 0 {
+		t.Errorf("expected 0 endpoints for nil addresses, got %d", len(endpoints))
+	}
+}
