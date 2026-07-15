@@ -51,6 +51,7 @@ type JSONReport struct {
 	PublicKeyBits      int               `json:"publicKeyBits,omitempty"`
 	SignatureAlgorithm string            `json:"signatureAlgorithm,omitempty"`
 	ChainLength        int               `json:"chainLength,omitempty"`
+	ALPNProtocols      map[string]string `json:"alpnProtocols,omitempty"`
 	ScanDuration       string            `json:"scanDuration,omitempty"`
 }
 
@@ -105,6 +106,7 @@ func reportToJSON(r *securityv1alpha1.TLSComplianceReport) JSONReport {
 		jr.ChainLength = r.Status.CertificateInfo.ChainLength
 	}
 
+	jr.ALPNProtocols = r.Status.ALPNProtocols
 	jr.ScanDuration = r.Status.ScanDuration
 
 	return jr

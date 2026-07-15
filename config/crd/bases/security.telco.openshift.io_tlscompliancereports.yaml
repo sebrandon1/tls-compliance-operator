@@ -119,6 +119,13 @@ spec:
           status:
             description: Status defines the observed state of TLSComplianceReport
             properties:
+              alpnProtocols:
+                additionalProperties:
+                  type: string
+                description: |-
+                  ALPNProtocols maps TLS version to the negotiated ALPN protocol
+                  (e.g. "h2", "http/1.1")
+                type: object
               apiServerProfileCompliance:
                 description: |-
                   APIServerProfileCompliance contains the compliance result against the
