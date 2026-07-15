@@ -95,6 +95,7 @@ type operatorConfig struct {
 	clientKeyPath          string
 	enumerateCiphers       bool
 	namespaceRateLimitsStr string
+	metricsPerEndpoint     bool
 	logFormat              string
 
 	zapOpts zap.Options
@@ -157,6 +158,8 @@ func parseFlags() *operatorConfig {
 		"Enumerate all supported cipher suites per TLS version (disable for faster scans)")
 	flag.StringVar(&cfg.namespaceRateLimitsStr, "namespace-rate-limits", "",
 		"Per-namespace TLS check rate limits (e.g., production=2.0,staging=10.0)")
+	flag.BoolVar(&cfg.metricsPerEndpoint, "metrics-per-endpoint", true,
+		"Emit per-endpoint Prometheus metrics (disable for large clusters to reduce cardinality)")
 	flag.StringVar(&cfg.logFormat, "log-format", "text",
 		"Log output format: text or json")
 
@@ -378,6 +381,7 @@ func setupManager(ctx context.Context, cfg *operatorConfig) ctrl.Manager {
 		MaxRetries:            cfg.maxRetries,
 		RetryBackoff:          cfg.retryBackoff,
 		MaxBackoff:            cfg.maxBackoff,
+		MetricsPerEndpoint:    cfg.metricsPerEndpoint,
 		NamespaceRateLimiters: nsLimiters,
 		DefaultNamespaceRate:  defaultNSLimiter,
 		ManagerCtx:            ctx,
