@@ -11,25 +11,32 @@ for TLS version compliance, certificate health, and security posture.
 
 ## Overview
 
-The TLS Compliance Operator watches Services, Ingresses, OpenShift Routes, and
-Pods to discover TLS endpoints, then probes each endpoint to determine which
-TLS versions it supports. It creates `TLSComplianceReport` custom resources
-with compliance status, supported TLS versions, cipher suites, and certificate
-details.
+The TLS Compliance Operator watches Services, Ingresses, OpenShift Routes,
+Gateway API resources (HTTPRoute, TLSRoute, Gateway), and Pods to discover TLS
+endpoints, then probes each endpoint to determine which TLS versions it
+supports. It creates `TLSComplianceReport` custom resources with compliance
+status, supported TLS versions, cipher suites, certificate details, and
+post-quantum readiness.
 
 ## Key Features
 
 - **Automatic Discovery** — Services, Ingresses, Routes, Pods, and ExternalName services
-- **TLS Version Detection** — Probes for TLS 1.0, 1.1, 1.2, and 1.3 support
+- **Gateway API Support** — Auto-discovers HTTPRoute, TLSRoute, and Gateway resources
+- **Headless Service Scanning** — Discovers pod endpoints via EndpointSlice API
+- **TLS Version Detection** — Probes for SSL 3.0, TLS 1.0, 1.1, 1.2, and 1.3 support (in parallel)
 - **Compliance Classification** — Compliant, NonCompliant, Timeout, Closed, NoTLS, MutualTLSRequired
-- **Certificate Tracking** — Issuer, subject, DNS names, expiration, and days until expiry
+- **Certificate Tracking** — Issuer, subject, DNS names, expiration, chain length, public key details
 - **Cipher Strength Grading** — A-F grades for negotiated cipher suites
-- **Post-Quantum Readiness** — Detects post-quantum key exchange algorithms (e.g. X25519MLKEM768)
-- **Prometheus Metrics** — Compliance status, certificate expiry, TLS version support
-- **Kubernetes Events** — Non-compliance, status changes, and certificate warnings
+- **Forward Secrecy Detection** — Identifies whether all cipher suites use ephemeral key exchange (ECDHE/DHE)
+- **ALPN Protocol Detection** — Reports negotiated application-layer protocols (h2, http/1.1)
+- **Post-Quantum Readiness** — Detects post-quantum key exchange (X25519MLKEM768) via passive and [active ML-KEM probing](docs/pqc-mlkem.md)
+- **Prometheus Metrics** — Compliance status, certificate expiry, TLS versions, PQC readiness, forward secrecy
+- **Kubernetes Events** — Non-compliance, status changes, certificate warnings, PQC readiness changes
 - **OpenShift TLS Profiles** — Checks against APIServer, IngressController, and KubeletConfig profiles
-- **Arbitrary Targets** — Scan any host:port via `TLSComplianceTarget` CRD
-- **Report Export** — CSV, JSON, JUnit XML, and Markdown via `kubectl-tlsreport` plugin
+- **Arbitrary Targets** — Scan any host:port via `TLSComplianceTarget` CRD with webhook validation
+- **mTLS Client Certificates** — Optionally provide client certs for probing mTLS-protected endpoints
+- **Per-Namespace Rate Limiting** — Fine-grained rate control for sensitive namespaces
+- **Report Export** — CSV, JSON, YAML, JUnit XML, and Markdown via `kubectl-tlsreport` plugin
 
 ## Quick Deploy
 
@@ -51,9 +58,10 @@ kubectl delete -f https://github.com/sebrandon1/tls-compliance-operator/releases
 | [Configuration](docs/configuration.md) | Flags, environment variables, resource sizing |
 | [Architecture](docs/architecture.md) | How the operator works, compliance logic |
 | [Viewing Reports](docs/viewing-reports.md) | Compliance status, cipher grades, certificate info |
+| [Post-Quantum / ML-KEM](docs/pqc-mlkem.md) | PQC readiness detection, active ML-KEM probing |
 | [Prometheus Metrics](docs/metrics.md) | Metrics reference and example PromQL queries |
 | [Custom Targets](docs/custom-targets.md) | Scan arbitrary external hosts with TLSComplianceTarget |
-| [Exporting Reports](docs/exporting-reports.md) | CSV, JSON, JUnit, Markdown export with filtering |
+| [Exporting Reports](docs/exporting-reports.md) | CSV, JSON, YAML, JUnit, Markdown export with filtering |
 | [Comparison](docs/comparison.md) | Feature comparison with openshift/tls-scanner |
 | [Troubleshooting](docs/troubleshooting.md) | Common issues and fixes |
 

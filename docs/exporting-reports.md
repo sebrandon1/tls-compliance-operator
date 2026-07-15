@@ -1,7 +1,7 @@
 # Exporting Reports
 
-The `kubectl-tlsreport` plugin exports TLS compliance data in CSV, JSON, and
-JUnit XML formats for CI/CD pipelines, auditing, and dashboards.
+The `kubectl-tlsreport` plugin exports TLS compliance data in CSV, JSON, YAML,
+JUnit XML, and Markdown formats for CI/CD pipelines, auditing, and dashboards.
 
 ## Install the Plugin
 
@@ -28,6 +28,12 @@ kubectl tlsreport csv
 kubectl tlsreport json
 ```
 
+**YAML**:
+
+```bash
+kubectl tlsreport yaml
+```
+
 **JUnit XML** (for CI test result ingestion):
 
 ```bash
@@ -47,6 +53,48 @@ Produces a Markdown table matching `kubectl get tlsreport` columns:
 | Host | Port | Source | Compliance | Grade | FS | TLS1.3 | TLS1.2 | TLS1.0 | PQC | CertExpiry | Age |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | my-service.default | 443 | Service | Compliant | A | true | true | true | false | PQCReady | 364 | 5m |
+```
+
+## Querying Reports
+
+### List reports (`get`)
+
+The `get` subcommand lists reports in table format with output options:
+
+```bash
+# Default table output
+kubectl tlsreport get
+
+# Wide output (includes SSL3.0, ML-KEM columns)
+kubectl tlsreport get -o wide
+
+# JSON output
+kubectl tlsreport get -o json
+
+# YAML output
+kubectl tlsreport get -o yaml
+```
+
+### Detailed report (`describe`)
+
+The `describe` subcommand shows the full report for a single endpoint:
+
+```bash
+kubectl tlsreport describe google-com-443-01d44386
+```
+
+### Summary (`summary`)
+
+Get an at-a-glance compliance summary:
+
+```bash
+kubectl tlsreport summary
+```
+
+### Version
+
+```bash
+kubectl tlsreport version
 ```
 
 ## Filtering
@@ -80,6 +128,28 @@ All filters use AND logic. PQC status values: `PQCReady`, `TLS13Capable`, `Legac
 The `--expires-within` flag accepts day-based durations (e.g. `7d`, `30d`, `90d`) or Go durations (e.g. `24h`).
 The `--expired` flag excludes endpoints without certificates.
 
+### Label selectors
+
+Filter reports by Kubernetes label using `--selector` / `-l`:
+
+```bash
+# Only hostNetwork pod endpoints
+kubectl tlsreport csv -l tls-compliance.telco.openshift.io/host-network=true
+
+# Custom labels
+kubectl tlsreport json -l env=production
+```
+
+### Certificate filters
+
+```bash
+# Filter by certificate issuer (substring match)
+kubectl tlsreport csv --cert-issuer "Let's Encrypt"
+
+# Filter by certificate subject (substring match)
+kubectl tlsreport csv --cert-subject "*.example.com"
+```
+
 ## Sorting
 
 Sort results with `--sort-by`:
@@ -103,14 +173,6 @@ kubectl tlsreport csv --status NonCompliant --sort-by expiry
 
 Supported sort keys: `host`, `port`, `compliance`, `expiry`, `grade`, `pqc`.
 Endpoints without certificates sort to the end when sorting by `expiry`.
-
-## Summary View
-
-Get an at-a-glance compliance summary:
-
-```bash
-kubectl tlsreport summary
-```
 
 ## CI/CD Integration
 

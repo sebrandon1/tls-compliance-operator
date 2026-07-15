@@ -69,6 +69,30 @@ Status:
     Subject:     CN=*.google.com
 ```
 
+## Validation
+
+A validating admission webhook enforces the following rules on create and
+update:
+
+- **Host format** — must be a valid IP address or DNS name (RFC 1123 subdomain).
+  Wildcards (`*`) are not allowed.
+- **No duplicates** — two `TLSComplianceTarget` resources cannot specify the
+  same host:port combination.
+
+Example error for an invalid host:
+
+```
+The TLSComplianceTarget "bad-target" is invalid:
+  spec.host: Invalid value: "*.example.com": wildcards are not allowed
+```
+
+Example error for a duplicate host:port:
+
+```
+The TLSComplianceTarget "dup-target" is invalid:
+  spec: Invalid value: "google.com:443": duplicate host:port — already defined in TLSComplianceTarget "google-tls"
+```
+
 ## Delete a Target
 
 Deleting the `TLSComplianceTarget` removes the associated report during the

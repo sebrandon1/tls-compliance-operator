@@ -16,10 +16,11 @@ ocp4-cis-rs-openshift-compliance-8443-aab74008                 ocp4-cis-rs.opens
 |--------|-------------|
 | **COMPLIANCE** | Overall status: Compliant, NonCompliant, Closed, Timeout, NoTLS, etc. |
 | **GRADE** | Cipher strength grade (A-F). A = strong ciphers only. |
-| **TLS1.3/1.2/1.0** | Whether each TLS version is supported. |
-| **PQC** | Post-quantum cryptography readiness: PQCReady (TLS 1.3 + ML-KEM), TLS13Capable (TLS 1.3 without ML-KEM), LegacyTLS (TLS 1.2 or older), NoPQC (no TLS). |
+| **FS** | Forward secrecy: true if all negotiated ciphers use ephemeral key exchange (ECDHE/DHE). |
+| **TLS1.3/1.2/1.0** | Whether each TLS version is supported. SSL3.0 appears in wide output (`kubectl get tlsreport -o wide`). |
+| **PQC** | Post-quantum cryptography readiness. See [Post-Quantum / ML-KEM](pqc-mlkem.md) for details. |
 | **CERTEXPIRY** | Days until certificate expiration. |
-| **SOURCE** | How the endpoint was discovered: Service, Ingress, Route, Pod, or Target. |
+| **SOURCE** | How the endpoint was discovered: Service, Ingress, Route, Pod, HTTPRoute, TLSRoute, Gateway, or Target. |
 
 ## Detailed Report
 
@@ -70,24 +71,62 @@ Cipher Strength Grades:
 Overall Cipher Grade:  B
 ```
 
-**Certificate Info** — issuer, subject, expiration:
+**Certificate Info** — issuer, subject, expiration, and public key details:
 
 ```
-Certificate Info:
-  Days Until Expiry:  53
-  Issuer:      CN=WR2,O=Google Trust Services,C=US
-  Not After:   2026-04-20T08:39:19Z
-  Subject:     CN=*.google.com
+Certificate:
+  Issuer:            CN=WR2,O=Google Trust Services,C=US
+  Subject:           CN=*.google.com
+  Not Before:        2026-01-20 08:39:19 UTC
+  Not After:         2026-04-20 08:39:19 UTC
+  Days Until Expiry: 53
+  Is Expired:        false
+  Hostname Match:    true
+  Public Key:        ECDSA (256 bits)
+  Signature Alg:     ECDSA-SHA256
+  Chain Length:       3
+  DNS Names:         *.google.com, google.com
 ```
 
-**Post-Quantum Readiness** — key exchange curves and PQC classification:
+**Forward Secrecy and Key Exchange:**
+
+```
+Compliance:
+  Forward Secrecy: true
+
+Key Exchange Types:
+  TLS 1.2: ECDHE
+  TLS 1.3: TLS13
+```
+
+**ALPN Protocols** — negotiated application-layer protocol per TLS version:
+
+```
+ALPN Protocols:
+  TLS 1.2: h2
+  TLS 1.3: h2
+```
+
+**Post-Quantum Readiness** — key exchange curves and PQC classification
+(see [Post-Quantum / ML-KEM](pqc-mlkem.md) for full details):
 
 ```
 Negotiated Curves:
   TLS 1.2:  X25519
   TLS 1.3:  X25519MLKEM768
-Quantum Ready:    true
-PQC Readiness:    PQCReady
+Quantum Ready:      true
+ML-KEM Supported:   true
+PQC Readiness:      PQCReady
+```
+
+**Scan Info** — timing and retry state:
+
+```
+Scan Info:
+  Last Check:         2026-07-15 10:30:00 UTC
+  Check Count:        12
+  Scan Duration:      1.23s
+  Consecutive Errors: 0
 ```
 
 **OpenShift TLS Profile Compliance** (OpenShift clusters only):
