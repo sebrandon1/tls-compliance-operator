@@ -26,6 +26,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -92,6 +94,7 @@ type operatorConfig struct {
 	clientCertPath         string
 	clientKeyPath          string
 	enumerateCiphers       bool
+	namespaceRateLimitsStr string
 	logFormat              string
 
 	zapOpts zap.Options
@@ -152,6 +155,8 @@ func parseFlags() *operatorConfig {
 		"Path to a PEM-encoded client private key for mTLS endpoint probing")
 	flag.BoolVar(&cfg.enumerateCiphers, "enumerate-ciphers", true,
 		"Enumerate all supported cipher suites per TLS version (disable for faster scans)")
+	flag.StringVar(&cfg.namespaceRateLimitsStr, "namespace-rate-limits", "",
+		"Per-namespace TLS check rate limits (e.g., production=2.0,staging=10.0)")
 	flag.StringVar(&cfg.logFormat, "log-format", "text",
 		"Log output format: text or json")
 
@@ -318,21 +323,44 @@ func setupManager(ctx context.Context, cfg *operatorConfig) ctrl.Manager {
 		"maxRetries", cfg.maxRetries,
 		"retryBackoff", cfg.retryBackoff)
 
+	var nsLimiters map[string]*rate.Limiter
+	var defaultNSLimiter *rate.Limiter
+	if cfg.namespaceRateLimitsStr != "" {
+		nsLimiters = make(map[string]*rate.Limiter)
+		for _, entry := range strings.Split(cfg.namespaceRateLimitsStr, ",") {
+			parts := strings.SplitN(strings.TrimSpace(entry), "=", 2)
+			if len(parts) != 2 {
+				setupLog.Error(nil, "invalid --namespace-rate-limits entry", "entry", entry)
+				os.Exit(1)
+			}
+			rateVal, err := strconv.ParseFloat(parts[1], 64)
+			if err != nil {
+				setupLog.Error(err, "invalid rate in --namespace-rate-limits", "namespace", parts[0])
+				os.Exit(1)
+			}
+			nsLimiters[parts[0]] = rate.NewLimiter(rate.Limit(rateVal), int(rateVal)+1)
+		}
+		defaultNSLimiter = rate.NewLimiter(rate.Limit(cfg.rateLimit), cfg.rateBurst)
+		setupLog.Info("per-namespace rate limits configured", "namespaces", cfg.namespaceRateLimitsStr)
+	}
+
 	endpointReconciler := &controller.EndpointReconciler{
-		Client:            mgr.GetClient(),
-		Scheme:            mgr.GetScheme(),
-		TLSChecker:        checker,
-		Recorder:          mgr.GetEventRecorderFor("tls-compliance-controller"), //nolint:staticcheck
-		IncludeNamespaces: includedNS,
-		ExcludeNamespaces: excludedNS,
-		CertExpiryDays:    cfg.certExpiryWarningDays,
-		RouteAPIAvailable: routeAPIAvailable,
-		ProfileFetcher:    profileFetcher,
-		Workers:           cfg.workers,
-		MaxRetries:        cfg.maxRetries,
-		RetryBackoff:      cfg.retryBackoff,
-		MaxBackoff:        cfg.maxBackoff,
-		ManagerCtx:        ctx,
+		Client:                mgr.GetClient(),
+		Scheme:                mgr.GetScheme(),
+		TLSChecker:            checker,
+		Recorder:              mgr.GetEventRecorderFor("tls-compliance-controller"), //nolint:staticcheck
+		IncludeNamespaces:     includedNS,
+		ExcludeNamespaces:     excludedNS,
+		CertExpiryDays:        cfg.certExpiryWarningDays,
+		RouteAPIAvailable:     routeAPIAvailable,
+		ProfileFetcher:        profileFetcher,
+		Workers:               cfg.workers,
+		MaxRetries:            cfg.maxRetries,
+		RetryBackoff:          cfg.retryBackoff,
+		MaxBackoff:            cfg.maxBackoff,
+		NamespaceRateLimiters: nsLimiters,
+		DefaultNamespaceRate:  defaultNSLimiter,
+		ManagerCtx:            ctx,
 	}
 
 	if err = endpointReconciler.SetupWithManager(mgr); err != nil {

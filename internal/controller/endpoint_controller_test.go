@@ -1404,7 +1404,7 @@ func TestEndpointReconciler_RetryThenSuccess(t *testing.T) {
 		RetryBackoff:   10 * time.Millisecond,
 	}
 
-	reconciler.performTLSCheck(ctx, crName, "test.example.com", 443)
+	reconciler.performTLSCheck(ctx, crName, "test.example.com", 443, "default")
 
 	// Should have called checker twice (1 failure + 1 success)
 	if checker.CallCount() != 2 {
@@ -1480,7 +1480,7 @@ func TestEndpointReconciler_RetryExhausted(t *testing.T) {
 		RetryBackoff:   10 * time.Millisecond,
 	}
 
-	reconciler.performTLSCheck(ctx, crName, "unreachable.example.com", 443)
+	reconciler.performTLSCheck(ctx, crName, "unreachable.example.com", 443, "default")
 
 	// Should have called checker 3 times (1 initial + 2 retries)
 	if checker.CallCount() != 3 {
@@ -1548,7 +1548,7 @@ func TestEndpointReconciler_NoRetryOnNoTLS(t *testing.T) {
 		RetryBackoff:   10 * time.Millisecond,
 	}
 
-	reconciler.performTLSCheck(ctx, crName, "notls.example.com", 80)
+	reconciler.performTLSCheck(ctx, crName, "notls.example.com", 80, "default")
 
 	// Should only call once — NoTLS is not transient
 	if checker.CallCount() != 1 {
@@ -1612,7 +1612,7 @@ func TestEndpointReconciler_NoRetryOnMutualTLS(t *testing.T) {
 		RetryBackoff:   10 * time.Millisecond,
 	}
 
-	reconciler.performTLSCheck(ctx, crName, "mtls.example.com", 443)
+	reconciler.performTLSCheck(ctx, crName, "mtls.example.com", 443, "default")
 
 	// Should only call once — MutualTLSRequired is not transient
 	if checker.CallCount() != 1 {
@@ -1676,7 +1676,7 @@ func TestEndpointReconciler_RetryDisabled(t *testing.T) {
 		RetryBackoff:   10 * time.Millisecond,
 	}
 
-	reconciler.performTLSCheck(ctx, crName, "timeout.example.com", 443)
+	reconciler.performTLSCheck(ctx, crName, "timeout.example.com", 443, "default")
 
 	// Should only call once — retries disabled
 	if checker.CallCount() != 1 {
@@ -1751,7 +1751,7 @@ func TestEndpointReconciler_RetryBackoffCap(t *testing.T) {
 	}
 
 	start := time.Now()
-	reconciler.performTLSCheck(ctx, crName, "slow.example.com", 443)
+	reconciler.performTLSCheck(ctx, crName, "slow.example.com", 443, "default")
 	elapsed := time.Since(start)
 
 	if checker.CallCount() != 4 {
