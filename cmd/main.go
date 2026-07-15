@@ -91,6 +91,7 @@ type operatorConfig struct {
 	extraTLSPortsStr       string
 	clientCertPath         string
 	clientKeyPath          string
+	enumerateCiphers       bool
 	logFormat              string
 
 	zapOpts zap.Options
@@ -149,6 +150,8 @@ func parseFlags() *operatorConfig {
 		"Path to a PEM-encoded client certificate for mTLS endpoint probing")
 	flag.StringVar(&cfg.clientKeyPath, "client-key", "",
 		"Path to a PEM-encoded client private key for mTLS endpoint probing")
+	flag.BoolVar(&cfg.enumerateCiphers, "enumerate-ciphers", true,
+		"Enumerate all supported cipher suites per TLS version (disable for faster scans)")
 	flag.StringVar(&cfg.logFormat, "log-format", "text",
 		"Log output format: text or json")
 
@@ -289,6 +292,7 @@ func setupManager(ctx context.Context, cfg *operatorConfig) ctrl.Manager {
 	}
 
 	baseChecker := tlscheck.NewTLSChecker(cfg.tlsCheckTimeout)
+	baseChecker.EnumerateCiphers = cfg.enumerateCiphers
 	if cfg.clientCertPath != "" && cfg.clientKeyPath != "" {
 		clientCert, err := tls.LoadX509KeyPair(cfg.clientCertPath, cfg.clientKeyPath)
 		if err != nil {
