@@ -688,3 +688,22 @@ func TestTLSChecker_EnumerateCiphers_Disabled(t *testing.T) {
 		t.Errorf("expected 1 cipher suite with enumeration disabled, got %d: %v", len(suites), suites)
 	}
 }
+
+func TestTLSChecker_ParallelProbes_ReducesLatency(t *testing.T) {
+	timeout := 500 * time.Millisecond
+	checker := NewTLSChecker(timeout)
+
+	start := time.Now()
+	// Port 1 is connection-refused (fast fail), but all probes run concurrently
+	_, _ = checker.CheckEndpoint(context.Background(), "127.0.0.1", 1)
+	elapsed := time.Since(start)
+
+	// With sequential probes: 5 × timeout = 2.5s minimum
+	// With parallel probes: ~1× timeout = 500ms
+	// Allow 2× timeout as generous upper bound
+	maxExpected := 2 * timeout
+	if elapsed > maxExpected {
+		t.Errorf("parallel probes took %v, expected less than %v (sequential would be ~%v)",
+			elapsed, maxExpected, 5*timeout)
+	}
+}

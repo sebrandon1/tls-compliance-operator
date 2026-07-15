@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 )
 
@@ -66,54 +67,89 @@ var tlsVersionInfo = []struct {
 	{tls.VersionTLS13, "TLS 1.3", func(r *TLSCheckResult, v bool) { r.SupportsTLS13 = v }},
 }
 
-// CheckEndpoint checks the TLS configuration of an endpoint
+// versionProbeResult holds the outcome of a single TLS version probe.
+type versionProbeResult struct {
+	name         string
+	supported    bool
+	cipherID     uint16
+	cipherSuite  string
+	curveName    string
+	alpnProto    string
+	cert         *CertificateDetails
+	err          error
+	cipherSuites []string
+}
+
+// CheckEndpoint checks the TLS configuration of an endpoint.
+// TLS version probes and the SSLv3 probe run concurrently to minimize
+// wall-clock time for unreachable hosts (1× timeout instead of 5×).
 func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (*TLSCheckResult, error) {
 	start := time.Now()
 	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
+
+	probeResults := make([]versionProbeResult, len(tlsVersionInfo))
+	var ssl30Supported bool
+
+	g, gctx := errgroup.WithContext(ctx)
+
+	for i, vi := range tlsVersionInfo {
+		g.Go(func() error {
+			pr := &probeResults[i]
+			pr.name = vi.name
+			pr.supported, pr.cipherID, pr.cipherSuite, pr.curveName, pr.alpnProto, pr.cert, pr.err = c.tryTLSVersion(gctx, addr, host, vi.version)
+			if pr.supported && pr.err == nil && pr.cipherSuite != "" && c.EnumerateCiphers && vi.version < tls.VersionTLS13 {
+				pr.cipherSuites = c.enumerateCiphers(gctx, addr, host, vi.version, pr.cipherID)
+			}
+			return nil
+		})
+	}
+
+	g.Go(func() error {
+		ssl30Supported = c.ProbeSSL30(gctx, addr)
+		return nil
+	})
+
+	_ = g.Wait()
+
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 
 	result := &TLSCheckResult{
 		CipherSuites:     make(map[string][]string),
 		ALPNProtocols:    make(map[string]string),
 		NegotiatedCurves: make(map[string]string),
+		SupportsSSL30:    ssl30Supported,
 	}
 
 	anySuccess := false
 	var lastErrors []error
 
-	for _, vi := range tlsVersionInfo {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
+	for i := range probeResults {
+		pr := &probeResults[i]
+		tlsVersionInfo[i].field(result, pr.supported)
 
-		supported, cipherID, cipherSuite, curveName, alpnProto, cert, err := c.tryTLSVersion(ctx, addr, host, vi.version)
-		vi.field(result, supported)
-
-		if supported && err == nil {
+		if pr.supported && pr.err == nil {
 			anySuccess = true
-			if cipherSuite != "" {
-				if c.EnumerateCiphers && vi.version < tls.VersionTLS13 {
-					result.CipherSuites[vi.name] = c.enumerateCiphers(ctx, addr, host, vi.version, cipherID)
-				} else {
-					result.CipherSuites[vi.name] = append(result.CipherSuites[vi.name], cipherSuite)
-				}
+			if len(pr.cipherSuites) > 0 {
+				result.CipherSuites[pr.name] = pr.cipherSuites
+			} else if pr.cipherSuite != "" {
+				result.CipherSuites[pr.name] = []string{pr.cipherSuite}
 			}
-			if alpnProto != "" {
-				result.ALPNProtocols[vi.name] = alpnProto
+			if pr.alpnProto != "" {
+				result.ALPNProtocols[pr.name] = pr.alpnProto
 			}
-			if curveName != "" {
-				result.NegotiatedCurves[vi.name] = curveName
+			if pr.curveName != "" {
+				result.NegotiatedCurves[pr.name] = pr.curveName
 			}
-			if cert != nil && result.Certificate == nil {
-				result.Certificate = cert
+			if pr.cert != nil && result.Certificate == nil {
+				result.Certificate = pr.cert
 			}
-		} else if supported && err != nil {
-			// mTLS: version is supported but handshake failed due to client cert requirement
+		} else if pr.supported && pr.err != nil {
 			anySuccess = true
-			lastErrors = append(lastErrors, err)
-		} else if err != nil {
-			lastErrors = append(lastErrors, err)
+			lastErrors = append(lastErrors, pr.err)
+		} else if pr.err != nil {
+			lastErrors = append(lastErrors, pr.err)
 		}
 	}
 
@@ -125,11 +161,6 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 		}
 	}
 
-	// Probe SSLv3 via raw socket (Go's crypto/tls removed SSLv3 support)
-	if ctx.Err() == nil {
-		result.SupportsSSL30 = c.ProbeSSL30(ctx, addr)
-	}
-
 	result.CheckDuration = time.Since(start)
 
 	if !anySuccess {
@@ -137,7 +168,6 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 		return result, fmt.Errorf("could not establish TLS connection to %s on any TLS version", addr)
 	}
 
-	// mTLS: we detected supported versions but no connection fully succeeded
 	if len(lastErrors) > 0 && classifyFailure(lastErrors) == FailureReasonMutualTLSRequired {
 		result.FailureReason = FailureReasonMutualTLSRequired
 		return result, fmt.Errorf("endpoint %s requires mutual TLS (client certificate)", addr)
