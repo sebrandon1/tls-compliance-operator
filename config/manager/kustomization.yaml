@@ -5,4 +5,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: quay.io/bapalm/tls-compliance-operator
-  newTag: gateway-api-test
+  newTag: latest
