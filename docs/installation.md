@@ -49,12 +49,22 @@ oc rollout restart deployment/tls-compliance-operator-controller-manager \
   -n tls-compliance-operator-system
 ```
 
-The operator auto-detects OpenShift Route and TLS security profile APIs at
-startup:
+The operator auto-detects optional APIs at startup and enables monitoring for
+each:
 
 ```
 INFO  setup  OpenShift Route API detected, enabling Route monitoring
 INFO  setup  OpenShift Config API detected, enabling TLS security profile monitoring
+INFO  setup  Gateway API resource detected  {"kind": "HTTPRoute"}
+INFO  setup  Gateway API resource detected  {"kind": "TLSRoute"}
+INFO  setup  Gateway API resource detected  {"kind": "Gateway"}
+```
+
+If Gateway API CRDs are not installed, the operator logs a skip message and
+continues without them:
+
+```
+INFO  setup  Gateway API not detected, skipping Gateway resource monitoring
 ```
 
 ## Uninstall

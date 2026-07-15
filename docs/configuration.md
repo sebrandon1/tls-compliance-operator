@@ -14,9 +14,11 @@ If a flag is set on the command line, its environment variable is ignored.
 |------|---------|------|---------|-------------|
 | `--scan-interval` | `TLS_COMPLIANCE_SCAN_INTERVAL` | duration | `1h` | How often the operator re-checks all known TLS endpoints. Each cycle scans every Service, Ingress, Route, and Pod endpoint. Shorter intervals give faster detection but increase API server and network load. |
 | `--cleanup-interval` | `TLS_COMPLIANCE_CLEANUP_INTERVAL` | duration | `5m` | How often the operator removes TLSComplianceReport CRs whose source resource (Service, Ingress, Route) has been deleted. |
-| `--tls-check-timeout` | `TLS_COMPLIANCE_CHECK_TIMEOUT` | duration | `5s` | Timeout for each individual TLS connection attempt. The operator probes TLS 1.0, 1.1, 1.2, 1.3, and SSLv3 sequentially, so worst-case time per endpoint is roughly 5x this value. Increase on high-latency networks. |
+| `--tls-check-timeout` | `TLS_COMPLIANCE_CHECK_TIMEOUT` | duration | `5s` | Timeout for each individual TLS connection attempt. The operator probes all TLS versions (1.0, 1.1, 1.2, 1.3, SSLv3) in parallel, so worst-case time per endpoint is roughly 1x this value plus a small overhead for the ML-KEM active probe. Increase on high-latency networks. |
 | `--workers` | `TLS_COMPLIANCE_WORKERS` | int | `5` | Number of concurrent goroutines used during periodic scans. Range: 1-50. Higher values scan faster but use more CPU and network. This also controls `MaxConcurrentReconciles` for the controller work queue. |
 | `--extra-tls-ports` | `TLS_COMPLIANCE_EXTRA_TLS_PORTS` | string | `""` | Comma-separated list of additional port numbers to treat as TLS endpoints (e.g., `12345,54321`). These are checked in addition to the built-in defaults (443, 8443, 9443, 2379, 5671, 6380, 9200) and any port named `https` or `https-*`. |
+| `--enumerate-ciphers` | _(none)_ | bool | `true` | Enumerate all supported cipher suites per TLS version. When enabled, the operator performs multiple handshakes to discover every cipher suite each TLS version accepts. Disable for faster scans if you only need the first negotiated cipher. |
+| `--metrics-per-endpoint` | _(none)_ | bool | `true` | Emit per-endpoint Prometheus metrics (certificate expiry, TLS version support, PQC readiness, forward secrecy). Disable on large clusters (2000+ endpoints) to reduce metric cardinality and Prometheus memory usage. Aggregate metrics (`tls_compliance_endpoints_total`) are always emitted regardless of this setting. |
 
 ## Rate Limiting
 
@@ -24,6 +26,7 @@ If a flag is set on the command line, its environment variable is ignored.
 |------|---------|------|---------|-------------|
 | `--rate-limit` | `TLS_COMPLIANCE_RATE_LIMIT` | float | `10` | Maximum TLS checks per second (token bucket rate). Controls how aggressively the operator probes endpoints. On large clusters, increase this alongside `--workers` for faster scans. |
 | `--rate-burst` | `TLS_COMPLIANCE_RATE_BURST` | int | `20` | Token bucket burst size. Allows short bursts above the rate limit. Range: 1-1000. |
+| `--namespace-rate-limits` | _(none)_ | string | `""` | Per-namespace TLS check rate limits. Format: `namespace=rate,...` (e.g., `production=2.0,staging=10.0`). Namespaces not listed use the global `--rate-limit`. Useful for limiting scan impact on sensitive namespaces while allowing faster scans elsewhere. |
 
 ## Namespace Filtering
 
@@ -40,12 +43,20 @@ If neither flag is set, all namespaces are scanned.
 |------|---------|------|---------|-------------|
 | `--cert-expiry-warning-days` | `TLS_COMPLIANCE_CERT_EXPIRY_WARNING_DAYS` | int | `30` | Number of days before certificate expiry to emit a `CertificateExpiring` warning event. Range: 1-365. Set lower for environments with short-lived certificates (e.g., cert-manager with 90-day certs). |
 
+## mTLS Probing
+
+| Flag | Env Var | Type | Default | Description |
+|------|---------|------|---------|-------------|
+| `--client-cert` | `TLS_COMPLIANCE_CLIENT_CERT` | string | `""` | Path to a PEM-encoded client certificate for mTLS endpoint probing. When configured alongside `--client-key`, the operator presents this certificate during TLS handshakes. This allows probing endpoints that require mutual TLS, which would otherwise report `MutualTLSRequired`. |
+| `--client-key` | `TLS_COMPLIANCE_CLIENT_KEY` | string | `""` | Path to a PEM-encoded client private key for mTLS endpoint probing. Must be provided with `--client-cert`. |
+
 ## Retry Behavior
 
 | Flag | Env Var | Type | Default | Description |
 |------|---------|------|---------|-------------|
 | `--max-retries` | `TLS_COMPLIANCE_MAX_RETRIES` | int | `3` | Maximum number of retries for transient TLS check failures (Timeout, Unreachable). Range: 0-10. Set to 0 to disable retries entirely. Each retry uses exponential backoff. |
 | `--retry-backoff` | `TLS_COMPLIANCE_RETRY_BACKOFF` | duration | `30s` | Base backoff duration between retries. Actual delay is `base * 2^attempt` (30s, 60s, 120s for the default). On clusters with many unreachable endpoints, increasing this reduces wasted checks. |
+| `--max-backoff` | `TLS_COMPLIANCE_MAX_BACKOFF` | duration | `5m` | Maximum backoff duration between retries. Caps exponential growth so retries don't wait indefinitely. |
 
 ## OpenShift Integration
 
