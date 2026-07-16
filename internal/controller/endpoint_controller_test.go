@@ -726,6 +726,16 @@ func TestIsQuantumReady(t *testing.T) {
 			curves:   map[string]string{"TLS 1.2": "P-256"},
 			expected: false,
 		},
+		{
+			name:     "hybrid SecP256r1MLKEM768",
+			curves:   map[string]string{"TLS 1.3": "SecP256r1MLKEM768"},
+			expected: true,
+		},
+		{
+			name:     "hybrid SecP384r1MLKEM1024",
+			curves:   map[string]string{"TLS 1.3": "SecP384r1MLKEM1024"},
+			expected: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -809,6 +819,22 @@ func TestDeterminePQCReadiness(t *testing.T) {
 				MLKEMSupported:   false,
 			},
 			expected: securityv1alpha1.PQCReadinessTLS13Capable,
+		},
+		{
+			name: "PQCReady - hybrid SecP256r1MLKEM768",
+			result: &tlscheck.TLSCheckResult{
+				SupportsTLS13:    true,
+				NegotiatedCurves: map[string]string{"TLS 1.3": "SecP256r1MLKEM768"},
+			},
+			expected: securityv1alpha1.PQCReadinessPQCReady,
+		},
+		{
+			name: "PQCReady - hybrid SecP384r1MLKEM1024",
+			result: &tlscheck.TLSCheckResult{
+				SupportsTLS13:    true,
+				NegotiatedCurves: map[string]string{"TLS 1.3": "SecP384r1MLKEM1024"},
+			},
+			expected: securityv1alpha1.PQCReadinessPQCReady,
 		},
 	}
 

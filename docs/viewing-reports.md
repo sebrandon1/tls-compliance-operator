@@ -18,7 +18,7 @@ ocp4-cis-rs-openshift-compliance-8443-aab74008                 ocp4-cis-rs.opens
 | **GRADE** | Cipher strength grade (A-F). A = strong ciphers only. |
 | **FS** | Forward secrecy: true if all negotiated ciphers use ephemeral key exchange (ECDHE/DHE). |
 | **TLS1.3/1.2/1.0** | Whether each TLS version is supported. SSL3.0 appears in wide output (`kubectl get tlsreport -o wide`). |
-| **PQC** | Post-quantum cryptography readiness. See [Post-Quantum / ML-KEM](pqc-mlkem.md) for details. |
+| **PQC** | Post-quantum cryptography readiness (hybrid ML-KEM). See [Post-Quantum / ML-KEM](pqc-mlkem.md) for details. |
 | **CERTEXPIRY** | Days until certificate expiration. |
 | **SOURCE** | How the endpoint was discovered: Service, Ingress, Route, Pod, HTTPRoute, TLSRoute, Gateway, or Target. |
 

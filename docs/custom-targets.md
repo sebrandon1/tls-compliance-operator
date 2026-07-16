@@ -62,7 +62,7 @@ Status:
     tls12:  true
     tls13:  true
   Negotiated Curves:
-    TLS 1.3:  X25519MLKEM768
+    TLS 1.3:  X25519MLKEM768 (hybrid)
   Certificate Info:
     Days Until Expiry:  53
     Issuer:      CN=WR2,O=Google Trust Services,C=US

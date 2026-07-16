@@ -70,8 +70,8 @@ const (
 type PQCReadiness string
 
 const (
-	// PQCReadinessPQCReady means the endpoint supports TLS 1.3 with a post-quantum
-	// key exchange algorithm (e.g. X25519MLKEM768)
+	// PQCReadinessPQCReady means the endpoint supports TLS 1.3 with a hybrid
+	// ML-KEM key exchange (e.g. X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024)
 	PQCReadinessPQCReady PQCReadiness = "PQCReady"
 	// PQCReadinessTLS13Capable means the endpoint supports TLS 1.3 but has not
 	// negotiated a post-quantum key exchange algorithm
@@ -217,22 +217,22 @@ type TLSComplianceReportStatus struct {
 	ALPNProtocols map[string]string `json:"alpnProtocols,omitempty"`
 
 	// NegotiatedCurves maps TLS version to the negotiated key exchange curve
-	// (e.g. X25519, P-256, X25519MLKEM768)
+	// (e.g. X25519, P-256, X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024)
 	// +optional
 	NegotiatedCurves map[string]string `json:"negotiatedCurves,omitempty"`
 
 	// QuantumReady indicates whether any TLS connection negotiated a
-	// post-quantum key exchange algorithm (e.g. X25519MLKEM768)
+	// hybrid ML-KEM key exchange (e.g. X25519MLKEM768, SecP256r1MLKEM768)
 	// +optional
 	QuantumReady bool `json:"quantumReady"`
 
-	// MLKEMSupported indicates whether the endpoint accepted an ML-KEM
+	// MLKEMSupported indicates whether the endpoint accepted a hybrid ML-KEM
 	// key exchange when explicitly offered via active probing
 	// +optional
 	MLKEMSupported bool `json:"mlkemSupported"`
 
 	// PQCReadiness classifies the endpoint's post-quantum cryptography readiness:
-	// PQCReady (TLS 1.3 + ML-KEM), TLS13Capable (TLS 1.3 without ML-KEM),
+	// PQCReady (TLS 1.3 + hybrid ML-KEM), TLS13Capable (TLS 1.3 without ML-KEM),
 	// LegacyTLS (TLS 1.2 or older only), or NoPQC (no TLS detected)
 	// +optional
 	PQCReadiness PQCReadiness `json:"pqcReadiness,omitempty"`

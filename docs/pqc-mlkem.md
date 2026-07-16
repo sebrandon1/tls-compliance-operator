@@ -8,13 +8,33 @@ quantum-resistant cryptography.
 
 ML-KEM (Module-Lattice Key Encapsulation Mechanism, FIPS 203) is the first
 NIST-standardized post-quantum key exchange algorithm. In TLS 1.3, it is
-deployed as the hybrid key exchange `X25519MLKEM768`, which combines the
-classical X25519 algorithm with ML-KEM-768 so that the connection remains
-secure even if one of the two algorithms is broken.
+deployed as **hybrid** key exchanges that combine a classical ECDH algorithm
+with ML-KEM, so the connection remains secure even if one of the two
+algorithms is broken.
 
-Go 1.24+ includes native support for `X25519MLKEM768` in `crypto/tls`, and
-the operator uses this to both passively detect and actively probe for
-post-quantum key exchange.
+Go 1.26 supports three hybrid ML-KEM curves, all included in the default
+TLS 1.3 curve preferences:
+
+| Curve Name | Classical + PQ Components |
+|------------|--------------------------|
+| `X25519MLKEM768` | X25519 + ML-KEM-768 |
+| `SecP256r1MLKEM768` | ECDH P-256 + ML-KEM-768 |
+| `SecP384r1MLKEM1024` | ECDH P-384 + ML-KEM-1024 |
+
+The operator detects all three hybrid curves via both passive detection and
+active probing.
+
+### Hybrid vs Pure ML-KEM
+
+All ML-KEM curves currently available in Go's `crypto/tls` are **hybrid** —
+they pair a classical key exchange with ML-KEM. This means the connection is
+protected by both algorithms simultaneously.
+
+Pure ML-KEM (without a classical component) is not yet available in Go's TLS
+implementation. Some government requirements (e.g., CNSA 2.0) may eventually
+mandate pure ML-KEM. When pure ML-KEM curve IDs are standardized and added to
+Go, the operator will detect them automatically via the existing `"MLKEM"`
+substring match on negotiated curve names.
 
 ## Detection Methods
 
@@ -30,13 +50,14 @@ on the curve preferences the client and server agree on during the handshake.
 ### Active ML-KEM Probing
 
 When passive detection does not find ML-KEM but the endpoint supports TLS 1.3,
-the operator performs a second handshake offering **only** `X25519MLKEM768` as
-the key exchange curve. If the server completes this handshake, the
-`mlkemSupported` field is set to `true`.
+the operator performs a second handshake offering **only** the three hybrid
+ML-KEM curves (`X25519MLKEM768`, `SecP256r1MLKEM768`, `SecP384r1MLKEM1024`).
+If the server completes this handshake with any of them, the `mlkemSupported`
+field is set to `true`.
 
-This is a definitive test: if the server cannot handle ML-KEM, the connection
-fails and the field stays `false`. Active probing is skipped when TLS 1.3 is
-not supported or when passive detection already found ML-KEM.
+This is a definitive test: if the server cannot handle any hybrid ML-KEM curve,
+the connection fails and the field stays `false`. Active probing is skipped
+when TLS 1.3 is not supported or when passive detection already found ML-KEM.
 
 ## PQC Readiness Classification
 
@@ -44,7 +65,7 @@ Each endpoint is classified into one of four readiness levels:
 
 | Level | Meaning |
 |-------|---------|
-| **PQCReady** | TLS 1.3 supported and ML-KEM confirmed (via passive or active detection) |
+| **PQCReady** | TLS 1.3 supported and hybrid ML-KEM confirmed (via passive or active detection) |
 | **TLS13Capable** | TLS 1.3 supported but ML-KEM not detected |
 | **LegacyTLS** | Only TLS 1.2 or older — no path to PQC without TLS 1.3 |
 | **NoPQC** | No TLS detected at all |
@@ -53,7 +74,7 @@ The classification is determined by `determinePQCReadiness()` using this logic:
 
 1. No TLS version supported at all → **NoPQC**
 2. TLS 1.3 not supported → **LegacyTLS**
-3. `mlkemSupported` is true OR negotiated curve contains "MLKEM" → **PQCReady**
+3. `mlkemSupported` is true OR negotiated curve contains "MLKEM" (any hybrid variant) → **PQCReady**
 4. Otherwise → **TLS13Capable**
 
 ## CRD Status Fields
@@ -64,7 +85,7 @@ The `TLSComplianceReport` status includes four PQC-related fields:
 |-------|------|-------------|
 | `pqcReadiness` | enum | Classification level (PQCReady, TLS13Capable, LegacyTLS, NoPQC) |
 | `quantumReady` | bool | True if passive detection found a post-quantum key exchange curve |
-| `mlkemSupported` | bool | True if active probing confirmed ML-KEM support |
+| `mlkemSupported` | bool | True if active probing confirmed hybrid ML-KEM support |
 | `negotiatedCurves` | map | Per-TLS-version key exchange curve (e.g., `"TLS 1.3": "X25519MLKEM768"`) |
 
 ## Viewing PQC Status
@@ -119,8 +140,8 @@ Possible condition states:
 
 | Status | Reason | Message |
 |--------|--------|---------|
-| True | PQCReady | Endpoint supports TLS 1.3 with ML-KEM key exchange (verified by active probe) |
-| True | PQCReady | Endpoint supports TLS 1.3 with post-quantum key exchange (ML-KEM) |
+| True | PQCReady | Endpoint supports TLS 1.3 with hybrid ML-KEM key exchange (verified by active probe) |
+| True | PQCReady | Endpoint supports TLS 1.3 with hybrid ML-KEM key exchange |
 | False | TLS13Capable | Endpoint supports TLS 1.3 but has not negotiated a post-quantum key exchange |
 | False | LegacyTLS | Endpoint only supports TLS 1.2 or older, no path to post-quantum cryptography |
 | Unknown | NoPQC | No TLS detected on endpoint |
