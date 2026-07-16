@@ -681,8 +681,8 @@ func determineComplianceStatus(result *tlscheck.TLSCheckResult) securityv1alpha1
 	return securityv1alpha1.ComplianceStatusUnknown
 }
 
-// isQuantumReady returns true if any negotiated curve uses a post-quantum
-// key exchange algorithm (identified by containing "MLKEM" in the name).
+// isQuantumReady returns true if any negotiated curve uses a hybrid ML-KEM
+// key exchange (e.g. X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024).
 func isQuantumReady(curves map[string]string) bool {
 	for _, curve := range curves {
 		if strings.Contains(curve, "MLKEM") {
@@ -807,9 +807,9 @@ func (r *EndpointReconciler) updateConditions(cr *securityv1alpha1.TLSCompliance
 		pqcCondition.Status = metav1.ConditionTrue
 		pqcCondition.Reason = "PQCReady"
 		if result.MLKEMSupported {
-			pqcCondition.Message = "Endpoint supports TLS 1.3 with ML-KEM key exchange (verified by active probe)"
+			pqcCondition.Message = "Endpoint supports TLS 1.3 with hybrid ML-KEM key exchange (verified by active probe)"
 		} else {
-			pqcCondition.Message = "Endpoint supports TLS 1.3 with post-quantum key exchange (ML-KEM)"
+			pqcCondition.Message = "Endpoint supports TLS 1.3 with hybrid ML-KEM key exchange"
 		}
 	case securityv1alpha1.PQCReadinessTLS13Capable:
 		pqcCondition.Status = metav1.ConditionFalse
@@ -893,7 +893,7 @@ func (r *EndpointReconciler) emitComplianceEvents(cr *securityv1alpha1.TLSCompli
 	if oldPQCReadiness != "" && oldPQCReadiness != cr.Status.PQCReadiness {
 		if cr.Status.PQCReadiness == securityv1alpha1.PQCReadinessPQCReady {
 			r.Recorder.Event(cr, corev1.EventTypeNormal, EventReasonPQCReady,
-				fmt.Sprintf("Endpoint %s is now post-quantum ready (TLS 1.3 + ML-KEM)", hostPort(cr.Spec.Host, cr.Spec.Port)))
+				fmt.Sprintf("Endpoint %s is now post-quantum ready (TLS 1.3 + hybrid ML-KEM)", hostPort(cr.Spec.Host, cr.Spec.Port)))
 		} else {
 			r.Recorder.Event(cr, corev1.EventTypeWarning, EventReasonPQCNotReady,
 				fmt.Sprintf("PQC readiness changed from %s to %s for %s", oldPQCReadiness, cr.Status.PQCReadiness, hostPort(cr.Spec.Host, cr.Spec.Port)))

@@ -338,17 +338,22 @@ func (c *TLSChecker) enumerateCiphers(ctx context.Context, addr, serverName stri
 	return discovered
 }
 
-// probeMLKEM performs a TLS 1.3 handshake offering only ML-KEM key exchange
-// to determine whether the server actively supports post-quantum key exchange.
+// probeMLKEM performs a TLS 1.3 handshake offering only hybrid ML-KEM key
+// exchange curves to determine whether the server supports post-quantum key
+// exchange. Tests X25519MLKEM768, SecP256r1MLKEM768, and SecP384r1MLKEM1024.
 func (c *TLSChecker) probeMLKEM(ctx context.Context, addr, serverName string) bool {
 	dialer := &net.Dialer{
 		Timeout: c.Timeout,
 	}
 
 	tlsConfig := &tls.Config{
-		MinVersion:         tls.VersionTLS13,
-		MaxVersion:         tls.VersionTLS13,
-		CurvePreferences:   []tls.CurveID{tls.X25519MLKEM768},
+		MinVersion: tls.VersionTLS13,
+		MaxVersion: tls.VersionTLS13,
+		CurvePreferences: []tls.CurveID{
+			tls.X25519MLKEM768,
+			tls.SecP256r1MLKEM768,
+			tls.SecP384r1MLKEM1024,
+		},
 		InsecureSkipVerify: true, //nolint:gosec // We probe capabilities, not trust
 		ServerName:         serverName,
 	}
