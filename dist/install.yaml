@@ -1,0 +1,1019 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: tls-compliance-operator
+    control-plane: controller-manager
+  name: tls-compliance-operator-system
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: tlscompliancereports.security.telco.openshift.io
+spec:
+  group: security.telco.openshift.io
+  names:
+    kind: TLSComplianceReport
+    listKind: TLSComplianceReportList
+    plural: tlscompliancereports
+    shortNames:
+    - tlsreport
+    singular: tlscompliancereport
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.host
+      name: Host
+      type: string
+    - jsonPath: .spec.port
+      name: Port
+      type: integer
+    - jsonPath: .spec.sourceKind
+      name: Source
+      type: string
+    - jsonPath: .status.complianceStatus
+      name: Compliance
+      type: string
+    - jsonPath: .status.overallCipherGrade
+      name: Grade
+      type: string
+    - jsonPath: .status.forwardSecrecy
+      name: FS
+      type: boolean
+    - jsonPath: .status.tlsVersions.tls13
+      name: TLS1.3
+      type: boolean
+    - jsonPath: .status.tlsVersions.tls12
+      name: TLS1.2
+      type: boolean
+    - jsonPath: .status.tlsVersions.tls10
+      name: TLS1.0
+      type: boolean
+    - jsonPath: .status.tlsVersions.ssl30
+      name: SSL3.0
+      priority: 1
+      type: boolean
+    - jsonPath: .status.pqcReadiness
+      name: PQC
+      type: string
+    - jsonPath: .status.certificateInfo.daysUntilExpiry
+      name: CertExpiry
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: TLSComplianceReport is the Schema for the tlscompliancereports
+          API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: Spec defines the desired state of TLSComplianceReport
+            properties:
+              host:
+                description: Host is the hostname or IP being checked
+                minLength: 1
+                type: string
+              port:
+                description: Port is the port number being checked
+                format: int32
+                maximum: 65535
+                minimum: 1
+                type: integer
+              sourceKind:
+                description: SourceKind is the type of Kubernetes resource that exposed
+                  this endpoint
+                enum:
+                - Service
+                - Ingress
+                - Route
+                - Target
+                - Pod
+                - HTTPRoute
+                - TLSRoute
+                - Gateway
+                type: string
+              sourceName:
+                description: SourceName is the name of the source resource
+                type: string
+              sourceNamespace:
+                description: SourceNamespace is the namespace of the source resource
+                type: string
+            required:
+            - host
+            - port
+            - sourceKind
+            - sourceName
+            - sourceNamespace
+            type: object
+          status:
+            description: Status defines the observed state of TLSComplianceReport
+            properties:
+              alpnProtocols:
+                additionalProperties:
+                  type: string
+                description: |-
+                  ALPNProtocols maps TLS version to the negotiated ALPN protocol
+                  (e.g. "h2", "http/1.1")
+                type: object
+              apiServerProfileCompliance:
+                description: |-
+                  APIServerProfileCompliance contains the compliance result against the
+                  OpenShift APIServer TLS security profile (OpenShift only)
+                properties:
+                  compliant:
+                    description: Compliant indicates whether the endpoint meets the
+                      profile requirements
+                    type: boolean
+                  disallowedCiphers:
+                    description: |-
+                      DisallowedCiphers lists cipher suites negotiated by the endpoint that are
+                      not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  minTLSVersionMet:
+                    description: |-
+                      MinTLSVersionMet indicates whether the endpoint does not support TLS versions
+                      below the profile's minimum
+                    type: boolean
+                  profileType:
+                    description: ProfileType is the configured profile type (Old,
+                      Intermediate, Modern, Custom)
+                    type: string
+                required:
+                - compliant
+                - minTLSVersionMet
+                - profileType
+                type: object
+              certificateInfo:
+                description: CertificateInfo contains details about the TLS certificate
+                properties:
+                  chainLength:
+                    description: ChainLength is the number of certificates in the
+                      peer certificate chain
+                    type: integer
+                  daysUntilExpiry:
+                    description: DaysUntilExpiry is the number of days until the certificate
+                      expires
+                    type: integer
+                  dnsNames:
+                    description: DNSNames lists the DNS names in the certificate's
+                      SAN
+                    items:
+                      type: string
+                    type: array
+                  hostnameMatch:
+                    description: HostnameMatch indicates whether the certificate is
+                      valid for the tested endpoint hostname
+                    type: boolean
+                  isExpired:
+                    description: IsExpired indicates if the certificate has expired
+                    type: boolean
+                  issuer:
+                    description: Issuer is the certificate issuer
+                    type: string
+                  notAfter:
+                    description: NotAfter is the end of the certificate's validity
+                      period
+                    format: date-time
+                    type: string
+                  notBefore:
+                    description: NotBefore is the start of the certificate's validity
+                      period
+                    format: date-time
+                    type: string
+                  publicKeyAlgorithm:
+                    description: PublicKeyAlgorithm is the certificate's public key
+                      algorithm (e.g. RSA, ECDSA, Ed25519)
+                    type: string
+                  publicKeyBits:
+                    description: PublicKeyBits is the size of the public key in bits
+                    type: integer
+                  signatureAlgorithm:
+                    description: SignatureAlgorithm is the algorithm used to sign
+                      the certificate (e.g. SHA256-RSA, ECDSA-SHA256)
+                    type: string
+                  subject:
+                    description: Subject is the certificate subject
+                    type: string
+                type: object
+              checkCount:
+                description: CheckCount is the number of TLS checks performed
+                format: int64
+                type: integer
+              cipherStrengthGrades:
+                additionalProperties:
+                  type: string
+                description: CipherStrengthGrades maps each cipher suite name to its
+                  strength grade (A-F)
+                type: object
+              cipherSuites:
+                additionalProperties:
+                  items:
+                    type: string
+                  type: array
+                description: CipherSuites maps TLS version to supported cipher suite
+                  names
+                type: object
+              complianceStatus:
+                default: Unknown
+                description: ComplianceStatus indicates the overall TLS compliance
+                  status
+                enum:
+                - Compliant
+                - NonCompliant
+                - Warning
+                - Unreachable
+                - Timeout
+                - Closed
+                - Filtered
+                - NoTLS
+                - MutualTLSRequired
+                - Pending
+                - Unknown
+                type: string
+              conditions:
+                description: Conditions represent the current state of the TLSComplianceReport
+                  resource
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              consecutiveErrors:
+                description: ConsecutiveErrors is the number of consecutive check
+                  errors
+                type: integer
+              firstSeenAt:
+                description: FirstSeenAt is when this endpoint was first discovered
+                format: date-time
+                type: string
+              forwardSecrecy:
+                description: |-
+                  ForwardSecrecy indicates whether all negotiated cipher suites use
+                  ephemeral key exchange (ECDHE/DHE), providing perfect forward secrecy
+                type: boolean
+              ingressProfileCompliance:
+                description: |-
+                  IngressProfileCompliance contains the compliance result against the
+                  OpenShift IngressController TLS security profile (OpenShift only)
+                properties:
+                  compliant:
+                    description: Compliant indicates whether the endpoint meets the
+                      profile requirements
+                    type: boolean
+                  disallowedCiphers:
+                    description: |-
+                      DisallowedCiphers lists cipher suites negotiated by the endpoint that are
+                      not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  minTLSVersionMet:
+                    description: |-
+                      MinTLSVersionMet indicates whether the endpoint does not support TLS versions
+                      below the profile's minimum
+                    type: boolean
+                  profileType:
+                    description: ProfileType is the configured profile type (Old,
+                      Intermediate, Modern, Custom)
+                    type: string
+                required:
+                - compliant
+                - minTLSVersionMet
+                - profileType
+                type: object
+              keyExchangeTypes:
+                additionalProperties:
+                  type: string
+                description: |-
+                  KeyExchangeTypes maps TLS version to the key exchange algorithm used
+                  (ECDHE, DHE, RSA, or TLS13)
+                type: object
+              kubeletProfileCompliance:
+                description: |-
+                  KubeletProfileCompliance contains the compliance result against the
+                  OpenShift KubeletConfig TLS security profile (OpenShift only)
+                properties:
+                  compliant:
+                    description: Compliant indicates whether the endpoint meets the
+                      profile requirements
+                    type: boolean
+                  disallowedCiphers:
+                    description: |-
+                      DisallowedCiphers lists cipher suites negotiated by the endpoint that are
+                      not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  minTLSVersionMet:
+                    description: |-
+                      MinTLSVersionMet indicates whether the endpoint does not support TLS versions
+                      below the profile's minimum
+                    type: boolean
+                  profileType:
+                    description: ProfileType is the configured profile type (Old,
+                      Intermediate, Modern, Custom)
+                    type: string
+                required:
+                - compliant
+                - minTLSVersionMet
+                - profileType
+                type: object
+              lastCheckAt:
+                description: LastCheckAt is when the last TLS check was performed
+                format: date-time
+                type: string
+              lastError:
+                description: LastError is the last error message from a TLS check
+                type: string
+              lastSeenAt:
+                description: LastSeenAt is when this endpoint was last observed
+                format: date-time
+                type: string
+              mlkemSupported:
+                description: |-
+                  MLKEMSupported indicates whether the endpoint accepted a hybrid ML-KEM
+                  key exchange when explicitly offered via active probing
+                type: boolean
+              negotiatedCurves:
+                additionalProperties:
+                  type: string
+                description: |-
+                  NegotiatedCurves maps TLS version to the negotiated key exchange curve
+                  (e.g. X25519, P-256, X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024)
+                type: object
+              nextRetryAt:
+                description: NextRetryAt is when the next retry attempt will happen
+                format: date-time
+                type: string
+              overallCipherGrade:
+                description: OverallCipherGrade is the worst grade across all negotiated
+                  cipher suites
+                type: string
+              pqcReadiness:
+                description: |-
+                  PQCReadiness classifies the endpoint's post-quantum cryptography readiness:
+                  PQCReady (TLS 1.3 + hybrid ML-KEM), TLS13Capable (TLS 1.3 without ML-KEM),
+                  LegacyTLS (TLS 1.2 or older only), or NoPQC (no TLS detected)
+                enum:
+                - PQCReady
+                - TLS13Capable
+                - LegacyTLS
+                - NoPQC
+                type: string
+              quantumReady:
+                description: |-
+                  QuantumReady indicates whether any TLS connection negotiated a
+                  hybrid ML-KEM key exchange (e.g. X25519MLKEM768, SecP256r1MLKEM768)
+                type: boolean
+              retryCount:
+                description: RetryCount is the current retry attempt number for transient
+                  failures
+                type: integer
+              scanDuration:
+                description: ScanDuration is the wall-clock time taken by the last
+                  TLS check (e.g. "1.23s")
+                type: string
+              tlsVersions:
+                description: TLSVersions indicates which TLS versions are supported
+                properties:
+                  ssl30:
+                    description: SSL30 indicates if the deprecated SSLv3 protocol
+                      is supported
+                    type: boolean
+                  tls10:
+                    description: TLS10 indicates if TLS 1.0 is supported
+                    type: boolean
+                  tls11:
+                    description: TLS11 indicates if TLS 1.1 is supported
+                    type: boolean
+                  tls12:
+                    description: TLS12 indicates if TLS 1.2 is supported
+                    type: boolean
+                  tls13:
+                    description: TLS13 indicates if TLS 1.3 is supported
+                    type: boolean
+                required:
+                - tls10
+                - tls11
+                - tls12
+                - tls13
+                type: object
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: tlscompliancetargets.security.telco.openshift.io
+spec:
+  group: security.telco.openshift.io
+  names:
+    kind: TLSComplianceTarget
+    listKind: TLSComplianceTargetList
+    plural: tlscompliancetargets
+    shortNames:
+    - tlstarget
+    singular: tlscompliancetarget
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.host
+      name: Host
+      type: string
+    - jsonPath: .spec.port
+      name: Port
+      type: integer
+    - jsonPath: .status.complianceStatus
+      name: Status
+      type: string
+    - jsonPath: .status.lastScannedAt
+      name: Last Scanned
+      type: date
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          TLSComplianceTarget is the Schema for the tlscompliancetargets API.
+          It declares an arbitrary host:port target for TLS compliance scanning.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: Spec defines the target to scan
+            properties:
+              host:
+                description: Host is the hostname or IP to scan
+                minLength: 1
+                type: string
+              port:
+                description: Port is the port number to scan
+                format: int32
+                maximum: 65535
+                minimum: 1
+                type: integer
+            required:
+            - host
+            - port
+            type: object
+          status:
+            description: Status defines the observed state of the target
+            properties:
+              complianceStatus:
+                description: ComplianceStatus is the result of the last scan
+                enum:
+                - Compliant
+                - NonCompliant
+                - Warning
+                - Unreachable
+                - Timeout
+                - Closed
+                - Filtered
+                - NoTLS
+                - MutualTLSRequired
+                - Pending
+                - Unknown
+                type: string
+              conditions:
+                description: Conditions represent the current state of the target
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              lastScannedAt:
+                description: LastScannedAt is the timestamp of the most recent scan
+                format: date-time
+                type: string
+              message:
+                description: Message provides human-readable details about the last
+                  scan result
+                type: string
+              reportName:
+                description: ReportName is the name of the TLSComplianceReport CR
+                  generated for this target
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: tls-compliance-operator
+  name: tls-compliance-operator-controller-manager
+  namespace: tls-compliance-operator-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: tls-compliance-operator-leader-election-role
+  namespace: tls-compliance-operator-system
+rules:
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tls-compliance-operator-manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  - services
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - config.openshift.io
+  resources:
+  - apiservers
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - gateways
+  - httproutes
+  - tlsroutes
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - machineconfiguration.openshift.io
+  resources:
+  - kubeletconfigs
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - operator.openshift.io
+  resources:
+  - ingresscontrollers
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - route.openshift.io
+  resources:
+  - routes
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - security.telco.openshift.io
+  resources:
+  - tlscompliancereports
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - security.telco.openshift.io
+  resources:
+  - tlscompliancereports/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - security.telco.openshift.io
+  resources:
+  - tlscompliancereports/status
+  - tlscompliancetargets/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - security.telco.openshift.io
+  resources:
+  - tlscompliancetargets
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tls-compliance-operator-metrics-auth-role
+rules:
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tls-compliance-operator-metrics-reader
+rules:
+- nonResourceURLs:
+  - /metrics
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tls-compliance-operator-leader-election-rolebinding
+  namespace: tls-compliance-operator-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: tls-compliance-operator-leader-election-role
+subjects:
+- kind: ServiceAccount
+  name: tls-compliance-operator-controller-manager
+  namespace: tls-compliance-operator-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: tls-compliance-operator
+  name: tls-compliance-operator-manager-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tls-compliance-operator-manager-role
+subjects:
+- kind: ServiceAccount
+  name: tls-compliance-operator-controller-manager
+  namespace: tls-compliance-operator-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tls-compliance-operator-metrics-auth-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tls-compliance-operator-metrics-auth-role
+subjects:
+- kind: ServiceAccount
+  name: tls-compliance-operator-controller-manager
+  namespace: tls-compliance-operator-system
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: tls-compliance-operator
+    control-plane: controller-manager
+  name: tls-compliance-operator-controller-manager-metrics-service
+  namespace: tls-compliance-operator-system
+spec:
+  ports:
+  - name: https
+    port: 8443
+    protocol: TCP
+    targetPort: 8443
+  selector:
+    control-plane: controller-manager
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: tls-compliance-operator
+    control-plane: controller-manager
+  name: tls-compliance-operator-controller-manager
+  namespace: tls-compliance-operator-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tls-compliance-operator
+      control-plane: controller-manager
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+      labels:
+        app.kubernetes.io/name: tls-compliance-operator
+        control-plane: controller-manager
+    spec:
+      containers:
+      - args:
+        - --leader-elect
+        - --health-probe-bind-address=:8081
+        - --metrics-bind-address=:8443
+        - --metrics-secure=true
+        command:
+        - /manager
+        image: quay.io/bapalm/tls-compliance-operator:v1.1.3
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        name: manager
+        ports: []
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: 500m
+            memory: 256Mi
+          requests:
+            cpu: 10m
+            memory: 64Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+        volumeMounts: []
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: tls-compliance-operator-controller-manager
+      terminationGracePeriodSeconds: 10
+      volumes: []
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: tls-compliance-operator
+    control-plane: controller-manager
+  name: tls-compliance-operator-controller-manager
+  namespace: tls-compliance-operator-system
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tls-compliance-operator
+      control-plane: controller-manager
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: tls-compliance-operator
+    control-plane: controller-manager
+  name: tls-compliance-operator-controller-manager
+  namespace: tls-compliance-operator-system
+spec:
+  egress:
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+  - ports:
+    - port: 443
+      protocol: TCP
+    - port: 6443
+      protocol: TCP
+  - {}
+  ingress:
+  - ports:
+    - port: 8443
+      protocol: TCP
+  - ports:
+    - port: 8081
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: tls-compliance-operator
+      control-plane: controller-manager
+  policyTypes:
+  - Ingress
+  - Egress
