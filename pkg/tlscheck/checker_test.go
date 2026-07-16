@@ -480,6 +480,46 @@ func TestTLSChecker_ProbeMLKEM_NotSupported(t *testing.T) {
 	}
 }
 
+func TestTLSChecker_ProbeMLKEM_SecP256r1Only(t *testing.T) {
+	cert, _ := generateTestCert(t)
+	host, port, cleanup := startTLSServerWithCurves(t, cert, tls.VersionTLS13, tls.VersionTLS13,
+		[]tls.CurveID{tls.SecP256r1MLKEM768, tls.CurveP256})
+	defer cleanup()
+
+	checker := NewTLSChecker(2 * time.Second)
+	result, err := checker.CheckEndpoint(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("CheckEndpoint() error = %v", err)
+	}
+
+	if !result.SupportsTLS13 {
+		t.Fatal("expected TLS 1.3 to be supported")
+	}
+	if !result.MLKEMSupported {
+		t.Error("expected MLKEMSupported to be true (server supports SecP256r1MLKEM768)")
+	}
+}
+
+func TestTLSChecker_ProbeMLKEM_SecP384r1Only(t *testing.T) {
+	cert, _ := generateTestCert(t)
+	host, port, cleanup := startTLSServerWithCurves(t, cert, tls.VersionTLS13, tls.VersionTLS13,
+		[]tls.CurveID{tls.SecP384r1MLKEM1024, tls.CurveP384})
+	defer cleanup()
+
+	checker := NewTLSChecker(2 * time.Second)
+	result, err := checker.CheckEndpoint(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("CheckEndpoint() error = %v", err)
+	}
+
+	if !result.SupportsTLS13 {
+		t.Fatal("expected TLS 1.3 to be supported")
+	}
+	if !result.MLKEMSupported {
+		t.Error("expected MLKEMSupported to be true (server supports SecP384r1MLKEM1024)")
+	}
+}
+
 func TestTLSChecker_ProbeMLKEM_TLS12Only(t *testing.T) {
 	cert, _ := generateTestCert(t)
 	host, port, cleanup := startTLSServer(t, cert, tls.VersionTLS12, tls.VersionTLS12)
