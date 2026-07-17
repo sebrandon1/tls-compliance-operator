@@ -63,6 +63,7 @@ type Summary struct {
 	ByStatus              map[securityv1alpha1.ComplianceStatus]int
 	BySourceKind          map[securityv1alpha1.SourceKind]int
 	ByPQCReadiness        map[securityv1alpha1.PQCReadiness]int
+	FIPSDetected          bool
 	ForwardSecrecyCount   int
 	MLKEMProbeCount       int
 	CompliancePercent     float64
@@ -93,6 +94,9 @@ func ComputeSummary(reports []securityv1alpha1.TLSComplianceReport, now time.Tim
 		}
 		if r.Status.MLKEMSupported {
 			s.MLKEMProbeCount++
+		}
+		if r.Status.FIPSDetected {
+			s.FIPSDetected = true
 		}
 		if r.Status.PQCReadiness != "" {
 			s.ByPQCReadiness[r.Status.PQCReadiness]++
@@ -176,6 +180,9 @@ func WriteSummary(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) e
 	if len(s.ByPQCReadiness) > 0 {
 		ew.printf("\nPost-Quantum Cryptography Readiness\n")
 		ew.printf("------------------------------------\n")
+		if s.FIPSDetected {
+			ew.printf("FIPS Mode:\tActive -- ML-KEM key exchange unavailable\n")
+		}
 		ew.printf("PQC Ready Rate:\t%.1f%%\n", s.PQCReadyPercent)
 		ew.printf("ML-KEM Supported (active probe):\t%d/%d\n", s.MLKEMProbeCount, s.Total)
 		for _, readiness := range knownPQCReadiness {

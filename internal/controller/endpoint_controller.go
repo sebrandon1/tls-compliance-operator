@@ -97,6 +97,7 @@ type EndpointReconciler struct {
 	MaxBackoff            time.Duration
 	ReportRetentionDays   int
 	MetricsPerEndpoint    bool
+	FIPSEnabled           bool
 	NamespaceRateLimiters map[string]*rate.Limiter
 	DefaultNamespaceRate  *rate.Limiter
 	ManagerCtx            context.Context
@@ -600,6 +601,7 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 		cr.Status.PQCReadiness = pqcReadiness
 		cr.Status.QuantumReady = pqcReadiness == securityv1alpha1.PQCReadinessPQCReady
 		cr.Status.MLKEMSupported = result.MLKEMSupported
+		cr.Status.FIPSDetected = r.FIPSEnabled
 
 		if result.Certificate != nil {
 			notBefore := metav1.NewTime(result.Certificate.NotBefore)
@@ -814,7 +816,11 @@ func (r *EndpointReconciler) updateConditions(cr *securityv1alpha1.TLSCompliance
 	case securityv1alpha1.PQCReadinessTLS13Capable:
 		pqcCondition.Status = metav1.ConditionFalse
 		pqcCondition.Reason = "TLS13Capable"
-		pqcCondition.Message = "Endpoint supports TLS 1.3 but has not negotiated a post-quantum key exchange"
+		if r.FIPSEnabled {
+			pqcCondition.Message = "Endpoint supports TLS 1.3 but has not negotiated a post-quantum key exchange (FIPS mode active, ML-KEM unavailable)"
+		} else {
+			pqcCondition.Message = "Endpoint supports TLS 1.3 but has not negotiated a post-quantum key exchange"
+		}
 	case securityv1alpha1.PQCReadinessLegacyTLS:
 		pqcCondition.Status = metav1.ConditionFalse
 		pqcCondition.Reason = "LegacyTLS"
@@ -895,8 +901,11 @@ func (r *EndpointReconciler) emitComplianceEvents(cr *securityv1alpha1.TLSCompli
 			r.Recorder.Event(cr, corev1.EventTypeNormal, EventReasonPQCReady,
 				fmt.Sprintf("Endpoint %s is now post-quantum ready (TLS 1.3 + hybrid ML-KEM)", hostPort(cr.Spec.Host, cr.Spec.Port)))
 		} else {
-			r.Recorder.Event(cr, corev1.EventTypeWarning, EventReasonPQCNotReady,
-				fmt.Sprintf("PQC readiness changed from %s to %s for %s", oldPQCReadiness, cr.Status.PQCReadiness, hostPort(cr.Spec.Host, cr.Spec.Port)))
+			msg := fmt.Sprintf("PQC readiness changed from %s to %s for %s", oldPQCReadiness, cr.Status.PQCReadiness, hostPort(cr.Spec.Host, cr.Spec.Port))
+			if r.FIPSEnabled && cr.Status.PQCReadiness == securityv1alpha1.PQCReadinessTLS13Capable {
+				msg += " (FIPS mode active, ML-KEM unavailable)"
+			}
+			r.Recorder.Event(cr, corev1.EventTypeWarning, EventReasonPQCNotReady, msg)
 		}
 	}
 

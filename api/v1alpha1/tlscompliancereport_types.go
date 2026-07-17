@@ -237,6 +237,11 @@ type TLSComplianceReportStatus struct {
 	// +optional
 	PQCReadiness PQCReadiness `json:"pqcReadiness,omitempty"`
 
+	// FIPSDetected indicates whether the operator detected FIPS mode on the cluster.
+	// When true, ML-KEM key exchange is unavailable due to FIPS restrictions.
+	// +optional
+	FIPSDetected bool `json:"fipsDetected,omitempty"`
+
 	// CertificateInfo contains details about the TLS certificate
 	// +optional
 	CertificateInfo *CertificateInfo `json:"certificateInfo,omitempty"`
