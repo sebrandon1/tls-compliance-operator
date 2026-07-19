@@ -311,6 +311,11 @@ spec:
                 description: ConsecutiveErrors is the number of consecutive check
                   errors
                 type: integer
+              fipsDetected:
+                description: |-
+                  FIPSDetected indicates whether the operator detected FIPS mode on the cluster.
+                  When true, ML-KEM key exchange is unavailable due to FIPS restrictions.
+                type: boolean
               firstSeenAt:
                 description: FirstSeenAt is when this endpoint was first discovered
                 format: date-time

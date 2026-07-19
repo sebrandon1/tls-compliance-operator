@@ -49,3 +49,15 @@ func TestRecordScanCycleCompleted(t *testing.T) {
 func TestRecordCleanupCycleCompleted(t *testing.T) {
 	assertTimestampGaugeSetToNow(t, RecordCleanupCycleCompleted, CleanupCycleLastCompletedTimestamp)
 }
+
+func TestRecordFIPSMode(t *testing.T) {
+	RecordFIPSMode(true)
+	if v := gaugeValue(FIPSModeEnabled); v != 1 {
+		t.Errorf("expected FIPS gauge 1, got %v", v)
+	}
+
+	RecordFIPSMode(false)
+	if v := gaugeValue(FIPSModeEnabled); v != 0 {
+		t.Errorf("expected FIPS gauge 0, got %v", v)
+	}
+}

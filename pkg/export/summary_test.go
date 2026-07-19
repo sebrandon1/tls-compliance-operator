@@ -425,3 +425,131 @@ func TestComputeSummary_CertExpiryBoundaries(t *testing.T) {
 		})
 	}
 }
+
+func TestComputeSummary_FIPSDetected(t *testing.T) {
+	now := time.Now()
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				PQCReadiness:     securityv1alpha1.PQCReadinessTLS13Capable,
+				FIPSDetected:     true,
+			},
+		},
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				PQCReadiness:     securityv1alpha1.PQCReadinessTLS13Capable,
+				FIPSDetected:     true,
+			},
+		},
+	}
+
+	s := ComputeSummary(reports, now)
+	if !s.FIPSDetected {
+		t.Error("expected FIPSDetected to be true")
+	}
+}
+
+func TestComputeSummary_FIPSNotDetected(t *testing.T) {
+	now := time.Now()
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				PQCReadiness:     securityv1alpha1.PQCReadinessPQCReady,
+			},
+		},
+	}
+
+	s := ComputeSummary(reports, now)
+	if s.FIPSDetected {
+		t.Error("expected FIPSDetected to be false")
+	}
+}
+
+func TestWriteSummary_FIPSLine(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				PQCReadiness:     securityv1alpha1.PQCReadinessTLS13Capable,
+				FIPSDetected:     true,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteSummary(&buf, reports); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "FIPS Mode:") {
+		t.Error("expected output to contain 'FIPS Mode:'")
+	}
+	if !strings.Contains(output, "ML-KEM key exchange unavailable") {
+		t.Error("expected output to contain 'ML-KEM key exchange unavailable'")
+	}
+}
+
+func TestWriteSummary_NoFIPSLine(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				PQCReadiness:     securityv1alpha1.PQCReadinessPQCReady,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteSummary(&buf, reports); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if strings.Contains(output, "FIPS Mode:") {
+		t.Error("expected output to NOT contain 'FIPS Mode:' when FIPS is not detected")
+	}
+}
+
+func TestComputeSummary_FIPSMixedReports(t *testing.T) {
+	now := time.Now()
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				PQCReadiness:     securityv1alpha1.PQCReadinessTLS13Capable,
+				FIPSDetected:     false,
+			},
+		},
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				PQCReadiness:     securityv1alpha1.PQCReadinessTLS13Capable,
+				FIPSDetected:     true,
+			},
+		},
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				PQCReadiness:     securityv1alpha1.PQCReadinessTLS13Capable,
+				FIPSDetected:     false,
+			},
+		},
+	}
+
+	s := ComputeSummary(reports, now)
+	if !s.FIPSDetected {
+		t.Error("expected FIPSDetected to be true when at least one report has FIPSDetected=true")
+	}
+}

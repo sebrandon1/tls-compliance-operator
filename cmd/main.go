@@ -45,7 +45,9 @@ import (
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 	"github.com/sebrandon1/tls-compliance-operator/internal/controller"
+	"github.com/sebrandon1/tls-compliance-operator/internal/metrics"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/endpoint"
+	"github.com/sebrandon1/tls-compliance-operator/pkg/fips"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlscheck"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlsprofile"
 	// +kubebuilder:scaffold:imports
@@ -311,6 +313,14 @@ func setupManager(ctx context.Context, cfg *operatorConfig) ctrl.Manager {
 		setupLog.Info("OpenShift Config API not detected, skipping TLS security profile monitoring")
 	}
 
+	fipsEnabled := fips.Detect()
+	if fipsEnabled {
+		setupLog.Info("FIPS mode detected, ML-KEM key exchange is unavailable")
+	} else {
+		setupLog.Info("FIPS mode not detected")
+	}
+	metrics.RecordFIPSMode(fipsEnabled)
+
 	includedNS := controller.ParseNamespaceList(cfg.includeNamespaces)
 	excludedNS := controller.ParseNamespaceList(cfg.excludeNamespaces)
 	if len(includedNS) > 0 && len(excludedNS) > 0 {
@@ -382,6 +392,7 @@ func setupManager(ctx context.Context, cfg *operatorConfig) ctrl.Manager {
 		RetryBackoff:          cfg.retryBackoff,
 		MaxBackoff:            cfg.maxBackoff,
 		MetricsPerEndpoint:    cfg.metricsPerEndpoint,
+		FIPSEnabled:           fipsEnabled,
 		NamespaceRateLimiters: nsLimiters,
 		DefaultNamespaceRate:  defaultNSLimiter,
 		ManagerCtx:            ctx,

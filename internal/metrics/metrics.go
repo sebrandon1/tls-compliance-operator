@@ -164,6 +164,14 @@ var (
 			Help:      "Total number of TLSComplianceReports deleted by retention policy",
 		},
 	)
+
+	FIPSModeEnabled = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: MetricsNamespace,
+			Name:      "fips_mode_enabled",
+			Help:      "Whether the cluster is running in FIPS mode (1=yes, 0=no)",
+		},
+	)
 )
 
 func init() {
@@ -182,6 +190,7 @@ func init() {
 		ScanCycleLastCompletedTimestamp,
 		CleanupCycleLastCompletedTimestamp,
 		ReportsTTLDeletedTotal,
+		FIPSModeEnabled,
 	)
 }
 
@@ -281,4 +290,12 @@ func DeleteEndpointMetrics(host, port string) {
 // RecordReportTTLDeleted records a report deleted by the retention policy
 func RecordReportTTLDeleted() {
 	ReportsTTLDeletedTotal.Inc()
+}
+
+func RecordFIPSMode(enabled bool) {
+	val := float64(0)
+	if enabled {
+		val = 1
+	}
+	FIPSModeEnabled.Set(val)
 }

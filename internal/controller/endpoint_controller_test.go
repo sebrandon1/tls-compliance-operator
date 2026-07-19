@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -31,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -2063,6 +2065,189 @@ func TestEndpointReconciler_HandleGatewayResource_EmptyHTTPRoute(t *testing.T) {
 	}
 	if len(crList.Items) != 0 {
 		t.Errorf("expected 0 reports for empty HTTPRoute, got %d", len(crList.Items))
+	}
+}
+
+func TestUpdateConditions_PQCCompliant_FIPSEnabled(t *testing.T) {
+	r := &EndpointReconciler{FIPSEnabled: true}
+	cr := &securityv1alpha1.TLSComplianceReport{}
+	cr.Status.PQCReadiness = securityv1alpha1.PQCReadinessTLS13Capable
+	result := &tlscheck.TLSCheckResult{
+		SupportsTLS13: true,
+	}
+
+	r.updateConditions(cr, securityv1alpha1.ComplianceStatusCompliant, result)
+
+	for _, c := range cr.Status.Conditions {
+		if c.Type == "PQCCompliant" {
+			if c.Status != metav1.ConditionFalse {
+				t.Errorf("expected PQCCompliant status False, got %s", c.Status)
+			}
+			if c.Reason != "TLS13Capable" {
+				t.Errorf("expected reason TLS13Capable, got %s", c.Reason)
+			}
+			expected := "Endpoint supports TLS 1.3 but has not negotiated a post-quantum key exchange (FIPS mode active, ML-KEM unavailable)"
+			if c.Message != expected {
+				t.Errorf("expected FIPS-aware message %q, got %q", expected, c.Message)
+			}
+			return
+		}
+	}
+	t.Error("PQCCompliant condition not found")
+}
+
+func TestUpdateConditions_PQCCompliant_FIPSDisabled(t *testing.T) {
+	r := &EndpointReconciler{FIPSEnabled: false}
+	cr := &securityv1alpha1.TLSComplianceReport{}
+	cr.Status.PQCReadiness = securityv1alpha1.PQCReadinessTLS13Capable
+	result := &tlscheck.TLSCheckResult{
+		SupportsTLS13: true,
+	}
+
+	r.updateConditions(cr, securityv1alpha1.ComplianceStatusCompliant, result)
+
+	for _, c := range cr.Status.Conditions {
+		if c.Type == "PQCCompliant" {
+			expected := "Endpoint supports TLS 1.3 but has not negotiated a post-quantum key exchange"
+			if c.Message != expected {
+				t.Errorf("expected non-FIPS message %q, got %q", expected, c.Message)
+			}
+			return
+		}
+	}
+	t.Error("PQCCompliant condition not found")
+}
+
+func TestUpdateConditions_PQCCompliant_FIPSEnabled_PQCReady(t *testing.T) {
+	r := &EndpointReconciler{FIPSEnabled: true}
+	cr := &securityv1alpha1.TLSComplianceReport{}
+	cr.Status.PQCReadiness = securityv1alpha1.PQCReadinessPQCReady
+	result := &tlscheck.TLSCheckResult{
+		SupportsTLS13:    true,
+		MLKEMSupported:   true,
+		NegotiatedCurves: map[string]string{"TLS 1.3": "X25519MLKEM768"},
+	}
+
+	r.updateConditions(cr, securityv1alpha1.ComplianceStatusCompliant, result)
+
+	for _, c := range cr.Status.Conditions {
+		if c.Type == "PQCCompliant" {
+			if c.Status != metav1.ConditionTrue {
+				t.Errorf("expected PQCCompliant status True, got %s", c.Status)
+			}
+			return
+		}
+	}
+	t.Error("PQCCompliant condition not found")
+}
+
+func TestUpdateConditions_PQCCompliant_FIPSEnabled_LegacyTLS(t *testing.T) {
+	r := &EndpointReconciler{FIPSEnabled: true}
+	cr := &securityv1alpha1.TLSComplianceReport{}
+	cr.Status.PQCReadiness = securityv1alpha1.PQCReadinessLegacyTLS
+	result := &tlscheck.TLSCheckResult{
+		SupportsTLS12: true,
+	}
+
+	r.updateConditions(cr, securityv1alpha1.ComplianceStatusCompliant, result)
+
+	for _, c := range cr.Status.Conditions {
+		if c.Type == "PQCCompliant" {
+			if strings.Contains(c.Message, "FIPS") {
+				t.Errorf("FIPS should not appear in LegacyTLS condition message, got %q", c.Message)
+			}
+			expected := "Endpoint only supports TLS 1.2 or older, no path to post-quantum cryptography"
+			if c.Message != expected {
+				t.Errorf("expected message %q, got %q", expected, c.Message)
+			}
+			return
+		}
+	}
+	t.Error("PQCCompliant condition not found")
+}
+
+func drainEvents(recorder *record.FakeRecorder) []string {
+	var events []string
+	for {
+		select {
+		case e := <-recorder.Events:
+			events = append(events, e)
+		default:
+			return events
+		}
+	}
+}
+
+func TestEmitComplianceEvents_PQCNotReady_FIPSEnabled(t *testing.T) {
+	recorder := record.NewFakeRecorder(10)
+	r := &EndpointReconciler{FIPSEnabled: true, Recorder: recorder}
+	cr := &securityv1alpha1.TLSComplianceReport{}
+	cr.Spec.Host = "example.com"
+	cr.Spec.Port = 443
+	cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusCompliant
+	cr.Status.PQCReadiness = securityv1alpha1.PQCReadinessTLS13Capable
+
+	r.emitComplianceEvents(cr,
+		securityv1alpha1.ComplianceStatusCompliant,
+		securityv1alpha1.PQCReadinessPQCReady,
+		&tlscheck.TLSCheckResult{SupportsTLS13: true})
+
+	events := drainEvents(recorder)
+	found := false
+	for _, event := range events {
+		if strings.Contains(event, EventReasonPQCNotReady) {
+			found = true
+			if !strings.Contains(event, "FIPS mode active, ML-KEM unavailable") {
+				t.Errorf("expected FIPS suffix in PQCNotReady event, got %q", event)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected a PQCNotReady event to be emitted")
+	}
+}
+
+func TestEmitComplianceEvents_PQCNotReady_FIPSDisabled(t *testing.T) {
+	recorder := record.NewFakeRecorder(10)
+	r := &EndpointReconciler{FIPSEnabled: false, Recorder: recorder}
+	cr := &securityv1alpha1.TLSComplianceReport{}
+	cr.Spec.Host = "example.com"
+	cr.Spec.Port = 443
+	cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusCompliant
+	cr.Status.PQCReadiness = securityv1alpha1.PQCReadinessTLS13Capable
+
+	r.emitComplianceEvents(cr,
+		securityv1alpha1.ComplianceStatusCompliant,
+		securityv1alpha1.PQCReadinessPQCReady,
+		&tlscheck.TLSCheckResult{SupportsTLS13: true})
+
+	events := drainEvents(recorder)
+	for _, event := range events {
+		if strings.Contains(event, EventReasonPQCNotReady) && strings.Contains(event, "FIPS") {
+			t.Errorf("expected no FIPS suffix in PQCNotReady event, got %q", event)
+		}
+	}
+}
+
+func TestEmitComplianceEvents_PQCNotReady_FIPSEnabled_LegacyTLS(t *testing.T) {
+	recorder := record.NewFakeRecorder(10)
+	r := &EndpointReconciler{FIPSEnabled: true, Recorder: recorder}
+	cr := &securityv1alpha1.TLSComplianceReport{}
+	cr.Spec.Host = "example.com"
+	cr.Spec.Port = 443
+	cr.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusCompliant
+	cr.Status.PQCReadiness = securityv1alpha1.PQCReadinessLegacyTLS
+
+	r.emitComplianceEvents(cr,
+		securityv1alpha1.ComplianceStatusCompliant,
+		securityv1alpha1.PQCReadinessPQCReady,
+		&tlscheck.TLSCheckResult{SupportsTLS12: true})
+
+	events := drainEvents(recorder)
+	for _, event := range events {
+		if strings.Contains(event, EventReasonPQCNotReady) && strings.Contains(event, "FIPS") {
+			t.Errorf("FIPS suffix should not appear for LegacyTLS, got %q", event)
+		}
 	}
 }
 

@@ -17,6 +17,8 @@ limitations under the License.
 package main
 
 import (
+	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -169,5 +171,62 @@ func TestSchemeRegistration(t *testing.T) {
 	gvk = securityv1alpha1.GroupVersion.WithKind("TLSComplianceTarget")
 	if !scheme.Recognizes(gvk) {
 		t.Errorf("scheme should recognize %v", gvk)
+	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origStdout := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = origStdout }()
+
+	fn()
+	_ = w.Close()
+
+	data, _ := io.ReadAll(r)
+	return string(data)
+}
+
+func TestPrintReportDetail_FIPSDetected(t *testing.T) {
+	report := securityv1alpha1.TLSComplianceReport{}
+	report.Name = "test-report"
+	report.Spec.Host = "example.com"
+	report.Spec.Port = 443
+	report.Spec.SourceKind = securityv1alpha1.SourceKindService
+	report.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusCompliant
+	report.Status.PQCReadiness = securityv1alpha1.PQCReadinessTLS13Capable
+	report.Status.FIPSDetected = true
+
+	output := captureStdout(t, func() {
+		_ = printReportDetail(report)
+	})
+
+	if !strings.Contains(output, "FIPS Mode:") {
+		t.Error("expected output to contain 'FIPS Mode:'")
+	}
+	if !strings.Contains(output, "Active -- ML-KEM unavailable") {
+		t.Error("expected output to contain 'Active -- ML-KEM unavailable'")
+	}
+}
+
+func TestPrintReportDetail_FIPSNotDetected(t *testing.T) {
+	report := securityv1alpha1.TLSComplianceReport{}
+	report.Name = "test-report"
+	report.Spec.Host = "example.com"
+	report.Spec.Port = 443
+	report.Spec.SourceKind = securityv1alpha1.SourceKindService
+	report.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusCompliant
+	report.Status.PQCReadiness = securityv1alpha1.PQCReadinessTLS13Capable
+
+	output := captureStdout(t, func() {
+		_ = printReportDetail(report)
+	})
+
+	if strings.Contains(output, "FIPS Mode:") {
+		t.Error("expected output to NOT contain 'FIPS Mode:' when FIPSDetected is false")
 	}
 }

@@ -333,6 +333,9 @@ func printReportDetail(r securityv1alpha1.TLSComplianceReport) error {
 	_, _ = fmt.Fprintf(w, "  PQC Readiness:   %s\n", r.Status.PQCReadiness)
 	_, _ = fmt.Fprintf(w, "  Quantum Ready:   %v\n", r.Status.QuantumReady)
 	_, _ = fmt.Fprintf(w, "  ML-KEM Supported: %v\n", r.Status.MLKEMSupported)
+	if r.Status.FIPSDetected {
+		_, _ = fmt.Fprintf(w, "  FIPS Mode:        Active -- ML-KEM unavailable\n")
+	}
 	_, _ = fmt.Fprintf(w, "  Cipher Grade:    %s\n", r.Status.OverallCipherGrade)
 	_, _ = fmt.Fprintf(w, "  Forward Secrecy: %v\n", r.Status.ForwardSecrecy)
 
