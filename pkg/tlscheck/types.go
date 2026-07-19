@@ -40,13 +40,15 @@ const (
 	FailureReasonFiltered FailureReason = "Filtered"
 	// FailureReasonNoTLS indicates the port is open but does not speak TLS
 	FailureReasonNoTLS FailureReason = "NoTLS"
+	// FailureReasonPlaintextHTTP indicates the port is serving plaintext HTTP without TLS
+	FailureReasonPlaintextHTTP FailureReason = "PlaintextHTTP"
 	// FailureReasonMutualTLSRequired indicates the server requires a client certificate
 	FailureReasonMutualTLSRequired FailureReason = "MutualTLSRequired"
 )
 
 // IsTransient returns true if the failure reason represents a transient error
 // that may resolve on retry (e.g. timeout, connection refused, unreachable).
-// Returns false for permanent failures (NoTLS, MutualTLSRequired) and success (None).
+// Returns false for permanent failures (NoTLS, PlaintextHTTP, MutualTLSRequired) and success (None).
 func (f FailureReason) IsTransient() bool {
 	switch f {
 	case FailureReasonTimeout, FailureReasonClosed, FailureReasonUnreachable, FailureReasonFiltered:

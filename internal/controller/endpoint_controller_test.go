@@ -1594,6 +1594,69 @@ func TestEndpointReconciler_NoRetryOnNoTLS(t *testing.T) {
 	}
 }
 
+func TestEndpointReconciler_NoRetryOnPlaintextHTTP(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	crName := "no-retry-http-cr"
+	now := metav1.Now()
+	cr := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: crName,
+		},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host:            "http.example.com",
+			Port:            80,
+			SourceKind:      securityv1alpha1.SourceKindService,
+			SourceNamespace: testNamespace,
+			SourceName:      "http-service",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{
+			ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
+			FirstSeenAt:      &now,
+			LastSeenAt:       &now,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cr).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	checker := &SequencedMockTLSChecker{
+		Results: []*tlscheck.TLSCheckResult{
+			{FailureReason: tlscheck.FailureReasonPlaintextHTTP},
+		},
+		Errors: []error{
+			fmt.Errorf("plaintext HTTP"),
+		},
+	}
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		TLSChecker:     checker,
+		CertExpiryDays: 30,
+		MaxRetries:     3,
+		RetryBackoff:   10 * time.Millisecond,
+	}
+
+	reconciler.performTLSCheck(ctx, crName, "http.example.com", 80, "default")
+
+	if checker.CallCount() != 1 {
+		t.Errorf("expected 1 call (no retry for PlaintextHTTP), got %d", checker.CallCount())
+	}
+
+	var updatedCR securityv1alpha1.TLSComplianceReport
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: crName}, &updatedCR); err != nil {
+		t.Fatalf("failed to get CR: %v", err)
+	}
+	if updatedCR.Status.ComplianceStatus != securityv1alpha1.ComplianceStatusPlaintextHTTP {
+		t.Errorf("ComplianceStatus = %v, want PlaintextHTTP", updatedCR.Status.ComplianceStatus)
+	}
+}
+
 func TestEndpointReconciler_NoRetryOnMutualTLS(t *testing.T) {
 	ctx := context.Background()
 	scheme := newTestScheme()

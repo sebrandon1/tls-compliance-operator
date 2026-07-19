@@ -165,6 +165,10 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 
 	if !anySuccess {
 		result.FailureReason = classifyFailure(lastErrors)
+		if result.FailureReason == FailureReasonNoTLS && c.probeHTTP(ctx, addr, host) {
+			result.FailureReason = FailureReasonPlaintextHTTP
+			return result, fmt.Errorf("endpoint %s is serving plaintext HTTP without TLS", addr)
+		}
 		return result, fmt.Errorf("could not establish TLS connection to %s on any TLS version", addr)
 	}
 

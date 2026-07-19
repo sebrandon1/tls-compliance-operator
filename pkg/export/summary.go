@@ -35,6 +35,7 @@ var knownStatuses = []securityv1alpha1.ComplianceStatus{
 	securityv1alpha1.ComplianceStatusClosed,
 	securityv1alpha1.ComplianceStatusFiltered,
 	securityv1alpha1.ComplianceStatusNoTLS,
+	securityv1alpha1.ComplianceStatusPlaintextHTTP,
 	securityv1alpha1.ComplianceStatusMutualTLSRequired,
 	securityv1alpha1.ComplianceStatusPending,
 	securityv1alpha1.ComplianceStatusUnknown,
