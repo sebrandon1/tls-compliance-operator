@@ -924,4 +924,21 @@ spec:
 			}
 		})
 	})
+
+	Context("Run-Once Mode", Label("run-once"), func() {
+		const runOncePluginBinary = "/tmp/kubectl-tlsreport-runonce"
+
+		BeforeAll(func() {
+			By("building the kubectl-tlsreport plugin for run-once tests")
+			cmd := exec.Command("go", "build", "-o", runOncePluginBinary, "./cmd/kubectl-tlsreport/")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to build kubectl-tlsreport plugin")
+		})
+
+		It("kubectl tlsreport --fail-on-non-compliant should exit 0 when all compliant", func() {
+			cmd := exec.Command(runOncePluginBinary, "summary", "--fail-on-non-compliant")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "summary --fail-on-non-compliant should exit 0 when all endpoints are compliant")
+		})
+	})
 })

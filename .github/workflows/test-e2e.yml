@@ -48,6 +48,8 @@ jobs:
             label: "compliance-validation"
           - name: compliance-negative
             label: "non-tls-ignored || compliance-detection || cleanup"
+          - name: run-once
+            label: "run-once"
     steps:
       - name: Clone the code
         uses: actions/checkout@v7

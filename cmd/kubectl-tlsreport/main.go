@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -45,16 +46,36 @@ func init() {
 var version = "dev"
 
 var (
-	filterOpts    export.FilterOptions
-	sortBy        string
-	kubeconfig    string
-	kubecontext   string
-	labelSelector string
-	outputFormat  string
+	filterOpts         export.FilterOptions
+	sortBy             string
+	kubeconfig         string
+	kubecontext        string
+	labelSelector      string
+	outputFormat       string
+	failOnNonCompliant bool
 )
+
+type exitCodeError struct {
+	code int
+}
+
+func (e exitCodeError) Error() string {
+	return fmt.Sprintf("exit code %d", e.code)
+}
+
+func checkExitCode(reports []securityv1alpha1.TLSComplianceReport) error {
+	if failOnNonCompliant && export.HasNonCompliantReports(reports) {
+		return exitCodeError{code: 1}
+	}
+	return nil
+}
 
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
+		var ece exitCodeError
+		if errors.As(err, &ece) {
+			os.Exit(ece.code)
+		}
 		os.Exit(1)
 	}
 }
@@ -86,6 +107,8 @@ Use --kubeconfig and --context to target a specific cluster.`,
 	rootCmd.PersistentFlags().StringVar(&kubeconfig, "kubeconfig", "", "Path to the kubeconfig file to use")
 	rootCmd.PersistentFlags().StringVar(&kubecontext, "context", "", "The kubeconfig context to use")
 	rootCmd.PersistentFlags().StringVarP(&labelSelector, "selector", "l", "", "Label selector to filter reports (e.g. host-network=true)")
+	rootCmd.PersistentFlags().BoolVar(&failOnNonCompliant, "fail-on-non-compliant", false,
+		"Exit with code 1 if any non-compliant endpoints are found (NonCompliant, NoTLS, PlaintextHTTP)")
 
 	rootCmd.AddCommand(newSummaryCmd())
 	rootCmd.AddCommand(newGetCmd())
@@ -178,20 +201,24 @@ func runExport(cmd *cobra.Command, args []string) error {
 
 	export.SortReports(reports, sortBy)
 
+	var writeErr error
 	switch format {
 	case "csv":
-		return export.WriteCSV(os.Stdout, reports)
+		writeErr = export.WriteCSV(os.Stdout, reports)
 	case "json":
-		return export.WriteJSON(os.Stdout, reports)
+		writeErr = export.WriteJSON(os.Stdout, reports)
 	case "yaml":
-		return export.WriteYAML(os.Stdout, reports)
+		writeErr = export.WriteYAML(os.Stdout, reports)
 	case "junit":
-		return export.WriteJUnit(os.Stdout, reports)
+		writeErr = export.WriteJUnit(os.Stdout, reports)
 	case "markdown", "md":
-		return export.WriteMarkdown(os.Stdout, reports)
+		writeErr = export.WriteMarkdown(os.Stdout, reports)
+	}
+	if writeErr != nil {
+		return writeErr
 	}
 
-	return nil
+	return checkExitCode(reports)
 }
 
 func runSummary(_ *cobra.Command, _ []string) error {
@@ -207,7 +234,10 @@ func runSummary(_ *cobra.Command, _ []string) error {
 
 	export.SortReports(reports, sortBy)
 
-	return export.WriteSummary(os.Stdout, reports)
+	if err := export.WriteSummary(os.Stdout, reports); err != nil {
+		return err
+	}
+	return checkExitCode(reports)
 }
 
 func runGet(_ *cobra.Command, args []string) error {
@@ -220,7 +250,11 @@ func runGet(_ *cobra.Command, args []string) error {
 		name := args[0]
 		for _, r := range reports {
 			if r.Name == name {
-				return outputReports([]securityv1alpha1.TLSComplianceReport{r})
+				matched := []securityv1alpha1.TLSComplianceReport{r}
+				if err := outputReports(matched); err != nil {
+					return err
+				}
+				return checkExitCode(matched)
 			}
 		}
 		return fmt.Errorf("report %q not found", name)
@@ -233,7 +267,10 @@ func runGet(_ *cobra.Command, args []string) error {
 
 	export.SortReports(reports, sortBy)
 
-	return outputReports(reports)
+	if err := outputReports(reports); err != nil {
+		return err
+	}
+	return checkExitCode(reports)
 }
 
 func outputReports(reports []securityv1alpha1.TLSComplianceReport) error {
