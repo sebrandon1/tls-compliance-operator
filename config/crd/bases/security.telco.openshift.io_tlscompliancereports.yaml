@@ -145,6 +145,18 @@ spec:
                     items:
                       type: string
                     type: array
+                  disallowedGroups:
+                    description: |-
+                      DisallowedGroups lists key exchange groups negotiated by the endpoint
+                      that are not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  groupsCompliant:
+                    description: |-
+                      GroupsCompliant indicates whether the endpoint's negotiated curves are
+                      in the profile's allowed groups list
+                    type: boolean
                   minTLSVersionMet:
                     description: |-
                       MinTLSVersionMet indicates whether the endpoint does not support TLS versions
@@ -156,6 +168,7 @@ spec:
                     type: string
                 required:
                 - compliant
+                - groupsCompliant
                 - minTLSVersionMet
                 - profileType
                 type: object
@@ -342,6 +355,18 @@ spec:
                     items:
                       type: string
                     type: array
+                  disallowedGroups:
+                    description: |-
+                      DisallowedGroups lists key exchange groups negotiated by the endpoint
+                      that are not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  groupsCompliant:
+                    description: |-
+                      GroupsCompliant indicates whether the endpoint's negotiated curves are
+                      in the profile's allowed groups list
+                    type: boolean
                   minTLSVersionMet:
                     description: |-
                       MinTLSVersionMet indicates whether the endpoint does not support TLS versions
@@ -353,6 +378,7 @@ spec:
                     type: string
                 required:
                 - compliant
+                - groupsCompliant
                 - minTLSVersionMet
                 - profileType
                 type: object
@@ -379,6 +405,18 @@ spec:
                     items:
                       type: string
                     type: array
+                  disallowedGroups:
+                    description: |-
+                      DisallowedGroups lists key exchange groups negotiated by the endpoint
+                      that are not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  groupsCompliant:
+                    description: |-
+                      GroupsCompliant indicates whether the endpoint's negotiated curves are
+                      in the profile's allowed groups list
+                    type: boolean
                   minTLSVersionMet:
                     description: |-
                       MinTLSVersionMet indicates whether the endpoint does not support TLS versions
@@ -390,6 +428,7 @@ spec:
                     type: string
                 required:
                 - compliant
+                - groupsCompliant
                 - minTLSVersionMet
                 - profileType
                 type: object

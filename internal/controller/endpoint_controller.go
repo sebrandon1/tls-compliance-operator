@@ -732,6 +732,7 @@ func (r *EndpointReconciler) checkProfileCompliance(cr *securityv1alpha1.TLSComp
 			result.SupportsTLS12,
 			result.SupportsTLS13,
 			result.CipherSuites,
+			result.NegotiatedCurves,
 		)
 
 		crdResult := &securityv1alpha1.TLSProfileComplianceResult{
@@ -739,6 +740,8 @@ func (r *EndpointReconciler) checkProfileCompliance(cr *securityv1alpha1.TLSComp
 			Compliant:         compResult.Compliant,
 			MinTLSVersionMet:  compResult.MinTLSVersionMet,
 			DisallowedCiphers: compResult.DisallowedCiphers,
+			GroupsCompliant:   compResult.GroupsCompliant,
+			DisallowedGroups:  compResult.DisallowedGroups,
 		}
 
 		switch component {

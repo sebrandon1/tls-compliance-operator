@@ -248,5 +248,13 @@ func extractCustomProfile(tlsProfile map[string]any) (Profile, error) {
 		}
 	}
 
+	if groups, ok := custom["groups"].([]any); ok {
+		for _, g := range groups {
+			if s, ok := g.(string); ok {
+				profile.Groups = append(profile.Groups, s)
+			}
+		}
+	}
+
 	return profile, nil
 }

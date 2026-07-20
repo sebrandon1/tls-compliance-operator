@@ -153,6 +153,13 @@ type TLSProfileComplianceResult struct {
 	// not in the profile's allowed list
 	// +optional
 	DisallowedCiphers []string `json:"disallowedCiphers,omitempty"`
+	// GroupsCompliant indicates whether the endpoint's negotiated curves are
+	// in the profile's allowed groups list
+	GroupsCompliant bool `json:"groupsCompliant"`
+	// DisallowedGroups lists key exchange groups negotiated by the endpoint
+	// that are not in the profile's allowed list
+	// +optional
+	DisallowedGroups []string `json:"disallowedGroups,omitempty"`
 }
 
 // TLSComplianceReportSpec defines the desired state of TLSComplianceReport

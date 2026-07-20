@@ -455,21 +455,9 @@ func printReportDetail(r securityv1alpha1.TLSComplianceReport) error {
 		_, _ = fmt.Fprintf(w, "  Adherence: %s\n", r.Status.TLSAdherence)
 	}
 
-	if r.Status.IngressProfileCompliance != nil {
-		_, _ = fmt.Fprintf(w, "\nIngress TLS Profile Compliance:\n")
-		_, _ = fmt.Fprintf(w, "  Profile:   %s\n", r.Status.IngressProfileCompliance.ProfileType)
-		_, _ = fmt.Fprintf(w, "  Compliant: %v\n", r.Status.IngressProfileCompliance.Compliant)
-	}
-	if r.Status.APIServerProfileCompliance != nil {
-		_, _ = fmt.Fprintf(w, "\nAPI Server TLS Profile Compliance:\n")
-		_, _ = fmt.Fprintf(w, "  Profile:   %s\n", r.Status.APIServerProfileCompliance.ProfileType)
-		_, _ = fmt.Fprintf(w, "  Compliant: %v\n", r.Status.APIServerProfileCompliance.Compliant)
-	}
-	if r.Status.KubeletProfileCompliance != nil {
-		_, _ = fmt.Fprintf(w, "\nKubelet TLS Profile Compliance:\n")
-		_, _ = fmt.Fprintf(w, "  Profile:   %s\n", r.Status.KubeletProfileCompliance.ProfileType)
-		_, _ = fmt.Fprintf(w, "  Compliant: %v\n", r.Status.KubeletProfileCompliance.Compliant)
-	}
+	printProfileCompliance(w, "Ingress", r.Status.IngressProfileCompliance)
+	printProfileCompliance(w, "API Server", r.Status.APIServerProfileCompliance)
+	printProfileCompliance(w, "Kubelet", r.Status.KubeletProfileCompliance)
 
 	if len(r.Status.Conditions) > 0 {
 		_, _ = fmt.Fprintf(w, "\nConditions:\n")
@@ -507,6 +495,21 @@ func printReportDetail(r securityv1alpha1.TLSComplianceReport) error {
 	}
 
 	return nil
+}
+
+func printProfileCompliance(w *os.File, name string, result *securityv1alpha1.TLSProfileComplianceResult) {
+	if result == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "\n%s TLS Profile Compliance:\n", name)
+	_, _ = fmt.Fprintf(w, "  Profile:   %s\n", result.ProfileType)
+	_, _ = fmt.Fprintf(w, "  Compliant: %v\n", result.Compliant)
+	if len(result.DisallowedCiphers) > 0 {
+		_, _ = fmt.Fprintf(w, "  Disallowed Ciphers: %v\n", result.DisallowedCiphers)
+	}
+	if len(result.DisallowedGroups) > 0 {
+		_, _ = fmt.Fprintf(w, "  Disallowed Groups: %v\n", result.DisallowedGroups)
+	}
 }
 
 func boolDash(b bool) string {
