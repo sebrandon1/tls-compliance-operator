@@ -450,6 +450,11 @@ func printReportDetail(r securityv1alpha1.TLSComplianceReport) error {
 		}
 	}
 
+	if r.Status.TLSAdherence != "" {
+		_, _ = fmt.Fprintf(w, "\nTLS Security Profile:\n")
+		_, _ = fmt.Fprintf(w, "  Adherence: %s\n", r.Status.TLSAdherence)
+	}
+
 	if r.Status.IngressProfileCompliance != nil {
 		_, _ = fmt.Fprintf(w, "\nIngress TLS Profile Compliance:\n")
 		_, _ = fmt.Fprintf(w, "  Profile:   %s\n", r.Status.IngressProfileCompliance.ProfileType)
