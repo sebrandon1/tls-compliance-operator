@@ -54,6 +54,9 @@ type Profile struct {
 	MinTLSVersion TLSVersion
 	// Ciphers contains the allowed cipher suite names in OpenSSL format.
 	Ciphers []string
+	// Groups contains the allowed TLS key exchange group names in profile format
+	// (e.g. secp256r1, X25519). Empty means groups are not checked.
+	Groups []string
 }
 
 // ComplianceResult contains the result of checking an endpoint against a profile.
@@ -62,10 +65,12 @@ type ComplianceResult struct {
 	Compliant         bool     `json:"compliant"`
 	MinTLSVersionMet  bool     `json:"minTLSVersionMet"`
 	DisallowedCiphers []string `json:"disallowedCiphers,omitempty"`
+	GroupsCompliant   bool     `json:"groupsCompliant"`
+	DisallowedGroups  []string `json:"disallowedGroups,omitempty"`
 }
 
 // PredefinedProfiles contains the well-known OpenShift TLS security profile definitions.
-// Based on Mozilla Server Side TLS configuration guidelines, version 5.7.
+// Ciphers based on Mozilla Server Side TLS v5.7, groups based on v5.8.
 var PredefinedProfiles = map[ProfileType]Profile{
 	ProfileTypeOld: {
 		Type:          ProfileTypeOld,
@@ -102,6 +107,9 @@ var PredefinedProfiles = map[ProfileType]Profile{
 			"AES256-SHA",
 			"DES-CBC3-SHA",
 		},
+		Groups: []string{
+			"X25519", "secp256r1", "secp384r1", "secp521r1",
+		},
 	},
 	ProfileTypeIntermediate: {
 		Type:          ProfileTypeIntermediate,
@@ -119,6 +127,9 @@ var PredefinedProfiles = map[ProfileType]Profile{
 			"ECDHE-ECDSA-CHACHA20-POLY1305",
 			"ECDHE-RSA-CHACHA20-POLY1305",
 		},
+		Groups: []string{
+			"X25519MLKEM768", "X25519", "secp256r1", "secp384r1",
+		},
 	},
 	ProfileTypeModern: {
 		Type:          ProfileTypeModern,
@@ -127,6 +138,9 @@ var PredefinedProfiles = map[ProfileType]Profile{
 			"TLS_AES_128_GCM_SHA256",
 			"TLS_AES_256_GCM_SHA384",
 			"TLS_CHACHA20_POLY1305_SHA256",
+		},
+		Groups: []string{
+			"X25519MLKEM768", "X25519", "secp256r1", "secp384r1",
 		},
 	},
 }
@@ -137,25 +151,23 @@ func DefaultProfile() Profile {
 }
 
 // CheckCompliance checks whether an endpoint's TLS check results comply with
-// the given profile. It verifies both the minimum TLS version requirement
-// and that all negotiated ciphers are in the profile's allowed list.
-func CheckCompliance(profile Profile, supportsTLS10, supportsTLS11, supportsTLS12, supportsTLS13 bool, cipherSuites map[string][]string) ComplianceResult {
+// the given profile. It verifies the minimum TLS version, that all negotiated
+// ciphers are in the allowed list, and that negotiated curves are in the
+// allowed groups list (when the profile specifies groups).
+func CheckCompliance(profile Profile, supportsTLS10, supportsTLS11, supportsTLS12, supportsTLS13 bool, cipherSuites map[string][]string, negotiatedCurves map[string]string) ComplianceResult {
 	result := ComplianceResult{
-		ProfileType: string(profile.Type),
+		ProfileType:     string(profile.Type),
+		GroupsCompliant: true,
 	}
 
-	// Check minimum TLS version compliance.
-	// The endpoint must NOT support any TLS version below the profile's minimum.
 	result.MinTLSVersionMet = checkMinVersion(profile.MinTLSVersion, supportsTLS10, supportsTLS11, supportsTLS12, supportsTLS13)
 
-	// Build a set of allowed ciphers in IANA format for comparison.
+	// Check ciphers: convert profile names from OpenSSL to IANA for comparison.
 	allowedIANA := make(map[string]bool, len(profile.Ciphers))
 	for _, c := range profile.Ciphers {
-		// Convert OpenSSL name to IANA, since endpoint results use IANA names.
 		allowedIANA[tlscheck.OpenSSLToIANA(c)] = true
 	}
 
-	// Check each negotiated cipher against the allowed set.
 	seen := make(map[string]bool)
 	for _, suites := range cipherSuites {
 		for _, suite := range suites {
@@ -169,7 +181,27 @@ func CheckCompliance(profile Profile, supportsTLS10, supportsTLS11, supportsTLS1
 		}
 	}
 
-	result.Compliant = result.MinTLSVersionMet && len(result.DisallowedCiphers) == 0
+	// Check groups: convert profile names to Go CurveID.String() format for comparison.
+	if len(profile.Groups) > 0 {
+		allowedGoNames := make(map[string]bool, len(profile.Groups))
+		for _, g := range profile.Groups {
+			allowedGoNames[tlscheck.ProfileToGoCurve(g)] = true
+		}
+
+		seenCurves := make(map[string]bool)
+		for _, curve := range negotiatedCurves {
+			if curve == "" || seenCurves[curve] {
+				continue
+			}
+			seenCurves[curve] = true
+			if !allowedGoNames[curve] {
+				result.DisallowedGroups = append(result.DisallowedGroups, tlscheck.GoCurveToProfile(curve))
+				result.GroupsCompliant = false
+			}
+		}
+	}
+
+	result.Compliant = result.MinTLSVersionMet && len(result.DisallowedCiphers) == 0 && result.GroupsCompliant
 	return result
 }
 

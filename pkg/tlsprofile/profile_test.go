@@ -14,7 +14,7 @@ func TestCheckCompliance_IntermediateProfile_Compliant(t *testing.T) {
 		"TLS 1.2": {"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
 	}
 
-	result := CheckCompliance(profile, false, false, true, true, ciphers)
+	result := CheckCompliance(profile, false, false, true, true, ciphers, nil)
 
 	if !result.Compliant {
 		t.Errorf("expected compliant, got non-compliant: disallowed=%v, minVersionMet=%v",
@@ -35,7 +35,7 @@ func TestCheckCompliance_IntermediateProfile_TLSVersionViolation(t *testing.T) {
 		"TLS 1.2": {"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
 	}
 
-	result := CheckCompliance(profile, true, false, true, false, ciphers)
+	result := CheckCompliance(profile, true, false, true, false, ciphers, nil)
 
 	if result.Compliant {
 		t.Error("expected non-compliant due to TLS 1.0 support")
@@ -55,7 +55,7 @@ func TestCheckCompliance_IntermediateProfile_CipherViolation(t *testing.T) {
 		},
 	}
 
-	result := CheckCompliance(profile, false, false, true, false, ciphers)
+	result := CheckCompliance(profile, false, false, true, false, ciphers, nil)
 
 	if result.Compliant {
 		t.Error("expected non-compliant due to disallowed cipher")
@@ -76,7 +76,7 @@ func TestCheckCompliance_OldProfile_Compliant(t *testing.T) {
 		"TLS 1.2": {"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
 	}
 
-	result := CheckCompliance(profile, true, false, true, false, ciphers)
+	result := CheckCompliance(profile, true, false, true, false, ciphers, nil)
 
 	if !result.Compliant {
 		t.Errorf("expected compliant with Old profile, got: disallowed=%v, minVersionMet=%v",
@@ -91,7 +91,7 @@ func TestCheckCompliance_ModernProfile_Compliant(t *testing.T) {
 		"TLS 1.3": {"TLS_AES_128_GCM_SHA256", "TLS_CHACHA20_POLY1305_SHA256"},
 	}
 
-	result := CheckCompliance(profile, false, false, false, true, ciphers)
+	result := CheckCompliance(profile, false, false, false, true, ciphers, nil)
 
 	if !result.Compliant {
 		t.Errorf("expected compliant with Modern profile, got: disallowed=%v", result.DisallowedCiphers)
@@ -106,7 +106,7 @@ func TestCheckCompliance_ModernProfile_TLS12NotAllowed(t *testing.T) {
 		"TLS 1.2": {"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
 	}
 
-	result := CheckCompliance(profile, false, false, true, true, ciphers)
+	result := CheckCompliance(profile, false, false, true, true, ciphers, nil)
 
 	if result.Compliant {
 		t.Error("expected non-compliant: Modern profile should reject TLS 1.2 support")
@@ -119,7 +119,7 @@ func TestCheckCompliance_ModernProfile_TLS12NotAllowed(t *testing.T) {
 func TestCheckCompliance_EmptyCiphers(t *testing.T) {
 	profile := PredefinedProfiles[ProfileTypeIntermediate]
 
-	result := CheckCompliance(profile, false, false, true, true, map[string][]string{})
+	result := CheckCompliance(profile, false, false, true, true, map[string][]string{}, nil)
 
 	if !result.Compliant {
 		t.Error("expected compliant with empty cipher suites")
@@ -140,7 +140,7 @@ func TestCheckCompliance_CustomProfile(t *testing.T) {
 		"TLS 1.2": {"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
 	}
 
-	result := CheckCompliance(profile, false, false, true, false, ciphers)
+	result := CheckCompliance(profile, false, false, true, false, ciphers, nil)
 
 	if !result.Compliant {
 		t.Errorf("expected compliant with custom profile, got: disallowed=%v", result.DisallowedCiphers)
@@ -158,7 +158,7 @@ func TestCheckCompliance_DuplicateCiphersCounted(t *testing.T) {
 		"TLS 1.0": {"TLS_RSA_WITH_AES_128_CBC_SHA"},
 	}
 
-	result := CheckCompliance(profile, true, false, true, false, ciphers)
+	result := CheckCompliance(profile, true, false, true, false, ciphers, nil)
 
 	if result.Compliant {
 		t.Error("expected non-compliant")
@@ -347,5 +347,119 @@ func TestExtractAdherence(t *testing.T) {
 				t.Errorf("extractAdherence() = %q, want %q", got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestCheckCompliance_GroupsAllowed(t *testing.T) {
+	profile := PredefinedProfiles[ProfileTypeIntermediate]
+	ciphers := map[string][]string{
+		"TLS 1.3": {"TLS_AES_128_GCM_SHA256"},
+		"TLS 1.2": {"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
+	}
+	curves := map[string]string{
+		"TLS 1.3": "X25519",
+		"TLS 1.2": "CurveP256",
+	}
+
+	result := CheckCompliance(profile, false, false, true, true, ciphers, curves)
+	if !result.GroupsCompliant {
+		t.Error("expected GroupsCompliant to be true for allowed curves")
+	}
+	if len(result.DisallowedGroups) > 0 {
+		t.Errorf("expected no disallowed groups, got %v", result.DisallowedGroups)
+	}
+	if !result.Compliant {
+		t.Error("expected overall compliance to be true")
+	}
+}
+
+func TestCheckCompliance_GroupsDisallowed(t *testing.T) {
+	profile := PredefinedProfiles[ProfileTypeIntermediate]
+	ciphers := map[string][]string{
+		"TLS 1.3": {"TLS_AES_128_GCM_SHA256"},
+	}
+	curves := map[string]string{
+		"TLS 1.3": "CurveP521",
+	}
+
+	result := CheckCompliance(profile, false, false, true, true, ciphers, curves)
+	if result.GroupsCompliant {
+		t.Error("expected GroupsCompliant to be false for disallowed curve")
+	}
+	if len(result.DisallowedGroups) != 1 || result.DisallowedGroups[0] != "secp521r1" {
+		t.Errorf("expected DisallowedGroups=[secp521r1], got %v", result.DisallowedGroups)
+	}
+	if result.Compliant {
+		t.Error("expected overall compliance to be false when groups are non-compliant")
+	}
+}
+
+func TestCheckCompliance_EmptyProfileGroups(t *testing.T) {
+	profile := Profile{
+		Type:          ProfileTypeCustom,
+		MinTLSVersion: VersionTLS12,
+		Ciphers:       []string{"TLS_AES_128_GCM_SHA256"},
+	}
+	curves := map[string]string{
+		"TLS 1.3": "CurveP521",
+	}
+
+	result := CheckCompliance(profile, false, false, true, true, map[string][]string{
+		"TLS 1.3": {"TLS_AES_128_GCM_SHA256"},
+	}, curves)
+	if !result.GroupsCompliant {
+		t.Error("expected GroupsCompliant true when profile has no groups defined")
+	}
+}
+
+func TestCheckCompliance_GroupsAndCiphersMixed(t *testing.T) {
+	profile := PredefinedProfiles[ProfileTypeIntermediate]
+	ciphers := map[string][]string{
+		"TLS 1.2": {"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
+	}
+	curves := map[string]string{
+		"TLS 1.2": "CurveP521",
+	}
+
+	result := CheckCompliance(profile, false, false, true, false, ciphers, curves)
+	if result.Compliant {
+		t.Error("expected non-compliant when groups fail even if ciphers pass")
+	}
+	if result.GroupsCompliant {
+		t.Error("expected GroupsCompliant false")
+	}
+	if len(result.DisallowedCiphers) > 0 {
+		t.Error("expected no disallowed ciphers")
+	}
+}
+
+func TestExtractCustomProfile_WithGroups(t *testing.T) {
+	data := map[string]any{
+		"spec": map[string]any{
+			"tlsSecurityProfile": map[string]any{
+				"type": "Custom",
+				"custom": map[string]any{
+					"minTLSVersion": "VersionTLS13",
+					"ciphers": []any{
+						"TLS_AES_128_GCM_SHA256",
+					},
+					"groups": []any{
+						"X25519", "secp256r1",
+					},
+				},
+			},
+		},
+	}
+
+	obj := &unstructured.Unstructured{Object: data}
+	profile, err := extractProfileFromUnstructured(obj)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(profile.Groups) != 2 {
+		t.Errorf("expected 2 groups, got %d", len(profile.Groups))
+	}
+	if profile.Groups[0] != "X25519" || profile.Groups[1] != "secp256r1" {
+		t.Errorf("unexpected groups: %v", profile.Groups)
 	}
 }
