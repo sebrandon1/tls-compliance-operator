@@ -123,6 +123,10 @@ func reportToTestCase(r *securityv1alpha1.TLSComplianceReport) JUnitTestCase {
 		tc.Failure = &JUnitFailure{
 			Message: "NoTLS: port does not speak TLS",
 		}
+	case securityv1alpha1.ComplianceStatusPlaintextHTTP:
+		tc.Failure = &JUnitFailure{
+			Message: "PlaintextHTTP: endpoint serves unencrypted HTTP",
+		}
 	case securityv1alpha1.ComplianceStatusMutualTLSRequired:
 		tc.Failure = &JUnitFailure{
 			Message: "MutualTLSRequired: server requires client certificate",

@@ -184,7 +184,7 @@ func getOperatorResult(reportName string) NormalizedResult {
 	result := NormalizedResult{
 		Endpoint:         fmt.Sprintf("%s:%d", report.Spec.Host, report.Spec.Port),
 		Reachable:        !isUnreachable(s.ComplianceStatus),
-		TLSDetected:      s.ComplianceStatus != string(securityv1alpha1.ComplianceStatusNoTLS),
+		TLSDetected:      s.ComplianceStatus != string(securityv1alpha1.ComplianceStatusNoTLS) && s.ComplianceStatus != string(securityv1alpha1.ComplianceStatusPlaintextHTTP),
 		TLS10:            s.TLSVersions.TLS10,
 		TLS11:            s.TLSVersions.TLS11,
 		TLS12:            s.TLSVersions.TLS12,

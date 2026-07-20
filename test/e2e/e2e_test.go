@@ -752,7 +752,7 @@ spec:
 			}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
 		}
 
-		It("should report NoTLS for plain HTTP on a TLS port", func() {
+		It("should report PlaintextHTTP for plain HTTP on a TLS port", func() {
 			name := "test-notls-http"
 			deployTestServer(name, 8443, map[string]string{
 				"TLS_ENABLED": "false", "LISTEN_PORT": "8443",
@@ -770,7 +770,7 @@ spec:
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(ContainSubstring(
-					fmt.Sprintf("%s.%s,%d,%s", name, testNS, 8443, "NoTLS")))
+					fmt.Sprintf("%s.%s,%d,%s", name, testNS, 8443, "PlaintextHTTP")))
 			}).WithTimeout(5 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
 		})
 	})

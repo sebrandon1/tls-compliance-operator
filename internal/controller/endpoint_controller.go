@@ -1151,6 +1151,7 @@ func (r *EndpointReconciler) updateEndpointMetrics(reports []securityv1alpha1.TL
 		string(securityv1alpha1.ComplianceStatusClosed):            0,
 		string(securityv1alpha1.ComplianceStatusFiltered):          0,
 		string(securityv1alpha1.ComplianceStatusNoTLS):             0,
+		string(securityv1alpha1.ComplianceStatusPlaintextHTTP):     0,
 		string(securityv1alpha1.ComplianceStatusMutualTLSRequired): 0,
 		string(securityv1alpha1.ComplianceStatusPending):           0,
 		string(securityv1alpha1.ComplianceStatusUnknown):           0,
@@ -1369,6 +1370,8 @@ func failureReasonToComplianceStatus(reason tlscheck.FailureReason) securityv1al
 	switch reason {
 	case tlscheck.FailureReasonNoTLS:
 		return securityv1alpha1.ComplianceStatusNoTLS
+	case tlscheck.FailureReasonPlaintextHTTP:
+		return securityv1alpha1.ComplianceStatusPlaintextHTTP
 	case tlscheck.FailureReasonMutualTLSRequired:
 		return securityv1alpha1.ComplianceStatusMutualTLSRequired
 	case tlscheck.FailureReasonTimeout:

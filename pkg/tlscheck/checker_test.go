@@ -184,8 +184,7 @@ func TestTLSChecker_CheckEndpoint_Closed(t *testing.T) {
 	}
 }
 
-func TestTLSChecker_CheckEndpoint_NoTLS(t *testing.T) {
-	// Start a plain TCP server (no TLS)
+func TestTLSChecker_CheckEndpoint_PlaintextHTTP(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to start plain TCP listener: %v", err)
@@ -198,8 +197,41 @@ func TestTLSChecker_CheckEndpoint_NoTLS(t *testing.T) {
 			if err != nil {
 				return
 			}
-			// Send non-TLS data and close
+			buf := make([]byte, 1024)
+			_, _ = conn.Read(buf)
 			_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+			_ = conn.Close()
+		}
+	}()
+
+	addr := listener.Addr().(*net.TCPAddr)
+	checker := NewTLSChecker(2 * time.Second)
+	result, err := checker.CheckEndpoint(context.Background(), addr.IP.String(), addr.Port)
+	if err == nil {
+		t.Error("expected error for plaintext HTTP endpoint")
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result even on error")
+	}
+	if result.FailureReason != FailureReasonPlaintextHTTP {
+		t.Errorf("expected FailureReason=%q, got %q", FailureReasonPlaintextHTTP, result.FailureReason)
+	}
+}
+
+func TestTLSChecker_CheckEndpoint_NoTLS_NonHTTP(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start plain TCP listener: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = conn.Write([]byte("\x00\x01\x02BINARY PROTOCOL\r\n"))
 			_ = conn.Close()
 		}
 	}()

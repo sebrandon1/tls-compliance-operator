@@ -28,14 +28,15 @@ var compliancePriority = map[securityv1alpha1.ComplianceStatus]int{
 	securityv1alpha1.ComplianceStatusCompliant:         0,
 	securityv1alpha1.ComplianceStatusWarning:           1,
 	securityv1alpha1.ComplianceStatusNonCompliant:      2,
-	securityv1alpha1.ComplianceStatusNoTLS:             3,
-	securityv1alpha1.ComplianceStatusMutualTLSRequired: 4,
-	securityv1alpha1.ComplianceStatusTimeout:           5,
-	securityv1alpha1.ComplianceStatusClosed:            6,
-	securityv1alpha1.ComplianceStatusFiltered:          7,
-	securityv1alpha1.ComplianceStatusUnreachable:       8,
-	securityv1alpha1.ComplianceStatusPending:           9,
-	securityv1alpha1.ComplianceStatusUnknown:           10,
+	securityv1alpha1.ComplianceStatusPlaintextHTTP:     3,
+	securityv1alpha1.ComplianceStatusNoTLS:             4,
+	securityv1alpha1.ComplianceStatusMutualTLSRequired: 5,
+	securityv1alpha1.ComplianceStatusTimeout:           6,
+	securityv1alpha1.ComplianceStatusClosed:            7,
+	securityv1alpha1.ComplianceStatusFiltered:          8,
+	securityv1alpha1.ComplianceStatusUnreachable:       9,
+	securityv1alpha1.ComplianceStatusPending:           10,
+	securityv1alpha1.ComplianceStatusUnknown:           11,
 }
 
 // SortReports sorts reports in place by the given key.
