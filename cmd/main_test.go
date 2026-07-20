@@ -18,8 +18,12 @@ package main
 
 import (
 	"flag"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 )
 
 func TestResolveEnvConfig_EnvOverridesDefault(t *testing.T) {
@@ -240,6 +244,14 @@ func TestValidateEnvValue(t *testing.T) {
 		{"valid log-format text", "log-format", "text", false},
 		{"valid log-format json", "log-format", "json", false},
 		{"invalid log-format", "log-format", "xml", true},
+		{"valid run-once true", "run-once", "true", false},
+		{"valid run-once false", "run-once", "false", false},
+		{"valid run-once 1", "run-once", "1", false},
+		{"valid run-once 0", "run-once", "0", false},
+		{"invalid run-once", "run-once", "maybe", true},
+		{"valid output-format csv", "output-format", "csv", false},
+		{"valid output-format junit", "output-format", "junit", false},
+		{"invalid output-format", "output-format", "xml", true},
 	}
 
 	for _, tc := range tests {
@@ -323,5 +335,104 @@ func TestResolveEnvConfig_LogFormat(t *testing.T) {
 	val := fs.Lookup("log-format").Value.String()
 	if val != "json" {
 		t.Errorf("expected log-format=json, got %s", val)
+	}
+}
+
+func TestWriteRunOnceOutput_CSV(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:       "test.example",
+				Port:       443,
+				SourceKind: securityv1alpha1.SourceKindService,
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+			},
+		},
+	}
+
+	tmpFile := filepath.Join(t.TempDir(), "results.csv")
+	cfg := &operatorConfig{outputFormat: "csv", outputFile: tmpFile}
+
+	if err := writeRunOnceOutput(reports, cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(tmpFile)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
+	if !strings.Contains(string(data), "test.example") {
+		t.Error("expected output file to contain host")
+	}
+}
+
+func TestWriteRunOnceOutput_JUnit(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:       "junit.example",
+				Port:       443,
+				SourceKind: securityv1alpha1.SourceKindService,
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+			},
+		},
+	}
+
+	tmpFile := filepath.Join(t.TempDir(), "results.xml")
+	cfg := &operatorConfig{outputFormat: "junit", outputFile: tmpFile}
+
+	if err := writeRunOnceOutput(reports, cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(tmpFile)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
+	if !strings.Contains(string(data), "junit.example") {
+		t.Error("expected JUnit output to contain host")
+	}
+}
+
+func TestWriteRunOnceOutput_Stdout(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:       "stdout.example",
+				Port:       443,
+				SourceKind: securityv1alpha1.SourceKindService,
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+			},
+		},
+	}
+
+	cfg := &operatorConfig{outputFormat: "json"}
+	if err := writeRunOnceOutput(reports, cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestWriteRunOnceOutput_InvalidFormat(t *testing.T) {
+	cfg := &operatorConfig{outputFormat: "xml"}
+	err := writeRunOnceOutput(nil, cfg)
+	if err == nil {
+		t.Fatal("expected error for unknown format")
+	}
+	if !strings.Contains(err.Error(), "unknown output format") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestWriteRunOnceOutput_BadPath(t *testing.T) {
+	cfg := &operatorConfig{outputFormat: "csv", outputFile: "/nonexistent/dir/file.csv"}
+	err := writeRunOnceOutput(nil, cfg)
+	if err == nil {
+		t.Fatal("expected error for bad file path")
 	}
 }

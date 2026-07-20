@@ -100,6 +100,8 @@ type EndpointReconciler struct {
 	FIPSEnabled           bool
 	NamespaceRateLimiters map[string]*rate.Limiter
 	DefaultNamespaceRate  *rate.Limiter
+	RunOnce               bool
+	RunOnceDone           chan error
 	ManagerCtx            context.Context
 	checkSem              chan struct{}
 	checkSemOnce          sync.Once
@@ -998,7 +1000,13 @@ func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval tim
 		logger := log.FromContext(ctx).WithName("periodic-scan")
 
 		logger.Info("running initial TLS scan of all endpoints")
-		r.runScanCycle(ctx, logger)
+		scanErr := r.runScanCycleWithError(ctx, logger)
+
+		if r.RunOnce {
+			logger.Info("run-once mode: scan complete, signaling done")
+			r.RunOnceDone <- scanErr
+			return
+		}
 
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -1015,10 +1023,15 @@ func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval tim
 }
 
 func (r *EndpointReconciler) runScanCycle(ctx context.Context, logger logr.Logger) {
+	_ = r.runScanCycleWithError(ctx, logger)
+}
+
+func (r *EndpointReconciler) runScanCycleWithError(ctx context.Context, logger logr.Logger) error {
 	logger.Info("starting periodic TLS scan")
 	start := time.Now()
 
-	if err := r.scanAllEndpoints(ctx); err != nil {
+	err := r.scanAllEndpoints(ctx)
+	if err != nil {
 		logger.Error(err, "failed to complete periodic scan")
 	} else {
 		metrics.RecordScanCycleCompleted()
@@ -1027,6 +1040,7 @@ func (r *EndpointReconciler) runScanCycle(ctx context.Context, logger logr.Logge
 	duration := time.Since(start)
 	metrics.RecordScanCycleDuration(duration.Seconds())
 	logger.Info("periodic TLS scan completed", "duration", duration)
+	return err
 }
 
 // scanPodEndpoints discovers TLS endpoints from all pods in the cluster.

@@ -2314,5 +2314,36 @@ func TestEmitComplianceEvents_PQCNotReady_FIPSEnabled_LegacyTLS(t *testing.T) {
 	}
 }
 
+func TestStartPeriodicScan_RunOnce(t *testing.T) {
+	scheme := newTestScheme()
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:      fakeClient,
+		Scheme:      scheme,
+		TLSChecker:  &MockTLSChecker{},
+		RunOnce:     true,
+		RunOnceDone: make(chan error, 1),
+		Workers:     1,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	r.StartPeriodicScan(ctx, time.Hour)
+
+	select {
+	case err := <-r.RunOnceDone:
+		if err != nil {
+			t.Logf("scan returned error (expected in test without real endpoints): %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for RunOnceDone signal")
+	}
+}
+
 // Ensure _ satisfies the client.Object interface for compile-time check
 var _ client.Object = &securityv1alpha1.TLSComplianceReport{}

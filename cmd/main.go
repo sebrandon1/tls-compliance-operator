@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -47,6 +48,7 @@ import (
 	"github.com/sebrandon1/tls-compliance-operator/internal/controller"
 	"github.com/sebrandon1/tls-compliance-operator/internal/metrics"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/endpoint"
+	"github.com/sebrandon1/tls-compliance-operator/pkg/export"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/fips"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlscheck"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlsprofile"
@@ -99,6 +101,9 @@ type operatorConfig struct {
 	namespaceRateLimitsStr string
 	metricsPerEndpoint     bool
 	logFormat              string
+	runOnce                bool
+	outputFormat           string
+	outputFile             string
 
 	zapOpts zap.Options
 }
@@ -164,6 +169,12 @@ func parseFlags() *operatorConfig {
 		"Emit per-endpoint Prometheus metrics (disable for large clusters to reduce cardinality)")
 	flag.StringVar(&cfg.logFormat, "log-format", "text",
 		"Log output format: text or json")
+	flag.BoolVar(&cfg.runOnce, "run-once", false,
+		"Perform a single scan of all endpoints and exit (0=compliant, 1=non-compliant, 2=error)")
+	flag.StringVar(&cfg.outputFormat, "output-format", "",
+		"Write scan results in this format (csv, json, yaml, junit, markdown); defaults to stdout")
+	flag.StringVar(&cfg.outputFile, "output-file", "",
+		"Path to write scan results (requires --output-format)")
 
 	cfg.zapOpts = zap.Options{Development: true}
 	cfg.zapOpts.BindFlags(flag.CommandLine)
@@ -208,6 +219,20 @@ func validateConfig(cfg *operatorConfig) {
 		setupLog.Error(nil, "invalid --max-retries value, must be between 0 and 10", "maxRetries", cfg.maxRetries)
 		os.Exit(1)
 	}
+
+	if cfg.outputFormat != "" {
+		switch cfg.outputFormat {
+		case "csv", "json", "yaml", "junit", "markdown":
+		default:
+			setupLog.Error(nil, "invalid --output-format value", "format", cfg.outputFormat,
+				"valid", "csv, json, yaml, junit, markdown")
+			os.Exit(1)
+		}
+	}
+	if cfg.outputFile != "" && cfg.outputFormat == "" {
+		setupLog.Error(nil, "--output-file requires --output-format to be set")
+		os.Exit(1)
+	}
 }
 
 func buildTLSOpts(cfg *operatorConfig) []func(*tls.Config) {
@@ -226,7 +251,7 @@ func buildTLSOpts(cfg *operatorConfig) []func(*tls.Config) {
 	return tlsOpts
 }
 
-func setupManager(ctx context.Context, cfg *operatorConfig) ctrl.Manager {
+func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *controller.EndpointReconciler) {
 	tlsOpts := buildTLSOpts(cfg)
 
 	webhookServerOptions := webhook.Options{
@@ -256,14 +281,21 @@ func setupManager(ctx context.Context, cfg *operatorConfig) ctrl.Manager {
 		metricsServerOptions.KeyName = cfg.metricsCertKey
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	mgrOpts := ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhook.NewServer(webhookServerOptions),
 		HealthProbeBindAddress: cfg.probeAddr,
 		LeaderElection:         cfg.enableLeaderElection,
 		LeaderElectionID:       "tls-compliance.telco.openshift.io",
-	})
+	}
+	if cfg.runOnce {
+		mgrOpts.LeaderElection = false
+		mgrOpts.HealthProbeBindAddress = "0"
+		mgrOpts.Metrics.BindAddress = "0"
+	}
+
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), mgrOpts)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
@@ -398,15 +430,22 @@ func setupManager(ctx context.Context, cfg *operatorConfig) ctrl.Manager {
 		ManagerCtx:            ctx,
 	}
 
+	if cfg.runOnce {
+		endpointReconciler.RunOnce = true
+		endpointReconciler.RunOnceDone = make(chan error, 1)
+	}
+
 	if err = endpointReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Endpoint")
 		os.Exit(1)
 	}
 
 	endpointReconciler.StartPeriodicScan(ctx, cfg.scanInterval)
-	endpointReconciler.StartCleanupLoop(ctx, cfg.cleanupInterval)
-	if profileFetcher != nil {
-		profileFetcher.StartPeriodicRefresh(ctx, cfg.profileRefreshInterval)
+	if !cfg.runOnce {
+		endpointReconciler.StartCleanupLoop(ctx, cfg.cleanupInterval)
+		if profileFetcher != nil {
+			profileFetcher.StartPeriodicRefresh(ctx, cfg.profileRefreshInterval)
+		}
 	}
 
 	if cfg.webhookCertPath != "" {
@@ -428,20 +467,98 @@ func setupManager(ctx context.Context, cfg *operatorConfig) ctrl.Manager {
 		os.Exit(1)
 	}
 
-	return mgr
+	return mgr, endpointReconciler
 }
 
 func main() {
 	cfg := parseFlags()
 	validateConfig(cfg)
 
-	ctx := ctrl.SetupSignalHandler()
-	mgr := setupManager(ctx, cfg)
+	ctx, cancel := context.WithCancel(ctrl.SetupSignalHandler())
+	defer cancel()
+
+	mgr, reconciler := setupManager(ctx, cfg)
+
+	if cfg.runOnce {
+		runOnceAndExit(ctx, cancel, mgr, reconciler, cfg)
+		return
+	}
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
+	}
+}
+
+func runOnceAndExit(ctx context.Context, cancel context.CancelFunc, mgr ctrl.Manager, reconciler *controller.EndpointReconciler, cfg *operatorConfig) {
+	go func() {
+		if err := mgr.Start(ctx); err != nil {
+			setupLog.Error(err, "manager exited with error")
+		}
+	}()
+
+	scanErr := <-reconciler.RunOnceDone
+
+	exitCode := 0
+	if scanErr != nil {
+		setupLog.Error(scanErr, "scan failed")
+		exitCode = 2
+	}
+
+	var reportList securityv1alpha1.TLSComplianceReportList
+	if err := mgr.GetClient().List(ctx, &reportList); err != nil {
+		setupLog.Error(err, "failed to list reports after scan")
+		cancel()
+		os.Exit(2)
+	}
+
+	reports := reportList.Items
+	setupLog.Info("run-once scan results", "total", len(reports))
+
+	if exitCode == 0 && export.HasNonCompliantReports(reports) {
+		exitCode = 1
+		setupLog.Info("non-compliant endpoints detected", "exitCode", exitCode)
+	}
+
+	if cfg.outputFormat != "" {
+		if err := writeRunOnceOutput(reports, cfg); err != nil {
+			setupLog.Error(err, "failed to write output")
+			if exitCode == 0 {
+				exitCode = 2
+			}
+		}
+	}
+
+	cancel()
+	os.Exit(exitCode)
+}
+
+func writeRunOnceOutput(reports []securityv1alpha1.TLSComplianceReport, cfg *operatorConfig) error {
+	var w io.Writer = os.Stdout
+	if cfg.outputFile != "" {
+		f, err := os.Create(cfg.outputFile)
+		if err != nil {
+			return fmt.Errorf("creating output file: %w", err)
+		}
+		defer f.Close() //nolint:errcheck
+		w = f
+		setupLog.Info("writing results", "file", cfg.outputFile, "format", cfg.outputFormat)
+	}
+
+	switch cfg.outputFormat {
+	case "csv":
+		return export.WriteCSV(w, reports)
+	case "json":
+		return export.WriteJSON(w, reports)
+	case "yaml":
+		return export.WriteYAML(w, reports)
+	case "junit":
+		return export.WriteJUnit(w, reports)
+	case "markdown":
+		return export.WriteMarkdown(w, reports)
+	default:
+		return fmt.Errorf("unknown output format: %s", cfg.outputFormat)
 	}
 }
 
@@ -467,6 +584,9 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_CLIENT_CERT", "client-cert"},
 	{"TLS_COMPLIANCE_CLIENT_KEY", "client-key"},
 	{"TLS_COMPLIANCE_LOG_FORMAT", "log-format"},
+	{"TLS_COMPLIANCE_RUN_ONCE", "run-once"},
+	{"TLS_COMPLIANCE_OUTPUT_FORMAT", "output-format"},
+	{"TLS_COMPLIANCE_OUTPUT_FILE", "output-file"},
 }
 
 // resolveEnvConfig applies environment variable overrides to flags that were not
@@ -540,6 +660,16 @@ func validateEnvValue(flagName, value string) error {
 	case "log-format":
 		if value != "text" && value != "json" {
 			return fmt.Errorf("must be text or json, got %q", value)
+		}
+	case "run-once":
+		if value != "true" && value != "false" && value != "1" && value != "0" {
+			return fmt.Errorf("must be true or false, got %q", value)
+		}
+	case "output-format":
+		switch value {
+		case "csv", "json", "yaml", "junit", "markdown":
+		default:
+			return fmt.Errorf("must be csv, json, yaml, junit, or markdown, got %q", value)
 		}
 	}
 	return nil

@@ -87,6 +87,7 @@ spec:
                 - Closed
                 - Filtered
                 - NoTLS
+                - PlaintextHTTP
                 - MutualTLSRequired
                 - Pending
                 - Unknown

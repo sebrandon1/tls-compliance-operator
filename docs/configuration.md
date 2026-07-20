@@ -70,6 +70,14 @@ If neither flag is set, all namespaces are scanned.
 |------|---------|------|---------|-------------|
 | `--log-format` | `TLS_COMPLIANCE_LOG_FORMAT` | string | `text` | Log output format. Use `text` for human-readable development logs or `json` for structured logs suitable for log aggregation pipelines (ELK, Splunk, CloudWatch). |
 
+## CI/CD Integration
+
+| Flag | Env Var | Type | Default | Description |
+|------|---------|------|---------|-------------|
+| `--run-once` | `TLS_COMPLIANCE_RUN_ONCE` | bool | `false` | Perform a single full scan and exit. Exit code 0 = all compliant, 1 = non-compliant found, 2 = scan error. Automatically disables leader election, metrics, and health probes. See [CI Integration Guide](ci-integration.md) for examples. |
+| `--output-format` | `TLS_COMPLIANCE_OUTPUT_FORMAT` | string | `""` | Write scan results in this format when using `--run-once`. Supported: `csv`, `json`, `yaml`, `junit`, `markdown`. Results go to stdout unless `--output-file` is set. |
+| `--output-file` | `TLS_COMPLIANCE_OUTPUT_FILE` | string | `""` | Path to write scan results. Requires `--output-format`. |
+
 ## Infrastructure
 
 These flags are standard controller-runtime/kubebuilder flags. They do not have

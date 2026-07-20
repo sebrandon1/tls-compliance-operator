@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -228,5 +229,67 @@ func TestPrintReportDetail_FIPSNotDetected(t *testing.T) {
 
 	if strings.Contains(output, "FIPS Mode:") {
 		t.Error("expected output to NOT contain 'FIPS Mode:' when FIPSDetected is false")
+	}
+}
+
+func TestNewRootCmd_FailOnNonCompliantFlag(t *testing.T) {
+	cmd := newRootCmd()
+	f := cmd.PersistentFlags().Lookup("fail-on-non-compliant")
+	if f == nil {
+		t.Fatal("expected --fail-on-non-compliant flag")
+	}
+	if f.DefValue != "false" {
+		t.Errorf("expected default false, got %s", f.DefValue)
+	}
+}
+
+func TestCheckExitCode_FlagDisabled(t *testing.T) {
+	failOnNonCompliant = false
+	defer func() { failOnNonCompliant = false }()
+
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusNonCompliant}},
+	}
+	if err := checkExitCode(reports); err != nil {
+		t.Errorf("expected nil error when flag is disabled, got %v", err)
+	}
+}
+
+func TestCheckExitCode_FlagEnabled_AllCompliant(t *testing.T) {
+	failOnNonCompliant = true
+	defer func() { failOnNonCompliant = false }()
+
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant}},
+	}
+	if err := checkExitCode(reports); err != nil {
+		t.Errorf("expected nil error for all-compliant, got %v", err)
+	}
+}
+
+func TestCheckExitCode_FlagEnabled_NonCompliant(t *testing.T) {
+	failOnNonCompliant = true
+	defer func() { failOnNonCompliant = false }()
+
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusNonCompliant}},
+	}
+	err := checkExitCode(reports)
+	if err == nil {
+		t.Fatal("expected error for non-compliant reports")
+	}
+	var ece exitCodeError
+	if !errors.As(err, &ece) {
+		t.Fatalf("expected exitCodeError, got %T", err)
+	}
+	if ece.code != 1 {
+		t.Errorf("expected exit code 1, got %d", ece.code)
+	}
+}
+
+func TestExitCodeError_ErrorString(t *testing.T) {
+	e := exitCodeError{code: 1}
+	if e.Error() != "exit code 1" {
+		t.Errorf("unexpected error string: %s", e.Error())
 	}
 }
