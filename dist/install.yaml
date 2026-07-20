@@ -153,6 +153,18 @@ spec:
                     items:
                       type: string
                     type: array
+                  disallowedGroups:
+                    description: |-
+                      DisallowedGroups lists key exchange groups negotiated by the endpoint
+                      that are not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  groupsCompliant:
+                    description: |-
+                      GroupsCompliant indicates whether the endpoint's negotiated curves are
+                      in the profile's allowed groups list
+                    type: boolean
                   minTLSVersionMet:
                     description: |-
                       MinTLSVersionMet indicates whether the endpoint does not support TLS versions
@@ -164,6 +176,7 @@ spec:
                     type: string
                 required:
                 - compliant
+                - groupsCompliant
                 - minTLSVersionMet
                 - profileType
                 type: object
@@ -250,6 +263,7 @@ spec:
                 - Closed
                 - Filtered
                 - NoTLS
+                - PlaintextHTTP
                 - MutualTLSRequired
                 - Pending
                 - Unknown
@@ -349,6 +363,18 @@ spec:
                     items:
                       type: string
                     type: array
+                  disallowedGroups:
+                    description: |-
+                      DisallowedGroups lists key exchange groups negotiated by the endpoint
+                      that are not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  groupsCompliant:
+                    description: |-
+                      GroupsCompliant indicates whether the endpoint's negotiated curves are
+                      in the profile's allowed groups list
+                    type: boolean
                   minTLSVersionMet:
                     description: |-
                       MinTLSVersionMet indicates whether the endpoint does not support TLS versions
@@ -360,6 +386,7 @@ spec:
                     type: string
                 required:
                 - compliant
+                - groupsCompliant
                 - minTLSVersionMet
                 - profileType
                 type: object
@@ -386,6 +413,18 @@ spec:
                     items:
                       type: string
                     type: array
+                  disallowedGroups:
+                    description: |-
+                      DisallowedGroups lists key exchange groups negotiated by the endpoint
+                      that are not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  groupsCompliant:
+                    description: |-
+                      GroupsCompliant indicates whether the endpoint's negotiated curves are
+                      in the profile's allowed groups list
+                    type: boolean
                   minTLSVersionMet:
                     description: |-
                       MinTLSVersionMet indicates whether the endpoint does not support TLS versions
@@ -397,6 +436,7 @@ spec:
                     type: string
                 required:
                 - compliant
+                - groupsCompliant
                 - minTLSVersionMet
                 - profileType
                 type: object
@@ -454,6 +494,12 @@ spec:
               scanDuration:
                 description: ScanDuration is the wall-clock time taken by the last
                   TLS check (e.g. "1.23s")
+                type: string
+              tlsAdherence:
+                description: |-
+                  TLSAdherence is the OpenShift APIServer TLS adherence mode
+                  (e.g. LegacyAdheringComponentsOnly, StrictAllComponents).
+                  Empty on non-OpenShift clusters or when the field is not set.
                 type: string
               tlsVersions:
                 description: TLSVersions indicates which TLS versions are supported
@@ -577,6 +623,7 @@ spec:
                 - Closed
                 - Filtered
                 - NoTLS
+                - PlaintextHTTP
                 - MutualTLSRequired
                 - Pending
                 - Unknown
@@ -932,7 +979,7 @@ spec:
         - --metrics-secure=true
         command:
         - /manager
-        image: quay.io/bapalm/tls-compliance-operator:v1.1.3
+        image: quay.io/bapalm/tls-compliance-operator:v1.1.4
         livenessProbe:
           httpGet:
             path: /healthz
