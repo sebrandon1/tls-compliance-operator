@@ -41,6 +41,12 @@ const (
 	ComponentKubeletConfig     Component = "KubeletConfig"
 )
 
+// TLS adherence modes from APIServer spec.tlsAdherence
+const (
+	AdherenceLegacy = "LegacyAdheringComponentsOnly"
+	AdherenceStrict = "StrictAllComponents"
+)
+
 // Profile represents a resolved TLS security profile with its allowed
 // ciphers and minimum TLS version.
 type Profile struct {

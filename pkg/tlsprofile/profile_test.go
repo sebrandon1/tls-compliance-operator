@@ -302,3 +302,50 @@ func TestExtractProfileFromUnstructured(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractAdherence(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     map[string]any
+		expected string
+	}{
+		{
+			name: "StrictAllComponents",
+			data: map[string]any{
+				"spec": map[string]any{
+					"tlsAdherence": "StrictAllComponents",
+				},
+			},
+			expected: AdherenceStrict,
+		},
+		{
+			name: "LegacyAdheringComponentsOnly",
+			data: map[string]any{
+				"spec": map[string]any{
+					"tlsAdherence": "LegacyAdheringComponentsOnly",
+				},
+			},
+			expected: AdherenceLegacy,
+		},
+		{
+			name:     "field absent",
+			data:     map[string]any{"spec": map[string]any{}},
+			expected: "",
+		},
+		{
+			name:     "no spec",
+			data:     map[string]any{},
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obj := &unstructured.Unstructured{Object: tt.data}
+			got := extractAdherence(obj)
+			if got != tt.expected {
+				t.Errorf("extractAdherence() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}

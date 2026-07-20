@@ -17,8 +17,9 @@ import (
 type Fetcher struct {
 	client client.Client
 
-	mu       sync.RWMutex
-	profiles map[Component]Profile
+	mu        sync.RWMutex
+	profiles  map[Component]Profile
+	adherence string
 }
 
 // NewFetcher creates a new profile Fetcher.
@@ -55,13 +56,14 @@ func (f *Fetcher) GetAllProfiles() map[Component]Profile {
 func (f *Fetcher) RefreshAll(ctx context.Context) {
 	logger := log.FromContext(ctx).WithName("tlsprofile-fetcher")
 
-	// Fetch APIServer profile
-	profile, err := f.fetchAPIServerProfile(ctx)
+	// Fetch APIServer profile and adherence mode
+	profile, adherence, err := f.fetchAPIServerProfile(ctx)
 	if err != nil {
 		logger.V(1).Info("could not fetch APIServer TLS profile, using default", "error", err)
 		profile = DefaultProfile()
 	}
 	f.setProfile(ComponentAPIServer, profile)
+	f.setAdherence(adherence)
 
 	// Fetch IngressController profile
 	profile, err = f.fetchIngressControllerProfile(ctx)
@@ -110,8 +112,22 @@ func (f *Fetcher) setProfile(component Component, profile Profile) {
 	f.profiles[component] = profile
 }
 
+// GetAdherence returns the cached TLS adherence mode from the APIServer config.
+// Returns an empty string on non-OpenShift clusters or when the field is absent.
+func (f *Fetcher) GetAdherence() string {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.adherence
+}
+
+func (f *Fetcher) setAdherence(adherence string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.adherence = adherence
+}
+
 // fetchAPIServerProfile reads the cluster APIServer config.
-func (f *Fetcher) fetchAPIServerProfile(ctx context.Context) (Profile, error) {
+func (f *Fetcher) fetchAPIServerProfile(ctx context.Context) (Profile, string, error) {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "config.openshift.io",
@@ -120,10 +136,21 @@ func (f *Fetcher) fetchAPIServerProfile(ctx context.Context) (Profile, error) {
 	})
 
 	if err := f.client.Get(ctx, client.ObjectKey{Name: "cluster"}, obj); err != nil {
-		return Profile{}, fmt.Errorf("failed to get APIServer: %w", err)
+		return Profile{}, "", fmt.Errorf("failed to get APIServer: %w", err)
 	}
 
-	return extractProfileFromUnstructured(obj)
+	profile, err := extractProfileFromUnstructured(obj)
+	adherence := extractAdherence(obj)
+	return profile, adherence, err
+}
+
+func extractAdherence(obj *unstructured.Unstructured) string {
+	spec, ok := obj.Object["spec"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	adherence, _ := spec["tlsAdherence"].(string)
+	return adherence
 }
 
 // fetchIngressControllerProfile reads the default IngressController config.

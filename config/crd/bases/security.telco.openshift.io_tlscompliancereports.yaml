@@ -448,6 +448,12 @@ spec:
                 description: ScanDuration is the wall-clock time taken by the last
                   TLS check (e.g. "1.23s")
                 type: string
+              tlsAdherence:
+                description: |-
+                  TLSAdherence is the OpenShift APIServer TLS adherence mode
+                  (e.g. LegacyAdheringComponentsOnly, StrictAllComponents).
+                  Empty on non-OpenShift clusters or when the field is not set.
+                type: string
               tlsVersions:
                 description: TLSVersions indicates which TLS versions are supported
                 properties:

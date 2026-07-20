@@ -625,6 +625,9 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 			}
 		}
 
+		if r.ProfileFetcher != nil {
+			cr.Status.TLSAdherence = r.ProfileFetcher.GetAdherence()
+		}
 		r.checkProfileCompliance(cr, result)
 		cr.Status.ComplianceStatus = complianceStatus
 		r.updateConditions(cr, complianceStatus, result)

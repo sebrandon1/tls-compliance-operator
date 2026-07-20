@@ -299,6 +299,12 @@ type TLSComplianceReportStatus struct {
 	// +optional
 	KubeletProfileCompliance *TLSProfileComplianceResult `json:"kubeletProfileCompliance,omitempty"`
 
+	// TLSAdherence is the OpenShift APIServer TLS adherence mode
+	// (e.g. LegacyAdheringComponentsOnly, StrictAllComponents).
+	// Empty on non-OpenShift clusters or when the field is not set.
+	// +optional
+	TLSAdherence string `json:"tlsAdherence,omitempty"`
+
 	// Conditions represent the current state of the TLSComplianceReport resource
 	// +listType=map
 	// +listMapKey=type

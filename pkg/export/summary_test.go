@@ -553,3 +553,87 @@ func TestComputeSummary_FIPSMixedReports(t *testing.T) {
 		t.Error("expected FIPSDetected to be true when at least one report has FIPSDetected=true")
 	}
 }
+
+func TestComputeSummary_TLSAdherence(t *testing.T) {
+	now := time.Now()
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				TLSAdherence:     "StrictAllComponents",
+			},
+		},
+	}
+
+	s := ComputeSummary(reports, now)
+	if s.TLSAdherence != "StrictAllComponents" {
+		t.Errorf("expected TLSAdherence=StrictAllComponents, got %q", s.TLSAdherence)
+	}
+}
+
+func TestComputeSummary_TLSAdherenceEmpty(t *testing.T) {
+	now := time.Now()
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+			},
+		},
+	}
+
+	s := ComputeSummary(reports, now)
+	if s.TLSAdherence != "" {
+		t.Errorf("expected empty TLSAdherence, got %q", s.TLSAdherence)
+	}
+}
+
+func TestWriteSummary_TLSAdherenceLine(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				TLSAdherence:     "StrictAllComponents",
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteSummary(&buf, reports); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "TLS Security Profile") {
+		t.Error("expected output to contain 'TLS Security Profile' section")
+	}
+	if !strings.Contains(output, "TLS Adherence:") {
+		t.Error("expected output to contain 'TLS Adherence:'")
+	}
+	if !strings.Contains(output, "StrictAllComponents") {
+		t.Error("expected output to contain 'StrictAllComponents'")
+	}
+}
+
+func TestWriteSummary_NoAdherenceLine(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteSummary(&buf, reports); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if strings.Contains(output, "TLS Security Profile") {
+		t.Error("expected output to NOT contain 'TLS Security Profile' when adherence is empty")
+	}
+}
