@@ -1,0 +1,41 @@
+# Apply to the Konflux cluster: oc apply -f component.yaml
+# Not watched by Konflux from git -- see konflux/README.md.
+#
+# The `configure-pac` annotation makes Konflux open a separate PR against this repo with
+# generated .tekton/tls-compliance-operator-pull-request.yaml and
+# .tekton/tls-compliance-operator-push.yaml build PipelineRuns. Do not hand-write those.
+#
+# dockerfileUrl points at the existing Dockerfile (public golang + distroless bases) so
+# Konflux can build without registry.ci.openshift.org credentials.
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Component
+metadata:
+  name: tls-compliance-operator
+  namespace: ocp-isc-tenant
+  annotations:
+    build.appstudio.openshift.io/request: configure-pac
+    git-provider: github
+spec:
+  application: tls-compliance-operator
+  componentName: tls-compliance-operator
+  source:
+    git:
+      url: https://github.com/sebrandon1/tls-compliance-operator.git
+      revision: main
+      dockerfileUrl: Dockerfile
+---
+# Provisions a Quay repo and sets Component.spec.containerImage automatically.
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: ImageRepository
+metadata:
+  name: tls-compliance-operator
+  namespace: ocp-isc-tenant
+  annotations:
+    image-controller.appstudio.redhat.com/update-component-image: "true"
+  labels:
+    appstudio.redhat.com/application: tls-compliance-operator
+    appstudio.redhat.com/component: tls-compliance-operator
+spec:
+  image:
+    name: ocp-isc-tenant/tls-compliance-operator
+    visibility: public
