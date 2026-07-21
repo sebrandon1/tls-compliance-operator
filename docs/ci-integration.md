@@ -65,40 +65,122 @@ kubectl tlsreport junit > results.xml
 kubectl tlsreport summary --fail-on-non-compliant
 ```
 
-### Example: Run-Once in a Container
+### Example: Quick Start
 
-For environments where the operator runs as a Job rather than a Deployment:
+Scan any cluster you have `KUBECONFIG` access to in three steps:
 
-```yaml
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: tls-compliance-scan
-spec:
-  template:
-    spec:
-      serviceAccountName: tls-compliance-operator-controller-manager
-      containers:
-        - name: scanner
-          image: quay.io/bapalm/tls-compliance-operator:latest
-          args:
-            - --run-once
-            - --output-format=junit
-            - --output-file=/results/report.xml
-            - --workers=10
-          volumeMounts:
-            - name: results
-              mountPath: /results
-      volumes:
-        - name: results
-          emptyDir: {}
-      restartPolicy: Never
-  backoffLimit: 0
+```bash
+git clone https://github.com/sebrandon1/tls-compliance-operator.git
+cd tls-compliance-operator
+make deploy-run-once-scan
 ```
 
-The Job exits with code 0 if all endpoints are compliant, 1 if any are
-non-compliant, or 2 if the scan itself fails. CI systems can use the Job's
-exit code directly to gate the pipeline.
+This is the recommended approach for most users. It installs the CRDs,
+creates a namespace with RBAC, deploys the operator as a one-shot
+Kubernetes Job, waits for completion, copies the results locally, and
+tears down all resources on exit. The exit code tells you the result:
+0 = compliant, 1 = non-compliant, 2 = error.
+
+The underlying script is at
+[`hack/deploy-run-once-scan.sh`](../hack/deploy-run-once-scan.sh) if you
+need to adapt it for your own pipeline.
+
+If you prefer to build and run the binary locally instead of deploying a
+Job, use `make run-once`.
+
+Customize either target with the same Make variables:
+
+```bash
+# Scan only specific namespaces
+make run-once SCAN_NAMESPACES=my-app,my-other-app
+
+# JSON output to a custom path
+make deploy-run-once-scan SCAN_FORMAT=json SCAN_FILE=report.json
+
+# Deploy-scan with a specific image and namespace filter
+make deploy-run-once-scan IMG=quay.io/bapalm/tls-compliance-operator:v1.1.4 \
+  SCAN_NAMESPACES=my-app SCAN_FORMAT=json SCAN_FILE=report.json
+```
+
+| Variable | Default | Options |
+|----------|---------|---------|
+| `SCAN_FORMAT` | `junit` | `csv`, `json`, `yaml`, `junit`, `markdown` |
+| `SCAN_FILE` | `results.xml` | Any file path |
+| `SCAN_NAMESPACES` | *(all)* | Comma-separated namespace list |
+| `IMG` | `quay.io/bapalm/tls-compliance-operator:latest` | Any container image (`deploy-run-once-scan` only) |
+| `SCAN_NAMESPACE` | `tls-compliance-scan` | Namespace for the scan Job (`deploy-run-once-scan` only) |
+
+Infrastructure statuses like Timeout and Unreachable do not trigger exit
+code 1, preventing transient network issues from failing your CI pipeline.
+
+#### Sample JSON Output
+
+Running with `SCAN_FORMAT=json` produces an array of report objects:
+
+```json
+[
+  {
+    "host": "console.openshift-console.svc",
+    "port": "443",
+    "source": "Service",
+    "namespace": "openshift-console",
+    "name": "console",
+    "compliance": "Compliant",
+    "grade": "A",
+    "forwardSecrecy": true,
+    "keyExchangeTypes": {
+      "TLS 1.2": "ECDHE",
+      "TLS 1.3": "X25519MLKEM768"
+    },
+    "tls13": true,
+    "tls12": true,
+    "tls11": false,
+    "tls10": false,
+    "ssl30": false,
+    "quantumReady": true,
+    "pqcReadiness": "PQCReady",
+    "mlkemSupported": true,
+    "certExpiry": "2027-01-15",
+    "certIssuer": "kube-apiserver-service-network-signer",
+    "publicKeyAlgorithm": "ECDSA",
+    "publicKeyBits": 256,
+    "signatureAlgorithm": "ECDSAWithSHA256",
+    "chainLength": 2,
+    "alpnProtocols": {
+      "TLS 1.2": "h2",
+      "TLS 1.3": "h2"
+    },
+    "scanDuration": "1.234s"
+  },
+  {
+    "host": "downloads.openshift-console.svc",
+    "port": "8080",
+    "source": "Service",
+    "namespace": "openshift-console",
+    "name": "downloads",
+    "compliance": "NoTLS",
+    "grade": "",
+    "forwardSecrecy": false,
+    "tls13": false,
+    "tls12": false,
+    "tls11": false,
+    "tls10": false,
+    "ssl30": false,
+    "quantumReady": false,
+    "pqcReadiness": "NoPQC",
+    "mlkemSupported": false,
+    "certExpiry": "",
+    "certIssuer": "",
+    "scanDuration": "0.052s"
+  }
+]
+```
+
+Key fields for ML-KEM/PQC validation:
+- **`pqcReadiness`** — `PQCReady`, `TLS13Capable`, `LegacyTLS`, or `NoPQC`
+- **`mlkemSupported`** — `true` if active ML-KEM probing confirmed hybrid key exchange
+- **`quantumReady`** — `true` if passive detection found a post-quantum curve
+- **`keyExchangeTypes`** — per-TLS-version negotiated key exchange (e.g., `X25519MLKEM768`)
 
 ## kubectl tlsreport Gating
 

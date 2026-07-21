@@ -127,6 +127,25 @@ build-plugin: fmt vet ## Build kubectl-tlsreport plugin binary.
 run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./cmd/main.go
 
+SCAN_FORMAT ?= junit
+SCAN_FILE ?= results.xml
+SCAN_NAMESPACES ?=
+SCAN_NAMESPACE ?= tls-compliance-scan ## deploy-run-once-scan only
+
+.PHONY: run-once
+run-once: install build ## Install CRDs and run a single compliance scan, then exit.
+	@echo "Running one-shot TLS compliance scan..."
+	bin/manager --run-once \
+		--output-format=$(SCAN_FORMAT) \
+		--output-file=$(SCAN_FILE) \
+		$(if $(SCAN_NAMESPACES),--include-namespaces=$(SCAN_NAMESPACES))
+	@echo "Results written to $(SCAN_FILE)"
+
+.PHONY: deploy-run-once-scan
+deploy-run-once-scan: install ## Deploy a run-once scan Job to the current cluster, collect results, and clean up.
+	@SCAN_FORMAT=$(SCAN_FORMAT) SCAN_FILE=$(SCAN_FILE) SCAN_NAMESPACES=$(SCAN_NAMESPACES) \
+		SCAN_NAMESPACE=$(SCAN_NAMESPACE) hack/deploy-run-once-scan.sh
+
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build -t ${IMG} .
