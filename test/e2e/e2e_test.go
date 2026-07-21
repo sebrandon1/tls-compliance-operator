@@ -925,19 +925,59 @@ spec:
 		})
 	})
 
-	Context("Run-Once Mode", Label("run-once"), func() {
-		const runOncePluginBinary = "/tmp/kubectl-tlsreport-runonce"
+	Context("Run-Once Mode", Label("run-once"), Ordered, func() {
+		var managerBin string
 
 		BeforeAll(func() {
-			By("building the kubectl-tlsreport plugin for run-once tests")
-			cmd := exec.Command("go", "build", "-o", runOncePluginBinary, "./cmd/kubectl-tlsreport/")
+			By("building the manager binary and installing CRDs once")
+			cmd := exec.Command("make", "install", "build")
 			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to build kubectl-tlsreport plugin")
+			Expect(err).NotTo(HaveOccurred(), "make install build failed")
+			managerBin = filepath.Join(projectRoot(), "bin", "manager")
+		})
+
+		runOnceAndReadOutput := func(filename, format string, extraArgs ...string) []byte {
+			outputFile := filepath.Join(os.TempDir(), filename)
+			DeferCleanup(os.Remove, outputFile)
+			args := append([]string{
+				"--run-once",
+				"--output-format=" + format,
+				"--output-file=" + outputFile,
+			}, extraArgs...)
+			cmd := exec.Command(managerBin, args...)
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "run-once failed: %s", output)
+			data, err := os.ReadFile(outputFile)
+			Expect(err).NotTo(HaveOccurred(), "failed to read results file")
+			return data
+		}
+
+		It("should scan and produce JUnit output", func() {
+			data := runOnceAndReadOutput("e2e-run-once-results.xml", "junit")
+			Expect(string(data)).To(ContainSubstring("<testsuites"), "expected JUnit XML output")
+		})
+
+		It("should produce JSON output", func() {
+			data := runOnceAndReadOutput("e2e-run-once-results.json", "json")
+			Expect(string(data)).To(HavePrefix("["), "expected JSON array output")
+		})
+
+		It("should support namespace filtering", func() {
+			data := runOnceAndReadOutput("e2e-run-once-ns-results.xml", "junit",
+				"--include-namespaces=default")
+			Expect(string(data)).To(ContainSubstring("<testsuites"), "expected JUnit XML output")
 		})
 
 		It("kubectl tlsreport --fail-on-non-compliant should exit 0 when all compliant", func() {
-			cmd := exec.Command(runOncePluginBinary, "summary", "--fail-on-non-compliant")
+			pluginBinary := filepath.Join(os.TempDir(), "kubectl-tlsreport-runonce")
+			DeferCleanup(os.Remove, pluginBinary)
+
+			cmd := exec.Command("go", "build", "-o", pluginBinary, "./cmd/kubectl-tlsreport/")
 			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to build kubectl-tlsreport plugin")
+
+			cmd = exec.Command(pluginBinary, "summary", "--fail-on-non-compliant")
+			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "summary --fail-on-non-compliant should exit 0 when all endpoints are compliant")
 		})
 	})
