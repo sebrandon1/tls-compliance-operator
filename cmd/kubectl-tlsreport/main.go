@@ -103,6 +103,7 @@ Use --kubeconfig and --context to target a specific cluster.`,
 	rootCmd.PersistentFlags().BoolVar(&filterOpts.Expired, "expired", false, "Show only expired certificates")
 	rootCmd.PersistentFlags().StringVar(&filterOpts.Issuer, "cert-issuer", "", "Filter by certificate issuer (substring match)")
 	rootCmd.PersistentFlags().StringVar(&filterOpts.Subject, "cert-subject", "", "Filter by certificate subject (substring match)")
+	rootCmd.PersistentFlags().StringVar(&filterOpts.TLSVersion, "tls-version", "", "Filter by TLS version support (1.0, 1.1, 1.2, 1.3, ssl3.0)")
 	rootCmd.PersistentFlags().StringVar(&sortBy, "sort-by", "", "Sort results by field (host, port, compliance, expiry, grade, pqc)")
 	rootCmd.PersistentFlags().StringVar(&kubeconfig, "kubeconfig", "", "Path to the kubeconfig file to use")
 	rootCmd.PersistentFlags().StringVar(&kubecontext, "context", "", "The kubeconfig context to use")
