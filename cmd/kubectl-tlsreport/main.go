@@ -21,11 +21,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -119,6 +121,7 @@ Use --kubeconfig and --context to target a specific cluster.`,
 	rootCmd.AddCommand(getCmd)
 	rootCmd.AddCommand(newDescribeCmd())
 	rootCmd.AddCommand(newRescanCmd())
+	rootCmd.AddCommand(newTargetCmd())
 	rootCmd.AddCommand(newVersionCmd())
 	rootCmd.AddCommand(newCompletionCmd())
 
@@ -626,6 +629,168 @@ func registerFlagCompletions(rootCmd, getCmd *cobra.Command) {
 	_ = getCmd.RegisterFlagCompletionFunc("output", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
 		return []string{"table", "wide", "json", "yaml"}, cobra.ShellCompDirectiveNoFileComp
 	})
+}
+
+func newTargetCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "target",
+		Short: "Manage TLSComplianceTarget resources",
+	}
+	cmd.AddCommand(newTargetListCmd())
+	cmd.AddCommand(newTargetCreateCmd())
+	cmd.AddCommand(newTargetDeleteCmd())
+	return cmd
+}
+
+func newTargetListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List all TLSComplianceTargets",
+		RunE:  runTargetList,
+	}
+}
+
+func newTargetCreateCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "create <host> <port>",
+		Short: "Create a TLSComplianceTarget for the given host and port",
+		Args:  cobra.ExactArgs(2),
+		RunE:  runTargetCreate,
+	}
+}
+
+func newTargetDeleteCmd() *cobra.Command {
+	var deleteAll bool
+	cmd := &cobra.Command{
+		Use:   "delete <name>",
+		Short: "Delete a TLSComplianceTarget by name",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runTargetDelete(args, deleteAll)
+		},
+	}
+	cmd.Flags().BoolVar(&deleteAll, "all", false, "Delete all TLSComplianceTargets")
+	return cmd
+}
+
+func runTargetList(_ *cobra.Command, _ []string) error {
+	targets, err := fetchTargets()
+	if err != nil {
+		return err
+	}
+	if len(targets) == 0 {
+		fmt.Fprintln(os.Stderr, "No targets found.")
+		return nil
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "NAME\tHOST\tPORT\tSTATUS\tREPORT\tLAST SCANNED\tAGE")
+	for _, t := range targets {
+		lastScanned := "-"
+		if t.Status.LastScannedAt != nil {
+			lastScanned = t.Status.LastScannedAt.Format("2006-01-02T15:04:05Z")
+		}
+		report := t.Status.ReportName
+		if report == "" {
+			report = "-"
+		}
+		age := formatAge(time.Since(t.CreationTimestamp.Time))
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\n",
+			t.Name, t.Spec.Host, t.Spec.Port,
+			string(t.Status.ComplianceStatus),
+			report, lastScanned, age)
+	}
+	return w.Flush()
+}
+
+func runTargetCreate(_ *cobra.Command, args []string) error {
+	host := args[0]
+	port, err := strconv.Atoi(args[1])
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("invalid port %q: must be 1-65535", args[1])
+	}
+
+	c, err := buildClient()
+	if err != nil {
+		return err
+	}
+
+	sanitized := strings.ToLower(host)
+	sanitized = strings.NewReplacer(".", "-", ":", "-").Replace(sanitized)
+	name := fmt.Sprintf("%s-%d", sanitized, port)
+
+	target := &securityv1alpha1.TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: securityv1alpha1.TLSComplianceTargetSpec{
+			Host: host,
+			Port: int32(port),
+		},
+	}
+
+	if err := c.Create(context.Background(), target); err != nil {
+		return fmt.Errorf("creating target: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "tlscompliancetarget/%s created\n", name)
+	return nil
+}
+
+func runTargetDelete(args []string, deleteAll bool) error {
+	if !deleteAll && len(args) == 0 {
+		return fmt.Errorf("target name required (or use --all)")
+	}
+
+	c, err := buildClient()
+	if err != nil {
+		return err
+	}
+
+	if deleteAll {
+		targets, err := fetchTargets()
+		if err != nil {
+			return err
+		}
+		for i := range targets {
+			if err := c.Delete(context.Background(), &targets[i]); err != nil {
+				return fmt.Errorf("deleting target %s: %w", targets[i].Name, err)
+			}
+			fmt.Fprintf(os.Stderr, "tlscompliancetarget/%s deleted\n", targets[i].Name)
+		}
+		return nil
+	}
+
+	target := &securityv1alpha1.TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: args[0]},
+	}
+	if err := c.Delete(context.Background(), target); err != nil {
+		return fmt.Errorf("deleting target %q: %w", args[0], err)
+	}
+	fmt.Fprintf(os.Stderr, "tlscompliancetarget/%s deleted\n", args[0])
+	return nil
+}
+
+func fetchTargets() ([]securityv1alpha1.TLSComplianceTarget, error) {
+	c, err := buildClient()
+	if err != nil {
+		return nil, err
+	}
+	var targetList securityv1alpha1.TLSComplianceTargetList
+	if err := c.List(context.Background(), &targetList); err != nil {
+		return nil, fmt.Errorf("listing TLSComplianceTargets: %w", err)
+	}
+	return targetList.Items, nil
+}
+
+func formatAge(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	}
 }
 
 func boolDash(b bool) string {
