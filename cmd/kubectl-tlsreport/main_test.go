@@ -293,3 +293,44 @@ func TestExitCodeError_ErrorString(t *testing.T) {
 		t.Errorf("unexpected error string: %s", e.Error())
 	}
 }
+
+func TestNewRescanCmd_Structure(t *testing.T) {
+	cmd := newRescanCmd()
+	if cmd.Use != "rescan <name>" {
+		t.Errorf("unexpected Use: %s", cmd.Use)
+	}
+	if cmd.RunE == nil {
+		t.Error("expected RunE to be set")
+	}
+	waitFlag := cmd.Flags().Lookup("wait")
+	if waitFlag == nil {
+		t.Error("expected --wait flag")
+	}
+	timeoutFlag := cmd.Flags().Lookup("timeout")
+	if timeoutFlag == nil {
+		t.Error("expected --timeout flag")
+	}
+}
+
+func TestNewRootCmd_HasRescanSubcommand(t *testing.T) {
+	cmd := newRootCmd()
+	found := false
+	for _, sub := range cmd.Commands() {
+		if sub.Name() == "rescan" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected rescan subcommand")
+	}
+}
+
+func TestBuildClient_NoKubeconfig(t *testing.T) {
+	kubeconfig = "/nonexistent/path"
+	defer func() { kubeconfig = "" }()
+	_, err := buildClient()
+	if err == nil {
+		t.Fatal("expected error with nonexistent kubeconfig")
+	}
+}

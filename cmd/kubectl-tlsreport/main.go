@@ -23,6 +23,7 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/labels"
@@ -113,6 +114,7 @@ Use --kubeconfig and --context to target a specific cluster.`,
 	rootCmd.AddCommand(newSummaryCmd())
 	rootCmd.AddCommand(newGetCmd())
 	rootCmd.AddCommand(newDescribeCmd())
+	rootCmd.AddCommand(newRescanCmd())
 	rootCmd.AddCommand(newVersionCmd())
 
 	return rootCmd
@@ -512,6 +514,73 @@ func printProfileCompliance(w *os.File, name string, result *securityv1alpha1.TL
 	}
 }
 
+func newRescanCmd() *cobra.Command {
+	var waitFlag bool
+	var timeout time.Duration
+
+	cmd := &cobra.Command{
+		Use:   "rescan <name>",
+		Short: "Trigger an immediate rescan of a TLS compliance report",
+		Example: `  # Rescan a specific report
+  kubectl tlsreport rescan my-service-443-abc12345
+
+  # Rescan and wait for completion
+  kubectl tlsreport rescan my-service-443-abc12345 --wait`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runRescan(args[0], waitFlag, timeout)
+		},
+	}
+	cmd.Flags().BoolVar(&waitFlag, "wait", false, "Wait for the rescan to complete")
+	cmd.Flags().DurationVar(&timeout, "timeout", 60*time.Second, "Timeout when waiting for rescan completion")
+	return cmd
+}
+
+func runRescan(name string, wait bool, timeout time.Duration) error {
+	c, err := buildClient()
+	if err != nil {
+		return err
+	}
+
+	var report securityv1alpha1.TLSComplianceReport
+	if err := c.Get(context.Background(), client.ObjectKey{Name: name}, &report); err != nil {
+		return fmt.Errorf("report %q not found: %w", name, err)
+	}
+
+	if report.Annotations == nil {
+		report.Annotations = make(map[string]string)
+	}
+	report.Annotations[rescanAnnotation] = time.Now().UTC().Format(time.RFC3339)
+	if err := c.Update(context.Background(), &report); err != nil {
+		return fmt.Errorf("triggering rescan: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Rescan triggered for %s\n", name)
+
+	if !wait {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for rescan to complete")
+		case <-time.After(2 * time.Second):
+			var updated securityv1alpha1.TLSComplianceReport
+			if err := c.Get(ctx, client.ObjectKey{Name: name}, &updated); err != nil {
+				return fmt.Errorf("checking rescan status: %w", err)
+			}
+			if _, hasAnnotation := updated.Annotations[rescanAnnotation]; !hasAnnotation {
+				fmt.Fprintf(os.Stderr, "Rescan complete for %s (status: %s)\n", name, updated.Status.ComplianceStatus)
+				return nil
+			}
+		}
+	}
+}
+
 func boolDash(b bool) string {
 	if b {
 		return "true"
@@ -519,7 +588,9 @@ func boolDash(b bool) string {
 	return "-"
 }
 
-func fetchReports() ([]securityv1alpha1.TLSComplianceReport, error) {
+const rescanAnnotation = "tls-compliance.telco.openshift.io/rescan"
+
+func buildClient() (client.Client, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if kubeconfig != "" {
 		loadingRules.ExplicitPath = kubeconfig
@@ -538,6 +609,14 @@ func fetchReports() ([]securityv1alpha1.TLSComplianceReport, error) {
 	c, err := client.New(restConfig, client.Options{Scheme: scheme})
 	if err != nil {
 		return nil, fmt.Errorf("creating client: %w", err)
+	}
+	return c, nil
+}
+
+func fetchReports() ([]securityv1alpha1.TLSComplianceReport, error) {
+	c, err := buildClient()
+	if err != nil {
+		return nil, err
 	}
 
 	listOpts := []client.ListOption{}
