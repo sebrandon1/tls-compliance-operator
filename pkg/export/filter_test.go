@@ -440,3 +440,64 @@ func TestParseExpiresWithin(t *testing.T) {
 		}
 	}
 }
+
+func TestFilterReports_ByGrade(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "a.test"}, Status: securityv1alpha1.TLSComplianceReportStatus{OverallCipherGrade: "A"}},
+		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "b.test"}, Status: securityv1alpha1.TLSComplianceReportStatus{OverallCipherGrade: "B"}},
+		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "c.test"}, Status: securityv1alpha1.TLSComplianceReportStatus{OverallCipherGrade: "C"}},
+		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "d.test"}, Status: securityv1alpha1.TLSComplianceReportStatus{OverallCipherGrade: "D"}},
+		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "f.test"}, Status: securityv1alpha1.TLSComplianceReportStatus{OverallCipherGrade: "F"}},
+		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "empty.test"}, Status: securityv1alpha1.TLSComplianceReportStatus{OverallCipherGrade: ""}},
+	}
+
+	tests := []struct {
+		name      string
+		grade     string
+		minGrade  string
+		wantCount int
+	}{
+		{"exact A", "A", "", 1},
+		{"exact a (case)", "a", "", 1},
+		{"min-grade B", "", "B", 2},
+		{"min-grade A", "", "A", 1},
+		{"min-grade F", "", "F", 5},
+		{"empty grade excluded by min-grade", "", "A", 1},
+		{"both grade and min-grade", "B", "C", 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := FilterReports(reports, FilterOptions{Grade: tt.grade, MinGrade: tt.minGrade})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != tt.wantCount {
+				t.Errorf("expected %d reports, got %d", tt.wantCount, len(got))
+			}
+		})
+	}
+}
+
+func TestMeetsMinGrade(t *testing.T) {
+	tests := []struct {
+		actual   string
+		min      string
+		expected bool
+	}{
+		{"A", "B", true},
+		{"B", "B", true},
+		{"C", "B", false},
+		{"F", "A", false},
+		{"A", "F", true},
+		{"", "A", false},
+		{"A", "", false},
+		{"X", "A", false},
+	}
+	for _, tt := range tests {
+		got := meetsMinGrade(tt.actual, tt.min)
+		if got != tt.expected {
+			t.Errorf("meetsMinGrade(%q, %q) = %v, want %v", tt.actual, tt.min, got, tt.expected)
+		}
+	}
+}
