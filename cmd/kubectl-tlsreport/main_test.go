@@ -22,6 +22,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 )
@@ -291,5 +292,88 @@ func TestExitCodeError_ErrorString(t *testing.T) {
 	e := exitCodeError{code: 1}
 	if e.Error() != "exit code 1" {
 		t.Errorf("unexpected error string: %s", e.Error())
+	}
+}
+
+func TestNewTargetCmd_Structure(t *testing.T) {
+	cmd := newTargetCmd()
+	if cmd.Use != "target" {
+		t.Errorf("unexpected Use: %s", cmd.Use)
+	}
+	subs := map[string]bool{"list": false, "create": false, "delete": false}
+	for _, sub := range cmd.Commands() {
+		if _, ok := subs[sub.Name()]; ok {
+			subs[sub.Name()] = true
+		}
+	}
+	for name, found := range subs {
+		if !found {
+			t.Errorf("expected %q subcommand", name)
+		}
+	}
+}
+
+func TestNewTargetCreateCmd_InvalidPort(t *testing.T) {
+	tests := []struct {
+		name string
+		port string
+	}{
+		{"zero", "0"},
+		{"negative", "-1"},
+		{"too large", "99999"},
+		{"non-numeric", "abc"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := runTargetCreate(nil, []string{"example.com", tt.port})
+			if err == nil {
+				t.Error("expected error for invalid port")
+			}
+			if !strings.Contains(err.Error(), "invalid port") {
+				t.Errorf("expected 'invalid port' error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestTargetDeleteCmd_RequiresNameOrAll(t *testing.T) {
+	err := runTargetDelete(nil, false)
+	if err == nil {
+		t.Fatal("expected error when no name and no --all")
+	}
+	if !strings.Contains(err.Error(), "target name required") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestFormatAge(t *testing.T) {
+	tests := []struct {
+		d    time.Duration
+		want string
+	}{
+		{30 * time.Second, "30s"},
+		{5 * time.Minute, "5m"},
+		{3 * time.Hour, "3h"},
+		{48 * time.Hour, "2d"},
+	}
+	for _, tt := range tests {
+		got := formatAge(tt.d)
+		if got != tt.want {
+			t.Errorf("formatAge(%v) = %q, want %q", tt.d, got, tt.want)
+		}
+	}
+}
+
+func TestNewRootCmd_HasTargetSubcommand(t *testing.T) {
+	cmd := newRootCmd()
+	found := false
+	for _, sub := range cmd.Commands() {
+		if sub.Name() == "target" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected target subcommand")
 	}
 }
