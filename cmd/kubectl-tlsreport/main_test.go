@@ -446,3 +446,31 @@ func TestFlagCompletionRegistered(t *testing.T) {
 		t.Fatal("expected get subcommand")
 	}
 }
+
+func TestPrintReportTableWide_IncludesNamespace(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:            "example.com",
+				Port:            443,
+				SourceKind:      securityv1alpha1.SourceKindService,
+				SourceNamespace: "production",
+				SourceName:      "web",
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+			},
+		},
+	}
+	output := captureStdout(t, func() {
+		if err := printReportTableWide(reports); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	if !strings.Contains(output, "NAMESPACE") {
+		t.Error("expected NAMESPACE header in wide output")
+	}
+	if !strings.Contains(output, "production") {
+		t.Error("expected namespace value 'production' in wide output")
+	}
+}
