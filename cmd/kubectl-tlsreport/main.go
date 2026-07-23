@@ -325,7 +325,7 @@ func printReportTableWide(reports []securityv1alpha1.TLSComplianceReport) error 
 		return printNoResourcesFound()
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "NAME\tHOST\tPORT\tSOURCE\tSTATUS\tTLS 1.2\tTLS 1.3\tPQC\tMLKEM\tGRADE\tISSUER\tEXPIRY")
+	_, _ = fmt.Fprintln(w, "NAME\tHOST\tPORT\tSOURCE\tNAMESPACE\tSTATUS\tTLS 1.2\tTLS 1.3\tPQC\tMLKEM\tGRADE\tISSUER\tEXPIRY")
 	for _, r := range reports {
 		issuer := "-"
 		expiry := "-"
@@ -338,11 +338,12 @@ func printReportTableWide(reports []securityv1alpha1.TLSComplianceReport) error 
 			}
 		}
 
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			r.Name,
 			r.Spec.Host,
 			r.Spec.Port,
 			string(r.Spec.SourceKind),
+			r.Spec.SourceNamespace,
 			string(r.Status.ComplianceStatus),
 			boolDash(r.Status.TLSVersions.TLS12),
 			boolDash(r.Status.TLSVersions.TLS13),
