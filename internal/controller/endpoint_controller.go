@@ -40,10 +40,12 @@ import (
 	"golang.org/x/time/rate"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
@@ -76,6 +78,7 @@ const (
 	EventReasonRetryExhausted      = "RetryExhausted"
 	EventReasonPQCReady            = "PQCReady"
 	EventReasonPQCNotReady         = "PQCNotReady"
+	RescanAnnotation               = "tls-compliance.telco.openshift.io/rescan"
 )
 
 // EndpointReconciler reconciles Service, Ingress, and Route resources
@@ -186,6 +189,13 @@ func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return r.handleTarget(ctx, &target)
 	}
 
+	var report securityv1alpha1.TLSComplianceReport
+	if err := r.Get(ctx, client.ObjectKey{Name: req.Name}, &report); err == nil {
+		if _, hasRescan := report.Annotations[RescanAnnotation]; hasRescan {
+			return r.handleRescan(ctx, &report)
+		}
+	}
+
 	return ctrl.Result{}, nil
 }
 
@@ -290,6 +300,20 @@ func (r *EndpointReconciler) handleTarget(ctx context.Context, target *securityv
 	}
 
 	metrics.RecordReconcile("success")
+	return ctrl.Result{}, nil
+}
+
+func (r *EndpointReconciler) handleRescan(ctx context.Context, report *securityv1alpha1.TLSComplianceReport) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+	logger.Info("rescan requested", "report", report.Name)
+
+	if err := r.updateWithRetry(ctx, report.Name, func(cr *securityv1alpha1.TLSComplianceReport) {
+		delete(cr.Annotations, RescanAnnotation)
+	}); err != nil {
+		return ctrl.Result{}, fmt.Errorf("removing rescan annotation: %w", err)
+	}
+
+	r.performTLSCheck(ctx, report.Name, report.Spec.Host, int(report.Spec.Port), report.Spec.SourceNamespace)
 	return ctrl.Result{}, nil
 }
 
@@ -967,7 +991,10 @@ func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		WithOptions(controller.Options{MaxConcurrentReconciles: r.Workers}).
 		Watches(&networkingv1.Ingress{}, handler.EnqueueRequestsFromMapFunc(enqueueObject)).
 		Watches(&discoveryv1.EndpointSlice{}, handler.EnqueueRequestsFromMapFunc(enqueueOwnerService)).
-		Watches(&securityv1alpha1.TLSComplianceTarget{}, handler.EnqueueRequestsFromMapFunc(enqueueObject))
+		Watches(&securityv1alpha1.TLSComplianceTarget{}, handler.EnqueueRequestsFromMapFunc(enqueueObject)).
+		Watches(&securityv1alpha1.TLSComplianceReport{},
+			handler.EnqueueRequestsFromMapFunc(enqueueObject),
+			builder.WithPredicates(predicate.AnnotationChangedPredicate{}))
 
 	if r.RouteAPIAvailable {
 		routeObj := &unstructured.Unstructured{}
