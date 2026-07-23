@@ -293,3 +293,54 @@ func TestExitCodeError_ErrorString(t *testing.T) {
 		t.Errorf("unexpected error string: %s", e.Error())
 	}
 }
+
+func TestPrintReportTable_ColumnAlignment(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:       "example.com",
+				Port:       443,
+				SourceKind: securityv1alpha1.SourceKindService,
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				ForwardSecrecy:   true,
+			},
+		},
+	}
+	output := captureStdout(t, func() {
+		_ = printReportTable(reports)
+	})
+	for _, col := range []string{"COMPLIANCE", "GRADE", "FS", "TLS 1.3", "TLS 1.2", "PQC", "MLKEM"} {
+		if !strings.Contains(output, col) {
+			t.Errorf("expected column %q in table header", col)
+		}
+	}
+	if strings.Contains(output, "STATUS") {
+		t.Error("STATUS should be renamed to COMPLIANCE")
+	}
+}
+
+func TestPrintReportTableWide_ColumnAlignment(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:            "example.com",
+				Port:            443,
+				SourceKind:      securityv1alpha1.SourceKindService,
+				SourceNamespace: "default",
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+			},
+		},
+	}
+	output := captureStdout(t, func() {
+		_ = printReportTableWide(reports)
+	})
+	for _, col := range []string{"NAMESPACE", "COMPLIANCE", "FS", "TLS 1.0", "SSL 3.0", "CERT EXPIRY"} {
+		if !strings.Contains(output, col) {
+			t.Errorf("expected column %q in wide header", col)
+		}
+	}
+}
