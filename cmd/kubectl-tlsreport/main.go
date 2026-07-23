@@ -112,9 +112,13 @@ Use --kubeconfig and --context to target a specific cluster.`,
 		"Exit with code 1 if any non-compliant endpoints are found (NonCompliant, NoTLS, PlaintextHTTP)")
 
 	rootCmd.AddCommand(newSummaryCmd())
-	rootCmd.AddCommand(newGetCmd())
+	getCmd := newGetCmd()
+	rootCmd.AddCommand(getCmd)
 	rootCmd.AddCommand(newDescribeCmd())
 	rootCmd.AddCommand(newVersionCmd())
+	rootCmd.AddCommand(newCompletionCmd())
+
+	registerFlagCompletions(rootCmd, getCmd)
 
 	return rootCmd
 }
@@ -530,6 +534,89 @@ func printNoResourcesFound() error {
 		fmt.Fprintln(os.Stderr, "No resources found.")
 	}
 	return nil
+}
+
+func newCompletionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "completion [bash|zsh|fish|powershell]",
+		Short: "Generate shell completion scripts",
+		Long: `Generate shell completion scripts for kubectl-tlsreport.
+
+To load completions:
+
+Bash:
+  source <(kubectl-tlsreport completion bash)
+
+Zsh:
+  source <(kubectl-tlsreport completion zsh)
+
+Fish:
+  kubectl-tlsreport completion fish | source
+
+PowerShell:
+  kubectl-tlsreport completion powershell | Out-String | Invoke-Expression`,
+		DisableFlagsInUseLine: true,
+		ValidArgs:             []string{"bash", "zsh", "fish", "powershell"},
+		Args:                  cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch args[0] {
+			case "bash":
+				return cmd.Root().GenBashCompletionV2(os.Stdout, true)
+			case "zsh":
+				return cmd.Root().GenZshCompletion(os.Stdout)
+			case "fish":
+				return cmd.Root().GenFishCompletion(os.Stdout, true)
+			case "powershell":
+				return cmd.Root().GenPowerShellCompletionWithDesc(os.Stdout)
+			}
+			return nil
+		},
+	}
+}
+
+func registerFlagCompletions(rootCmd, getCmd *cobra.Command) {
+	_ = rootCmd.RegisterFlagCompletionFunc("status", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		return []string{
+			string(securityv1alpha1.ComplianceStatusCompliant),
+			string(securityv1alpha1.ComplianceStatusNonCompliant),
+			string(securityv1alpha1.ComplianceStatusWarning),
+			string(securityv1alpha1.ComplianceStatusUnreachable),
+			string(securityv1alpha1.ComplianceStatusTimeout),
+			string(securityv1alpha1.ComplianceStatusClosed),
+			string(securityv1alpha1.ComplianceStatusFiltered),
+			string(securityv1alpha1.ComplianceStatusNoTLS),
+			string(securityv1alpha1.ComplianceStatusPlaintextHTTP),
+			string(securityv1alpha1.ComplianceStatusMutualTLSRequired),
+			string(securityv1alpha1.ComplianceStatusPending),
+			string(securityv1alpha1.ComplianceStatusUnknown),
+		}, cobra.ShellCompDirectiveNoFileComp
+	})
+	_ = rootCmd.RegisterFlagCompletionFunc("source", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		return []string{
+			string(securityv1alpha1.SourceKindService),
+			string(securityv1alpha1.SourceKindIngress),
+			string(securityv1alpha1.SourceKindRoute),
+			string(securityv1alpha1.SourceKindTarget),
+			string(securityv1alpha1.SourceKindPod),
+			string(securityv1alpha1.SourceKindHTTPRoute),
+			string(securityv1alpha1.SourceKindTLSRoute),
+			string(securityv1alpha1.SourceKindGateway),
+		}, cobra.ShellCompDirectiveNoFileComp
+	})
+	_ = rootCmd.RegisterFlagCompletionFunc("pqc-status", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		return []string{
+			string(securityv1alpha1.PQCReadinessPQCReady),
+			string(securityv1alpha1.PQCReadinessTLS13Capable),
+			string(securityv1alpha1.PQCReadinessLegacyTLS),
+			string(securityv1alpha1.PQCReadinessNoPQC),
+		}, cobra.ShellCompDirectiveNoFileComp
+	})
+	_ = rootCmd.RegisterFlagCompletionFunc("sort-by", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		return []string{"host", "port", "compliance", "expiry", "grade", "pqc"}, cobra.ShellCompDirectiveNoFileComp
+	})
+	_ = getCmd.RegisterFlagCompletionFunc("output", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		return []string{"table", "wide", "json", "yaml"}, cobra.ShellCompDirectiveNoFileComp
+	})
 }
 
 func boolDash(b bool) string {

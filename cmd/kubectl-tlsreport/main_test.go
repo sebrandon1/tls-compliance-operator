@@ -340,6 +340,40 @@ func TestPrintTable_Empty(t *testing.T) {
 	}
 }
 
+func TestNewRootCmd_HasCompletionSubcommand(t *testing.T) {
+	cmd := newRootCmd()
+	found := false
+	for _, sub := range cmd.Commands() {
+		if sub.Name() == "completion" {
+			found = true
+			if len(sub.ValidArgs) != 4 {
+				t.Errorf("expected 4 valid args, got %d", len(sub.ValidArgs))
+			}
+			break
+		}
+	}
+	if !found {
+		t.Error("expected completion subcommand")
+	}
+}
+
+func TestCompletionCmd_ValidShells(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
+		t.Run(shell, func(t *testing.T) {
+			cmd := newRootCmd()
+			cmd.SetArgs([]string{"completion", shell})
+			output := captureStdout(t, func() {
+				if err := cmd.Execute(); err != nil {
+					t.Fatalf("completion %s failed: %v", shell, err)
+				}
+			})
+			if len(output) == 0 {
+				t.Errorf("expected non-empty completion output for %s", shell)
+			}
+		})
+	}
+}
+
 func TestPrintTable_EmptyWithNamespace(t *testing.T) {
 	filterOpts.Namespace = "production"
 	defer func() { filterOpts.Namespace = "" }()
@@ -377,5 +411,38 @@ func TestPrintNoResourcesFound(t *testing.T) {
 				t.Errorf("expected %q, got %q", tt.expected, stderr)
 			}
 		})
+	}
+}
+
+func TestFlagCompletionRegistered(t *testing.T) {
+	cmd := newRootCmd()
+
+	for _, flag := range []string{"status", "source", "pqc-status", "sort-by"} {
+		fn, ok := cmd.GetFlagCompletionFunc(flag)
+		if !ok {
+			t.Errorf("flag %q: completion not registered", flag)
+			continue
+		}
+		if fn == nil {
+			t.Errorf("flag %q: completion func is nil", flag)
+		}
+	}
+
+	var found bool
+	for _, sub := range cmd.Commands() {
+		if sub.Name() == "get" {
+			fn, ok := sub.GetFlagCompletionFunc("output")
+			if !ok {
+				t.Fatal("output flag: completion not registered")
+			}
+			if fn == nil {
+				t.Fatal("output flag: completion func is nil")
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected get subcommand")
 	}
 }
