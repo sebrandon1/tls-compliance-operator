@@ -293,3 +293,89 @@ func TestExitCodeError_ErrorString(t *testing.T) {
 		t.Errorf("unexpected error string: %s", e.Error())
 	}
 }
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origStderr := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = origStderr }()
+
+	fn()
+	_ = w.Close()
+
+	data, _ := io.ReadAll(r)
+	return string(data)
+}
+
+func TestPrintTable_Empty(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		fn   func([]securityv1alpha1.TLSComplianceReport) error
+	}{
+		{"table", printReportTable},
+		{"wide", printReportTableWide},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			filterOpts.Namespace = ""
+			defer func() { filterOpts.Namespace = "" }()
+
+			stdout := captureStdout(t, func() {
+				stderr := captureStderr(t, func() {
+					if err := tt.fn(nil); err != nil {
+						t.Fatalf("unexpected error: %v", err)
+					}
+				})
+				if !strings.Contains(stderr, "No resources found.") {
+					t.Errorf("expected 'No resources found.' on stderr, got: %q", stderr)
+				}
+			})
+			if strings.Contains(stdout, "NAME") {
+				t.Error("expected no table header on stdout for empty results")
+			}
+		})
+	}
+}
+
+func TestPrintTable_EmptyWithNamespace(t *testing.T) {
+	filterOpts.Namespace = "production"
+	defer func() { filterOpts.Namespace = "" }()
+
+	captureStdout(t, func() {
+		stderr := captureStderr(t, func() {
+			if err := printReportTable(nil); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+		if !strings.Contains(stderr, `No resources found in namespace "production".`) {
+			t.Errorf("expected namespace-specific message on stderr, got: %q", stderr)
+		}
+	})
+}
+
+func TestPrintNoResourcesFound(t *testing.T) {
+	tests := []struct {
+		name      string
+		namespace string
+		expected  string
+	}{
+		{"no namespace", "", "No resources found.\n"},
+		{"with namespace", "kube-system", "No resources found in namespace \"kube-system\".\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filterOpts.Namespace = tt.namespace
+			defer func() { filterOpts.Namespace = "" }()
+
+			stderr := captureStderr(t, func() {
+				_ = printNoResourcesFound()
+			})
+			if stderr != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, stderr)
+			}
+		})
+	}
+}
