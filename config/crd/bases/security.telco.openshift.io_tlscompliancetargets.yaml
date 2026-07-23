@@ -26,6 +26,9 @@ spec:
     - jsonPath: .status.complianceStatus
       name: Status
       type: string
+    - jsonPath: .status.reportName
+      name: Report
+      type: string
     - jsonPath: .status.lastScannedAt
       name: Last Scanned
       type: date
