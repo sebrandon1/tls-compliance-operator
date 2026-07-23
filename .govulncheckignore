@@ -1,0 +1,10 @@
+# govulncheck ignore file — temporarily suppress accepted vulnerabilities
+# Only add entries when:
+#   1. The vuln is in a transitive dep we can't bump directly
+#   2. There's a tracking issue or comment explaining WHY
+#   3. Remove the entry as soon as the fix is available
+#
+# Format: one GO-YYYY-NNNN ID per line
+# Example:
+#   # GO-2026-5970 — waiting on controller-runtime to bump x/text
+#   GO-2026-5970
