@@ -43,13 +43,15 @@ type FilterOptions struct {
 	Issuer string
 	// Subject filters by certificate subject (case-insensitive substring match).
 	Subject string
+	// TLSVersion filters to reports supporting a specific TLS version (e.g. "1.3", "1.2", "1.0", "1.1", "ssl3.0").
+	TLSVersion string
 }
 
 // IsEmpty returns true if no filters are set.
 func (o FilterOptions) IsEmpty() bool {
 	return o.Namespace == "" && o.Status == "" && o.Source == "" &&
 		o.PQCStatus == "" && o.ExpiresWithin == "" && !o.Expired &&
-		o.Issuer == "" && o.Subject == ""
+		o.Issuer == "" && o.Subject == "" && o.TLSVersion == ""
 }
 
 // FilterReports returns the subset of reports matching all non-empty filter criteria.
@@ -135,6 +137,26 @@ func matchesFilter(r *securityv1alpha1.TLSComplianceReport, opts FilterOptions, 
 			return false
 		}
 	}
+	if opts.TLSVersion != "" && !matchesTLSVersion(r, opts.TLSVersion) {
+		return false
+	}
 
 	return true
+}
+
+func matchesTLSVersion(r *securityv1alpha1.TLSComplianceReport, version string) bool {
+	switch strings.ToLower(strings.TrimSpace(version)) {
+	case "1.3", "tls1.3":
+		return r.Status.TLSVersions.TLS13
+	case "1.2", "tls1.2":
+		return r.Status.TLSVersions.TLS12
+	case "1.1", "tls1.1":
+		return r.Status.TLSVersions.TLS11
+	case "1.0", "tls1.0":
+		return r.Status.TLSVersions.TLS10
+	case "ssl3.0", "ssl30", "3.0":
+		return r.Status.TLSVersions.SSL30
+	default:
+		return false
+	}
 }

@@ -440,3 +440,50 @@ func TestParseExpiresWithin(t *testing.T) {
 		}
 	}
 }
+
+func TestFilterReports_ByTLSVersion(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{Host: "modern.example.com", Port: 443},
+			Status: securityv1alpha1.TLSComplianceReportStatus{TLSVersions: securityv1alpha1.TLSVersionSupport{TLS12: true, TLS13: true}},
+		},
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{Host: "legacy.example.com", Port: 443},
+			Status: securityv1alpha1.TLSComplianceReportStatus{TLSVersions: securityv1alpha1.TLSVersionSupport{TLS10: true, TLS11: true, TLS12: true}},
+		},
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{Host: "ancient.example.com", Port: 443},
+			Status: securityv1alpha1.TLSComplianceReportStatus{TLSVersions: securityv1alpha1.TLSVersionSupport{SSL30: true, TLS10: true}},
+		},
+	}
+
+	tests := []struct {
+		name      string
+		version   string
+		wantCount int
+		wantHost  string
+	}{
+		{"TLS 1.3", "1.3", 1, "modern.example.com"},
+		{"TLS 1.2", "1.2", 2, ""},
+		{"TLS 1.0", "1.0", 2, ""},
+		{"TLS 1.1", "1.1", 1, "legacy.example.com"},
+		{"SSL 3.0", "ssl3.0", 1, "ancient.example.com"},
+		{"case insensitive", "TLS1.3", 1, "modern.example.com"},
+		{"unknown version", "2.0", 0, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := FilterReports(reports, FilterOptions{TLSVersion: tt.version})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != tt.wantCount {
+				t.Errorf("expected %d reports, got %d", tt.wantCount, len(got))
+			}
+			if tt.wantHost != "" && len(got) > 0 && got[0].Spec.Host != tt.wantHost {
+				t.Errorf("expected host %q, got %q", tt.wantHost, got[0].Spec.Host)
+			}
+		})
+	}
+}
