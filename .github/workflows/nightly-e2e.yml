@@ -121,7 +121,7 @@ jobs:
 
       - name: Create OpenShift cluster
         if: ${{ env.SKIP_OCP != 'true' }}
-        uses: palmsoftware/quick-ocp@v0.0.37
+        uses: palmsoftware/quick-ocp@v1.0.0
         with:
           ocpPullSecret: $OCP_PULL_SECRET
           bundleCache: true
