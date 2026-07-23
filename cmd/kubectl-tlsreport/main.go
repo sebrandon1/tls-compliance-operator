@@ -232,6 +232,10 @@ func runSummary(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
+	if len(reports) == 0 {
+		return printNoResourcesFound()
+	}
+
 	export.SortReports(reports, sortBy)
 
 	if err := export.WriteSummary(os.Stdout, reports); err != nil {
@@ -289,6 +293,9 @@ func outputReports(reports []securityv1alpha1.TLSComplianceReport) error {
 }
 
 func printReportTable(reports []securityv1alpha1.TLSComplianceReport) error {
+	if len(reports) == 0 {
+		return printNoResourcesFound()
+	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "NAME\tHOST\tPORT\tSOURCE\tSTATUS\tTLS 1.2\tTLS 1.3\tPQC\tMLKEM\tGRADE")
 	for _, r := range reports {
@@ -309,6 +316,9 @@ func printReportTable(reports []securityv1alpha1.TLSComplianceReport) error {
 }
 
 func printReportTableWide(reports []securityv1alpha1.TLSComplianceReport) error {
+	if len(reports) == 0 {
+		return printNoResourcesFound()
+	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "NAME\tHOST\tPORT\tSOURCE\tSTATUS\tTLS 1.2\tTLS 1.3\tPQC\tMLKEM\tGRADE\tISSUER\tEXPIRY")
 	for _, r := range reports {
@@ -510,6 +520,15 @@ func printProfileCompliance(w *os.File, name string, result *securityv1alpha1.TL
 	if len(result.DisallowedGroups) > 0 {
 		_, _ = fmt.Fprintf(w, "  Disallowed Groups: %v\n", result.DisallowedGroups)
 	}
+}
+
+func printNoResourcesFound() error {
+	if filterOpts.Namespace != "" {
+		fmt.Fprintf(os.Stderr, "No resources found in namespace %q.\n", filterOpts.Namespace)
+	} else {
+		fmt.Fprintln(os.Stderr, "No resources found.")
+	}
+	return nil
 }
 
 func boolDash(b bool) string {
