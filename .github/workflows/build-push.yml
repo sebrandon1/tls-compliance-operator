@@ -30,6 +30,50 @@ jobs:
       - name: Run tests
         run: make test
 
+  build-plugin:
+    name: Build Plugin Binaries
+    needs: test
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build plugin binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          OUTPUT="kubectl-tlsreport-${{ matrix.goos }}-${{ matrix.goarch }}"
+          go build -ldflags "-X main.version=${VERSION}" -o "${OUTPUT}" ./cmd/kubectl-tlsreport
+
+      - name: Upload binary to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BINARY="kubectl-tlsreport-${{ matrix.goos }}-${{ matrix.goarch }}"
+          gh release upload ${{ github.event.release.tag_name }} "${BINARY}" --clobber
+
   build-and-push:
     name: Build and Push Multi-Arch Image
     needs: test
@@ -159,6 +203,20 @@ jobs:
 
           \`\`\`bash
           kubectl delete -f https://github.com/${REPO}/releases/download/${TAG}/install.yaml
+          \`\`\`
+
+          ## kubectl Plugin
+
+          \`\`\`bash
+          # Linux (amd64)
+          curl -LO https://github.com/${REPO}/releases/download/${TAG}/kubectl-tlsreport-linux-amd64
+          chmod +x kubectl-tlsreport-linux-amd64
+          sudo mv kubectl-tlsreport-linux-amd64 /usr/local/bin/kubectl-tlsreport
+
+          # macOS (Apple Silicon)
+          curl -LO https://github.com/${REPO}/releases/download/${TAG}/kubectl-tlsreport-darwin-arm64
+          chmod +x kubectl-tlsreport-darwin-arm64
+          sudo mv kubectl-tlsreport-darwin-arm64 /usr/local/bin/kubectl-tlsreport
           \`\`\`
           SECTION
           INSTALL_SECTION=$(echo "$INSTALL_SECTION" | sed 's/^          //')
