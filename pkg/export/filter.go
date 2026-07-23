@@ -45,13 +45,22 @@ type FilterOptions struct {
 	Subject string
 	// TLSVersion filters to reports supporting a specific TLS version (e.g. "1.3", "1.2", "1.0", "1.1", "ssl3.0").
 	TLSVersion string
+	// Grade filters by exact cipher grade (case-insensitive: A, B, C, D, F).
+	Grade string
+	// MinGrade filters to reports with a grade at or above this threshold (e.g. "B" shows A and B).
+	MinGrade string
+}
+
+var gradeRank = map[string]int{
+	"A": 0, "B": 1, "C": 2, "D": 3, "F": 4,
 }
 
 // IsEmpty returns true if no filters are set.
 func (o FilterOptions) IsEmpty() bool {
 	return o.Namespace == "" && o.Status == "" && o.Source == "" &&
 		o.PQCStatus == "" && o.ExpiresWithin == "" && !o.Expired &&
-		o.Issuer == "" && o.Subject == "" && o.TLSVersion == ""
+		o.Issuer == "" && o.Subject == "" && o.TLSVersion == "" &&
+		o.Grade == "" && o.MinGrade == ""
 }
 
 // FilterReports returns the subset of reports matching all non-empty filter criteria.
@@ -140,8 +149,23 @@ func matchesFilter(r *securityv1alpha1.TLSComplianceReport, opts FilterOptions, 
 	if opts.TLSVersion != "" && !matchesTLSVersion(r, opts.TLSVersion) {
 		return false
 	}
+	if opts.Grade != "" && !strings.EqualFold(r.Status.OverallCipherGrade, opts.Grade) {
+		return false
+	}
+	if opts.MinGrade != "" && !meetsMinGrade(r.Status.OverallCipherGrade, opts.MinGrade) {
+		return false
+	}
 
 	return true
+}
+
+func meetsMinGrade(actual, minGrade string) bool {
+	actualRank, aOK := gradeRank[strings.ToUpper(actual)]
+	minRank, mOK := gradeRank[strings.ToUpper(minGrade)]
+	if !aOK || !mOK {
+		return false
+	}
+	return actualRank <= minRank
 }
 
 func matchesTLSVersion(r *securityv1alpha1.TLSComplianceReport, version string) bool {
