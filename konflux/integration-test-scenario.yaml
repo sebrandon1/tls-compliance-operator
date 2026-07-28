@@ -21,7 +21,6 @@ spec:
     params:
       - name: url
         value: https://github.com/sebrandon1/tls-compliance-operator.git
-      # TEMP: point at the feature branch for PR validation. Change back to main before merge.
       - name: revision
         value: main
       - name: pathInRepo
@@ -47,7 +46,6 @@ spec:
     params:
       - name: url
         value: https://github.com/sebrandon1/tls-compliance-operator.git
-      # TEMP: point at the feature branch for PR validation. Change back to main before merge.
       - name: revision
         value: main
       - name: pathInRepo
