@@ -1072,7 +1072,7 @@ func TestEndpointReconciler_ProcessEndpoint_Idempotent(t *testing.T) {
 	ep := endpoint.Endpoint{
 		Host:            "service.default",
 		Port:            443,
-		SourceKind:      "Service",
+		SourceKind:      securityv1alpha1.SourceKindService,
 		SourceNamespace: "default",
 		SourceName:      "service",
 	}

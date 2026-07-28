@@ -25,6 +25,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/intstr"
+
+	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 )
 
 func TestExtractFromService_HTTPSPort(t *testing.T) {
@@ -52,7 +54,7 @@ func TestExtractFromService_HTTPSPort(t *testing.T) {
 	if ep.Port != 443 {
 		t.Errorf("port = %d, want 443", ep.Port)
 	}
-	if ep.SourceKind != "Service" {
+	if ep.SourceKind != securityv1alpha1.SourceKindService {
 		t.Errorf("sourceKind = %q, want Service", ep.SourceKind)
 	}
 	if ep.SourceNamespace != "default" {
@@ -171,7 +173,7 @@ func TestExtractFromService_ExternalName(t *testing.T) {
 	if ep.Port != 443 {
 		t.Errorf("port = %d, want 443 (default for ExternalName without ports)", ep.Port)
 	}
-	if ep.SourceKind != "Service" {
+	if ep.SourceKind != securityv1alpha1.SourceKindService {
 		t.Errorf("sourceKind = %q, want Service", ep.SourceKind)
 	}
 	if ep.SourceName != "external-api" {
@@ -251,7 +253,7 @@ func TestExtractFromIngress(t *testing.T) {
 	if endpoints[0].Port != 443 {
 		t.Errorf("port = %d, want 443", endpoints[0].Port)
 	}
-	if endpoints[0].SourceKind != "Ingress" {
+	if endpoints[0].SourceKind != securityv1alpha1.SourceKindIngress {
 		t.Errorf("sourceKind = %q, want Ingress", endpoints[0].SourceKind)
 	}
 }
@@ -301,7 +303,7 @@ func TestExtractFromRoute(t *testing.T) {
 	if ep.Port != 443 {
 		t.Errorf("port = %d, want 443", ep.Port)
 	}
-	if ep.SourceKind != "Route" {
+	if ep.SourceKind != securityv1alpha1.SourceKindRoute {
 		t.Errorf("sourceKind = %q, want Route", ep.SourceKind)
 	}
 }
@@ -331,7 +333,7 @@ func TestGenerateCRName(t *testing.T) {
 	ep := Endpoint{
 		Host:            "my-service.default",
 		Port:            443,
-		SourceKind:      "Service",
+		SourceKind:      securityv1alpha1.SourceKindService,
 		SourceNamespace: "default",
 		SourceName:      "my-service",
 	}
@@ -364,14 +366,14 @@ func TestGenerateCRName_Uniqueness(t *testing.T) {
 	ep1 := Endpoint{
 		Host:            "service.default",
 		Port:            443,
-		SourceKind:      "Service",
+		SourceKind:      securityv1alpha1.SourceKindService,
 		SourceNamespace: "default",
 		SourceName:      "service-a",
 	}
 	ep2 := Endpoint{
 		Host:            "service.default",
 		Port:            443,
-		SourceKind:      "Service",
+		SourceKind:      securityv1alpha1.SourceKindService,
 		SourceNamespace: "default",
 		SourceName:      "service-b",
 	}
@@ -388,7 +390,7 @@ func TestGenerateCRName_LongHost(t *testing.T) {
 	ep := Endpoint{
 		Host:            "very-long-service-name-that-exceeds-normal-limits.very-long-namespace",
 		Port:            443,
-		SourceKind:      "Service",
+		SourceKind:      securityv1alpha1.SourceKindService,
 		SourceNamespace: "very-long-namespace",
 		SourceName:      "very-long-service-name-that-exceeds-normal-limits",
 	}
@@ -509,7 +511,7 @@ func TestExtractFromPod_Port443(t *testing.T) {
 	if ep.Port != 443 {
 		t.Errorf("port = %d, want 443", ep.Port)
 	}
-	if ep.SourceKind != "Pod" {
+	if ep.SourceKind != securityv1alpha1.SourceKindPod {
 		t.Errorf("sourceKind = %q, want Pod", ep.SourceKind)
 	}
 	if ep.SourceNamespace != "default" {
@@ -1029,7 +1031,7 @@ func TestGenerateCRName_IPv6(t *testing.T) {
 	ep := Endpoint{
 		Host:            "2001:db8::1",
 		Port:            443,
-		SourceKind:      "Pod",
+		SourceKind:      securityv1alpha1.SourceKindPod,
 		SourceNamespace: "default",
 		SourceName:      "my-pod",
 	}
@@ -1142,7 +1144,7 @@ func TestExtractFromHeadlessService(t *testing.T) {
 		if ep.Port != 443 {
 			t.Errorf("port = %d, want 443", ep.Port)
 		}
-		if ep.SourceKind != "Service" {
+		if ep.SourceKind != securityv1alpha1.SourceKindService {
 			t.Errorf("sourceKind = %s, want Service", ep.SourceKind)
 		}
 	}
@@ -1175,7 +1177,7 @@ func TestExtractFromHTTPRoute(t *testing.T) {
 	if len(eps) != 1 {
 		t.Fatalf("expected 1 endpoint, got %d", len(eps))
 	}
-	if eps[0].SourceKind != "HTTPRoute" {
+	if eps[0].SourceKind != securityv1alpha1.SourceKindHTTPRoute {
 		t.Errorf("sourceKind = %q, want HTTPRoute", eps[0].SourceKind)
 	}
 	if eps[0].Host != "app.example.com" {
@@ -1200,7 +1202,7 @@ func TestExtractFromHTTPRoute_MultipleHostnames(t *testing.T) {
 		t.Fatalf("expected 3 endpoints (one per hostname), got %d", len(eps))
 	}
 	for _, ep := range eps {
-		if ep.SourceKind != "HTTPRoute" || ep.SourceName != "multi" || ep.SourceNamespace != "production" {
+		if ep.SourceKind != securityv1alpha1.SourceKindHTTPRoute || ep.SourceName != "multi" || ep.SourceNamespace != "production" {
 			t.Errorf("unexpected source info: %+v", ep)
 		}
 	}
@@ -1228,7 +1230,7 @@ func TestExtractFromTLSRoute(t *testing.T) {
 	if len(eps) != 1 {
 		t.Fatalf("expected 1 endpoint, got %d", len(eps))
 	}
-	if eps[0].SourceKind != "TLSRoute" {
+	if eps[0].SourceKind != securityv1alpha1.SourceKindTLSRoute {
 		t.Errorf("sourceKind = %q, want TLSRoute", eps[0].SourceKind)
 	}
 	if eps[0].Host != "secure.example.com" {
@@ -1275,7 +1277,7 @@ func TestExtractFromGateway(t *testing.T) {
 	if eps[0].Port != 443 {
 		t.Errorf("port = %d, want 443", eps[0].Port)
 	}
-	if eps[0].SourceKind != "Gateway" {
+	if eps[0].SourceKind != securityv1alpha1.SourceKindGateway {
 		t.Errorf("sourceKind = %q, want Gateway", eps[0].SourceKind)
 	}
 }
