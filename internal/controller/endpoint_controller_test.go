@@ -25,6 +25,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -2541,7 +2542,7 @@ func TestHandleTarget_SetsOwnerReference(t *testing.T) {
 	ep := endpoint.Endpoint{
 		Host:            "example.com",
 		Port:            443,
-		SourceKind:      string(securityv1alpha1.SourceKindTarget),
+		SourceKind:      securityv1alpha1.SourceKindTarget,
 		SourceNamespace: "cluster-scoped",
 		SourceName:      "test-target",
 	}
@@ -2592,6 +2593,152 @@ func TestHandleTarget_SetsOwnerReference(t *testing.T) {
 	ref := updated.OwnerReferences[0]
 	if ref.UID != "target-uid-456" {
 		t.Errorf("expected owner UID 'target-uid-456', got %q", ref.UID)
+	}
+}
+
+func TestHandleEndpoints_ReturnsFirstProcessEndpointError(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = securityv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(ctx context.Context, client client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+				if _, ok := obj.(*securityv1alpha1.TLSComplianceReport); ok {
+					return fmt.Errorf("injected create error")
+				}
+				return client.Create(ctx, obj, opts...)
+			},
+		}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:     fakeClient,
+		Scheme:     scheme,
+		Workers:    1,
+		TLSChecker: &MockTLSChecker{},
+		Recorder:   record.NewFakeRecorder(10),
+	}
+
+	endpoints := []endpoint.Endpoint{
+		{Host: "svc.ns", Port: 443, SourceKind: securityv1alpha1.SourceKindService, SourceNamespace: "default", SourceName: "svc"},
+	}
+
+	_, err := r.handleEndpoints(context.Background(), endpoints, securityv1alpha1.SourceKindService)
+	if err == nil {
+		t.Fatal("expected error from handleEndpoints when processEndpoint fails")
+	}
+}
+
+func TestHandleEndpoints_SuccessReturnsNil(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = securityv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:  fakeClient,
+		Scheme:  scheme,
+		Workers: 1,
+		TLSChecker: &MockTLSChecker{
+			Result: &tlscheck.TLSCheckResult{SupportsTLS13: true},
+		},
+		Recorder: record.NewFakeRecorder(10),
+	}
+
+	endpoints := []endpoint.Endpoint{
+		{Host: "svc.ns", Port: 443, SourceKind: securityv1alpha1.SourceKindService, SourceNamespace: "default", SourceName: "svc"},
+	}
+
+	_, err := r.handleEndpoints(context.Background(), endpoints, securityv1alpha1.SourceKindService)
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+}
+
+func TestHandleHeadlessService_EndpointSliceListError(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = securityv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = discoveryv1.AddToScheme(scheme)
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "headless", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			ClusterIP: "None",
+			Ports:     []corev1.ServicePort{{Port: 443, Name: "https"}},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		WithObjects(svc).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, client client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if _, ok := list.(*discoveryv1.EndpointSliceList); ok {
+					return fmt.Errorf("injected list error")
+				}
+				return client.List(ctx, list, opts...)
+			},
+		}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:     fakeClient,
+		Scheme:     scheme,
+		Workers:    1,
+		TLSChecker: &MockTLSChecker{},
+		Recorder:   record.NewFakeRecorder(10),
+	}
+
+	_, err := r.handleHeadlessService(context.Background(), svc)
+	if err == nil {
+		t.Fatal("expected error when EndpointSlice list fails")
+	}
+}
+
+func TestHandleTarget_ProcessEndpointError(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = securityv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	target := &securityv1alpha1.TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "fail-target", UID: "uid-123"},
+		Spec:       securityv1alpha1.TLSComplianceTargetSpec{Host: "fail.example.com", Port: 443},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}, &securityv1alpha1.TLSComplianceTarget{}).
+		WithObjects(target).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(ctx context.Context, client client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+				if _, ok := obj.(*securityv1alpha1.TLSComplianceReport); ok {
+					return fmt.Errorf("injected create error")
+				}
+				return client.Create(ctx, obj, opts...)
+			},
+		}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:     fakeClient,
+		Scheme:     scheme,
+		Workers:    1,
+		TLSChecker: &MockTLSChecker{},
+		Recorder:   record.NewFakeRecorder(10),
+	}
+
+	_, err := r.handleTarget(context.Background(), target)
+	if err == nil {
+		t.Fatal("expected error from handleTarget when processEndpoint fails")
 	}
 }
 
