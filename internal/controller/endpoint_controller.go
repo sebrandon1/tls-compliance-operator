@@ -201,11 +201,18 @@ func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 func (r *EndpointReconciler) handleEndpoints(ctx context.Context, endpoints []endpoint.Endpoint, sourceKind string) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
+	var firstErr error
 	for _, ep := range endpoints {
 		if err := r.processEndpoint(ctx, ep); err != nil {
 			logger.Error(err, "failed to process endpoint", "host", ep.Host, "port", ep.Port)
 			metrics.RecordReconcileError(sourceKind, "process")
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
+	}
+	if firstErr != nil {
+		return ctrl.Result{}, firstErr
 	}
 	metrics.RecordReconcile("success")
 	return ctrl.Result{}, nil
@@ -232,7 +239,7 @@ func (r *EndpointReconciler) handleHeadlessService(ctx context.Context, svc *cor
 		client.MatchingLabels{"kubernetes.io/service-name": svc.Name},
 	); err != nil {
 		logger.Error(err, "failed to list EndpointSlices for headless service", "service", svc.Name)
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, err
 	}
 
 	var addresses []string
@@ -291,7 +298,7 @@ func (r *EndpointReconciler) handleTarget(ctx context.Context, target *securityv
 		logger.Error(err, "failed to process Target endpoint", "host", ep.Host, "port", ep.Port)
 		metrics.RecordReconcileError("Target", "process")
 		r.updateTargetStatus(ctx, target.Name, crName, "", err.Error())
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, err
 	}
 
 	var report securityv1alpha1.TLSComplianceReport
