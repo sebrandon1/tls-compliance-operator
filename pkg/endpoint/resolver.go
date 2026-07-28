@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -455,17 +456,25 @@ var defaultTLSPorts = map[int32]bool{
 	10250: true, 10257: true, 10259: true,
 }
 
-var extraTLSPorts = map[int32]bool{}
+var (
+	extraTLSPorts   = map[int32]bool{}
+	extraTLSPortsMu sync.RWMutex
+)
 
 // SetExtraTLSPorts configures additional port numbers to treat as TLS endpoints.
 func SetExtraTLSPorts(ports map[int32]bool) {
+	extraTLSPortsMu.Lock()
+	defer extraTLSPortsMu.Unlock()
 	extraTLSPorts = ports
 }
 
 // isTLSPortByNumberAndName checks if a port number and name indicate a TLS port.
 // Shared logic for both ServicePort and ContainerPort classification.
 func isTLSPortByNumberAndName(portNumber int32, portName string) bool {
-	if defaultTLSPorts[portNumber] || extraTLSPorts[portNumber] {
+	extraTLSPortsMu.RLock()
+	extra := extraTLSPorts[portNumber]
+	extraTLSPortsMu.RUnlock()
+	if defaultTLSPorts[portNumber] || extra {
 		return true
 	}
 

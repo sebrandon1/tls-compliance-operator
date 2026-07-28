@@ -100,6 +100,7 @@ type operatorConfig struct {
 	enumerateCiphers       bool
 	namespaceRateLimitsStr string
 	metricsPerEndpoint     bool
+	reportRetentionDays    int
 	logFormat              string
 	runOnce                bool
 	outputFormat           string
@@ -167,6 +168,8 @@ func parseFlags() *operatorConfig {
 		"Per-namespace TLS check rate limits (e.g., production=2.0,staging=10.0)")
 	flag.BoolVar(&cfg.metricsPerEndpoint, "metrics-per-endpoint", true,
 		"Emit per-endpoint Prometheus metrics (disable for large clusters to reduce cardinality)")
+	flag.IntVar(&cfg.reportRetentionDays, "report-retention-days", 0,
+		"Delete TLSComplianceReport CRs with no activity for this many days (0 = disabled)")
 	flag.StringVar(&cfg.logFormat, "log-format", "text",
 		"Log output format: text or json")
 	flag.BoolVar(&cfg.runOnce, "run-once", false,
@@ -217,6 +220,11 @@ func validateConfig(cfg *operatorConfig) {
 
 	if cfg.maxRetries < 0 || cfg.maxRetries > 10 {
 		setupLog.Error(nil, "invalid --max-retries value, must be between 0 and 10", "maxRetries", cfg.maxRetries)
+		os.Exit(1)
+	}
+
+	if cfg.reportRetentionDays < 0 {
+		setupLog.Error(nil, "invalid --report-retention-days value, must be non-negative", "reportRetentionDays", cfg.reportRetentionDays)
 		os.Exit(1)
 	}
 
@@ -424,6 +432,7 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 		RetryBackoff:          cfg.retryBackoff,
 		MaxBackoff:            cfg.maxBackoff,
 		MetricsPerEndpoint:    cfg.metricsPerEndpoint,
+		ReportRetentionDays:   cfg.reportRetentionDays,
 		FIPSEnabled:           fipsEnabled,
 		NamespaceRateLimiters: nsLimiters,
 		DefaultNamespaceRate:  defaultNSLimiter,
@@ -583,6 +592,7 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_EXTRA_TLS_PORTS", "extra-tls-ports"},
 	{"TLS_COMPLIANCE_CLIENT_CERT", "client-cert"},
 	{"TLS_COMPLIANCE_CLIENT_KEY", "client-key"},
+	{"TLS_COMPLIANCE_REPORT_RETENTION_DAYS", "report-retention-days"},
 	{"TLS_COMPLIANCE_LOG_FORMAT", "log-format"},
 	{"TLS_COMPLIANCE_RUN_ONCE", "run-once"},
 	{"TLS_COMPLIANCE_OUTPUT_FORMAT", "output-format"},
@@ -665,6 +675,8 @@ func validateEnvValue(flagName, value string) error {
 		if value != "true" && value != "false" && value != "1" && value != "0" {
 			return fmt.Errorf("must be true or false, got %q", value)
 		}
+	case "report-retention-days":
+		return validateIntRange(value, 0, 3650)
 	case "output-format":
 		switch value {
 		case "csv", "json", "yaml", "junit", "markdown":

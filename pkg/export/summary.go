@@ -56,6 +56,9 @@ var knownSourceKinds = []securityv1alpha1.SourceKind{
 	securityv1alpha1.SourceKindRoute,
 	securityv1alpha1.SourceKindTarget,
 	securityv1alpha1.SourceKindPod,
+	securityv1alpha1.SourceKindHTTPRoute,
+	securityv1alpha1.SourceKindTLSRoute,
+	securityv1alpha1.SourceKindGateway,
 }
 
 // Summary holds aggregated statistics for a set of TLS compliance reports.
