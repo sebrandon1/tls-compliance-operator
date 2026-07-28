@@ -25,8 +25,11 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
+	"fmt"
 	"math/big"
 	"net"
+	"os"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -263,68 +266,58 @@ func TestClassifyFailure(t *testing.T) {
 		},
 		{
 			name:     "connection refused - Closed",
-			errors:   []error{errors.New("dial tcp 10.0.0.1:443: connect: connection refused")},
+			errors:   []error{connRefusedErr()},
 			expected: FailureReasonClosed,
 		},
 		{
-			name:     "i/o timeout - Timeout",
-			errors:   []error{errors.New("dial tcp 10.0.0.1:443: i/o timeout")},
+			name:     "timeout via net.Error - Timeout",
+			errors:   []error{timeoutErr()},
 			expected: FailureReasonTimeout,
 		},
 		{
-			name:     "deadline exceeded - Timeout",
-			errors:   []error{errors.New("dial tcp 10.0.0.1:443: deadline exceeded")},
-			expected: FailureReasonTimeout,
-		},
-		{
-			name:     "not TLS",
-			errors:   []error{errors.New("tls: first record does not look like a TLS handshake")},
+			name:     "not TLS - RecordHeaderError",
+			errors:   []error{tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"}},
 			expected: FailureReasonNoTLS,
 		},
 		{
-			name:     "oversized record",
-			errors:   []error{errors.New("tls: oversized record received with length 22")},
-			expected: FailureReasonNoTLS,
-		},
-		{
-			name:     "certificate required",
-			errors:   []error{errors.New("remote error: tls: certificate required")},
+			name:     "certificate required alert",
+			errors:   []error{fmt.Errorf("remote error: %w", tls.AlertError(116))},
 			expected: FailureReasonMutualTLSRequired,
 		},
 		{
-			name:     "bad certificate",
-			errors:   []error{errors.New("remote error: tls: bad certificate")},
+			name:     "bad certificate alert",
+			errors:   []error{fmt.Errorf("remote error: %w", tls.AlertError(42))},
 			expected: FailureReasonMutualTLSRequired,
 		},
 		{
 			name: "mTLS takes priority over NoTLS",
 			errors: []error{
-				errors.New("tls: first record does not look like a TLS handshake"),
-				errors.New("remote error: tls: certificate required"),
+				tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"},
+				fmt.Errorf("remote error: %w", tls.AlertError(116)),
 			},
 			expected: FailureReasonMutualTLSRequired,
 		},
 		{
 			name: "mTLS takes priority over Closed",
 			errors: []error{
-				errors.New("dial tcp 10.0.0.1:443: connect: connection refused"),
-				errors.New("remote error: tls: certificate required"),
+				connRefusedErr(),
+				fmt.Errorf("remote error: %w", tls.AlertError(116)),
 			},
 			expected: FailureReasonMutualTLSRequired,
 		},
 		{
 			name: "NoTLS takes priority over Closed",
 			errors: []error{
-				errors.New("dial tcp 10.0.0.1:443: connect: connection refused"),
-				errors.New("tls: first record does not look like a TLS handshake"),
+				connRefusedErr(),
+				tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"},
 			},
 			expected: FailureReasonNoTLS,
 		},
 		{
 			name: "Closed takes priority over Timeout",
 			errors: []error{
-				errors.New("dial tcp 10.0.0.1:443: i/o timeout"),
-				errors.New("dial tcp 10.0.0.1:443: connect: connection refused"),
+				timeoutErr(),
+				connRefusedErr(),
 			},
 			expected: FailureReasonClosed,
 		},
@@ -777,5 +770,29 @@ func TestTLSChecker_ParallelProbes_ReducesLatency(t *testing.T) {
 	if elapsed > maxExpected {
 		t.Errorf("parallel probes took %v, expected less than %v (sequential would be ~%v)",
 			elapsed, maxExpected, 5*timeout)
+	}
+}
+
+func connRefusedErr() error {
+	return &net.OpError{
+		Op:  "dial",
+		Net: "tcp",
+		Addr: &net.TCPAddr{
+			IP:   net.IPv4(10, 0, 0, 1),
+			Port: 443,
+		},
+		Err: &os.SyscallError{Syscall: "connect", Err: syscall.ECONNREFUSED},
+	}
+}
+
+func timeoutErr() error {
+	return &net.OpError{
+		Op:  "dial",
+		Net: "tcp",
+		Addr: &net.TCPAddr{
+			IP:   net.IPv4(10, 0, 0, 1),
+			Port: 443,
+		},
+		Err: &net.DNSError{IsTimeout: true},
 	}
 }

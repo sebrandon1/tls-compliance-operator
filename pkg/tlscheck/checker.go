@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -180,6 +181,12 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 	return result, nil
 }
 
+// TLS alert codes for mTLS detection.
+const (
+	alertBadCertificate      tls.AlertError = 42
+	alertCertificateRequired tls.AlertError = 116
+)
+
 // classifyFailure analyzes TLS connection errors to determine the failure category.
 // Priority order: mTLS > NoTLS > Closed > Timeout > Filtered > Unreachable.
 func classifyFailure(errs []error) FailureReason {
@@ -190,37 +197,25 @@ func classifyFailure(errs []error) FailureReason {
 	var hasNoTLS, hasMTLS, hasTimeout, hasClosed bool
 
 	for _, err := range errs {
-		msg := err.Error()
-
-		// Server requires client certificate
-		if strings.Contains(msg, "certificate required") ||
-			strings.Contains(msg, "bad certificate") {
+		if isMTLSError(err) {
 			hasMTLS = true
 		}
 
-		// Port is open but not speaking TLS
-		if strings.Contains(msg, "first record does not look like a TLS handshake") ||
-			strings.Contains(msg, "oversized record") {
+		var recordErr tls.RecordHeaderError
+		if errors.As(err, &recordErr) {
 			hasNoTLS = true
 		}
 
-		// Connection refused — port is not listening
-		if strings.Contains(msg, "connection refused") {
+		if errors.Is(err, syscall.ECONNREFUSED) {
 			hasClosed = true
 		}
 
-		// Timeout — check both net.Error interface and string patterns
 		var netErr net.Error
 		if errors.As(err, &netErr) && netErr.Timeout() {
 			hasTimeout = true
 		}
-		if strings.Contains(msg, "i/o timeout") ||
-			strings.Contains(msg, "deadline exceeded") {
-			hasTimeout = true
-		}
 	}
 
-	// mTLS takes priority — the server IS speaking TLS, it just wants a client cert
 	if hasMTLS {
 		return FailureReasonMutualTLSRequired
 	}
@@ -231,8 +226,6 @@ func classifyFailure(errs []error) FailureReason {
 		return FailureReasonClosed
 	}
 	if hasTimeout {
-		// Pure timeout with no refusal suggests a firewall drop (filtered),
-		// but we report Timeout since that's the observed behavior.
 		return FailureReasonTimeout
 	}
 
@@ -240,9 +233,11 @@ func classifyFailure(errs []error) FailureReason {
 }
 
 func isMTLSError(err error) bool {
-	msg := err.Error()
-	return strings.Contains(msg, "certificate required") ||
-		strings.Contains(msg, "bad certificate")
+	var alertErr tls.AlertError
+	if errors.As(err, &alertErr) {
+		return alertErr == alertBadCertificate || alertErr == alertCertificateRequired
+	}
+	return false
 }
 
 // tryTLSVersion attempts to connect with a specific TLS version
