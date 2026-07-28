@@ -2379,5 +2379,221 @@ func TestScanAllEndpoints_PropagatesPodScanError(t *testing.T) {
 	}
 }
 
+func TestEnsureOwnerReference_AddsNewOwnerRef(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = securityv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	report := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-report",
+		},
+	}
+
+	target := &securityv1alpha1.TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-target",
+			UID:  "target-uid-123",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(report).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:     fakeClient,
+		Scheme:     scheme,
+		TLSChecker: &MockTLSChecker{},
+		Workers:    1,
+	}
+
+	err := r.ensureOwnerReference(context.Background(), "test-report", target)
+	if err != nil {
+		t.Fatalf("ensureOwnerReference returned unexpected error: %v", err)
+	}
+
+	var updated securityv1alpha1.TLSComplianceReport
+	if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-report"}, &updated); err != nil {
+		t.Fatalf("failed to get updated report: %v", err)
+	}
+
+	if len(updated.OwnerReferences) != 1 {
+		t.Fatalf("expected 1 owner reference, got %d", len(updated.OwnerReferences))
+	}
+
+	ref := updated.OwnerReferences[0]
+	if ref.Name != "test-target" {
+		t.Errorf("expected owner name 'test-target', got %q", ref.Name)
+	}
+	if ref.UID != "target-uid-123" {
+		t.Errorf("expected owner UID 'target-uid-123', got %q", ref.UID)
+	}
+	if ref.Kind != "TLSComplianceTarget" {
+		t.Errorf("expected owner kind 'TLSComplianceTarget', got %q", ref.Kind)
+	}
+	if ref.BlockOwnerDeletion == nil || !*ref.BlockOwnerDeletion {
+		t.Error("expected BlockOwnerDeletion to be true")
+	}
+}
+
+func TestEnsureOwnerReference_AlreadyHasOwner(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = securityv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	blockDeletion := true
+	report := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-report",
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion:         securityv1alpha1.GroupVersion.String(),
+					Kind:               "TLSComplianceTarget",
+					Name:               "test-target",
+					UID:                "target-uid-123",
+					BlockOwnerDeletion: &blockDeletion,
+				},
+			},
+		},
+	}
+
+	target := &securityv1alpha1.TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-target",
+			UID:  "target-uid-123",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(report).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:     fakeClient,
+		Scheme:     scheme,
+		TLSChecker: &MockTLSChecker{},
+		Workers:    1,
+	}
+
+	err := r.ensureOwnerReference(context.Background(), "test-report", target)
+	if err != nil {
+		t.Fatalf("ensureOwnerReference returned unexpected error: %v", err)
+	}
+
+	var updated securityv1alpha1.TLSComplianceReport
+	if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-report"}, &updated); err != nil {
+		t.Fatalf("failed to get updated report: %v", err)
+	}
+
+	if len(updated.OwnerReferences) != 1 {
+		t.Fatalf("expected 1 owner reference (no duplicate), got %d", len(updated.OwnerReferences))
+	}
+}
+
+func TestEnsureOwnerReference_ReportNotFound(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = securityv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	target := &securityv1alpha1.TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-target",
+			UID:  "target-uid-123",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:     fakeClient,
+		Scheme:     scheme,
+		TLSChecker: &MockTLSChecker{},
+		Workers:    1,
+	}
+
+	err := r.ensureOwnerReference(context.Background(), "nonexistent-report", target)
+	if err == nil {
+		t.Fatal("expected error when report does not exist")
+	}
+}
+
+func TestHandleTarget_SetsOwnerReference(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = securityv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	target := &securityv1alpha1.TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-target",
+			UID:  "target-uid-456",
+		},
+		Spec: securityv1alpha1.TLSComplianceTargetSpec{
+			Host: "example.com",
+			Port: 443,
+		},
+	}
+
+	ep := endpoint.Endpoint{
+		Host:            "example.com",
+		Port:            443,
+		SourceKind:      string(securityv1alpha1.SourceKindTarget),
+		SourceNamespace: "cluster-scoped",
+		SourceName:      "test-target",
+	}
+	reportName := endpoint.GenerateCRName(ep)
+
+	report := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: reportName,
+		},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: "example.com",
+			Port: 443,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}, &securityv1alpha1.TLSComplianceTarget{}).
+		WithObjects(target, report).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:  fakeClient,
+		Scheme:  scheme,
+		Workers: 1,
+		TLSChecker: &MockTLSChecker{
+			Result: &tlscheck.TLSCheckResult{
+				SupportsTLS13: true,
+			},
+		},
+		Recorder: record.NewFakeRecorder(10),
+	}
+
+	_, err := r.handleTarget(context.Background(), target)
+	if err != nil {
+		t.Fatalf("handleTarget returned unexpected error: %v", err)
+	}
+
+	var updated securityv1alpha1.TLSComplianceReport
+	if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: reportName}, &updated); err != nil {
+		t.Fatalf("failed to get updated report: %v", err)
+	}
+
+	if len(updated.OwnerReferences) != 1 {
+		t.Fatalf("expected 1 owner reference, got %d", len(updated.OwnerReferences))
+	}
+
+	ref := updated.OwnerReferences[0]
+	if ref.UID != "target-uid-456" {
+		t.Errorf("expected owner UID 'target-uid-456', got %q", ref.UID)
+	}
+}
+
 // Ensure _ satisfies the client.Object interface for compile-time check
 var _ client.Object = &securityv1alpha1.TLSComplianceReport{}
