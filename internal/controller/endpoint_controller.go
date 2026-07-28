@@ -29,6 +29,7 @@ import (
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -333,7 +334,7 @@ func (r *EndpointReconciler) updateTargetStatus(ctx context.Context, targetName,
 		if errMsg != "" {
 			target.Status.ComplianceStatus = ""
 			target.Status.Message = errMsg
-			setTargetCondition(&target, metav1.Condition{
+			apimeta.SetStatusCondition(&target.Status.Conditions, metav1.Condition{
 				Type:               "Ready",
 				Status:             metav1.ConditionFalse,
 				ObservedGeneration: target.Generation,
@@ -344,7 +345,7 @@ func (r *EndpointReconciler) updateTargetStatus(ctx context.Context, targetName,
 		} else {
 			target.Status.ComplianceStatus = securityv1alpha1.ComplianceStatus(complianceStatus)
 			target.Status.Message = ""
-			setTargetCondition(&target, metav1.Condition{
+			apimeta.SetStatusCondition(&target.Status.Conditions, metav1.Condition{
 				Type:               "Ready",
 				Status:             metav1.ConditionTrue,
 				ObservedGeneration: target.Generation,
@@ -358,16 +359,6 @@ func (r *EndpointReconciler) updateTargetStatus(ctx context.Context, targetName,
 	}); err != nil {
 		logger.Error(err, "failed to update TLSComplianceTarget status", "target", targetName)
 	}
-}
-
-func setTargetCondition(target *securityv1alpha1.TLSComplianceTarget, condition metav1.Condition) {
-	for i, c := range target.Status.Conditions {
-		if c.Type == condition.Type {
-			target.Status.Conditions[i] = condition
-			return
-		}
-	}
-	target.Status.Conditions = append(target.Status.Conditions, condition)
 }
 
 // processEndpoint creates or updates a TLSComplianceReport CR for an endpoint
@@ -403,16 +394,15 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep endpoint.En
 			ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
 			FirstSeenAt:      &now,
 			LastSeenAt:       &now,
-			Conditions: []metav1.Condition{
-				{
-					Type:               "Available",
-					Status:             metav1.ConditionTrue,
-					LastTransitionTime: now,
-					Reason:             "EndpointDiscovered",
-					Message:            fmt.Sprintf("Endpoint %s discovered from %s/%s", hostPort(ep.Host, ep.Port), ep.SourceNamespace, ep.SourceName),
-				},
-			},
 		}
+		apimeta.SetStatusCondition(&cr.Status.Conditions, metav1.Condition{
+			Type:               "Available",
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: cr.Generation,
+			LastTransitionTime: now,
+			Reason:             "EndpointDiscovered",
+			Message:            fmt.Sprintf("Endpoint %s discovered from %s/%s", hostPort(ep.Host, ep.Port), ep.SourceNamespace, ep.SourceName),
+		})
 		if err := r.Status().Update(ctx, cr); err != nil {
 			return fmt.Errorf("failed to update TLSComplianceReport status: %w", err)
 		}
@@ -783,9 +773,9 @@ func (r *EndpointReconciler) checkProfileCompliance(cr *securityv1alpha1.TLSComp
 func (r *EndpointReconciler) updateConditions(cr *securityv1alpha1.TLSComplianceReport, complianceStatus securityv1alpha1.ComplianceStatus, result *tlscheck.TLSCheckResult) {
 	now := metav1.Now()
 
-	// TLS Compliant condition
 	complianceCondition := metav1.Condition{
 		Type:               "TLSCompliant",
+		ObservedGeneration: cr.Generation,
 		LastTransitionTime: now,
 	}
 
@@ -804,12 +794,12 @@ func (r *EndpointReconciler) updateConditions(cr *securityv1alpha1.TLSCompliance
 		complianceCondition.Message = "TLS compliance status could not be determined"
 	}
 
-	setCondition(&cr.Status.Conditions, complianceCondition)
+	apimeta.SetStatusCondition(&cr.Status.Conditions, complianceCondition)
 
-	// Certificate Valid condition
 	if result.Certificate != nil {
 		certCondition := metav1.Condition{
 			Type:               "CertificateValid",
+			ObservedGeneration: cr.Generation,
 			LastTransitionTime: now,
 		}
 
@@ -827,12 +817,12 @@ func (r *EndpointReconciler) updateConditions(cr *securityv1alpha1.TLSCompliance
 			certCondition.Message = fmt.Sprintf("TLS certificate is valid for %d more days", result.Certificate.DaysUntilExpiry)
 		}
 
-		setCondition(&cr.Status.Conditions, certCondition)
+		apimeta.SetStatusCondition(&cr.Status.Conditions, certCondition)
 	}
 
-	// PQC Compliant condition
 	pqcCondition := metav1.Condition{
 		Type:               "PQCCompliant",
+		ObservedGeneration: cr.Generation,
 		LastTransitionTime: now,
 	}
 
@@ -863,12 +853,12 @@ func (r *EndpointReconciler) updateConditions(cr *securityv1alpha1.TLSCompliance
 		pqcCondition.Message = "No TLS detected on endpoint"
 	}
 
-	setCondition(&cr.Status.Conditions, pqcCondition)
+	apimeta.SetStatusCondition(&cr.Status.Conditions, pqcCondition)
 
-	// TLS Profile Compliant condition (OpenShift only)
 	if r.ProfileFetcher != nil {
 		profileCondition := metav1.Condition{
 			Type:               "TLSProfileCompliant",
+			ObservedGeneration: cr.Generation,
 			LastTransitionTime: now,
 		}
 
@@ -893,19 +883,8 @@ func (r *EndpointReconciler) updateConditions(cr *securityv1alpha1.TLSCompliance
 			profileCondition.Message = "Endpoint does not meet one or more OpenShift TLS security profile requirements"
 		}
 
-		setCondition(&cr.Status.Conditions, profileCondition)
+		apimeta.SetStatusCondition(&cr.Status.Conditions, profileCondition)
 	}
-}
-
-// setCondition sets or updates a condition in the condition list
-func setCondition(conditions *[]metav1.Condition, condition metav1.Condition) {
-	for i, existing := range *conditions {
-		if existing.Type == condition.Type {
-			(*conditions)[i] = condition
-			return
-		}
-	}
-	*conditions = append(*conditions, condition)
 }
 
 // emitComplianceEvents emits Kubernetes events for compliance changes
