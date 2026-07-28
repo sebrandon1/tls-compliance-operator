@@ -303,6 +303,9 @@ func (r *EndpointReconciler) handleTarget(ctx context.Context, target *securityv
 
 	var report securityv1alpha1.TLSComplianceReport
 	if err := r.Get(ctx, client.ObjectKey{Name: crName}, &report); err == nil {
+		if err := r.ensureOwnerReference(ctx, crName, target); err != nil {
+			logger.Error(err, "failed to set owner reference", "report", crName, "target", target.Name)
+		}
 		r.updateTargetStatus(ctx, target.Name, crName, string(report.Status.ComplianceStatus), "")
 	}
 
@@ -365,6 +368,27 @@ func (r *EndpointReconciler) updateTargetStatus(ctx context.Context, targetName,
 	}); err != nil {
 		logger.Error(err, "failed to update TLSComplianceTarget status", "target", targetName)
 	}
+}
+
+// ensureOwnerReference adds a TLSComplianceTarget as an owner of the given
+// TLSComplianceReport so that deleting the target cascades to its reports.
+// Uses updateWithRetry for conflict resilience.
+func (r *EndpointReconciler) ensureOwnerReference(ctx context.Context, reportName string, target *securityv1alpha1.TLSComplianceTarget) error {
+	return r.updateWithRetry(ctx, reportName, func(cr *securityv1alpha1.TLSComplianceReport) {
+		for _, ref := range cr.OwnerReferences {
+			if ref.UID == target.UID {
+				return
+			}
+		}
+		blockDeletion := true
+		cr.OwnerReferences = append(cr.OwnerReferences, metav1.OwnerReference{
+			APIVersion:         securityv1alpha1.GroupVersion.String(),
+			Kind:               "TLSComplianceTarget",
+			Name:               target.Name,
+			UID:                target.UID,
+			BlockOwnerDeletion: &blockDeletion,
+		})
+	})
 }
 
 // processEndpoint creates or updates a TLSComplianceReport CR for an endpoint
