@@ -27,13 +27,15 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/intstr"
+
+	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 )
 
 // Endpoint represents a TLS endpoint to check
 type Endpoint struct {
 	Host            string
 	Port            int32
-	SourceKind      string
+	SourceKind      securityv1alpha1.SourceKind
 	SourceNamespace string
 	SourceName      string
 	IsProbePort     bool
@@ -62,7 +64,7 @@ func ExtractFromHeadlessService(svc *corev1.Service, addresses []string) []Endpo
 			endpoints = append(endpoints, Endpoint{
 				Host:            addr,
 				Port:            port.Port,
-				SourceKind:      "Service",
+				SourceKind:      securityv1alpha1.SourceKindService,
 				SourceNamespace: svc.Namespace,
 				SourceName:      svc.Name,
 			})
@@ -88,7 +90,7 @@ func ExtractFromService(svc *corev1.Service) []Endpoint {
 			endpoints = append(endpoints, Endpoint{
 				Host:            host,
 				Port:            port.Port,
-				SourceKind:      "Service",
+				SourceKind:      securityv1alpha1.SourceKindService,
 				SourceNamespace: svc.Namespace,
 				SourceName:      svc.Name,
 			})
@@ -110,7 +112,7 @@ func extractFromExternalNameService(svc *corev1.Service) []Endpoint {
 		endpoints = append(endpoints, Endpoint{
 			Host:            host,
 			Port:            443,
-			SourceKind:      "Service",
+			SourceKind:      securityv1alpha1.SourceKindService,
 			SourceNamespace: svc.Namespace,
 			SourceName:      svc.Name,
 		})
@@ -120,7 +122,7 @@ func extractFromExternalNameService(svc *corev1.Service) []Endpoint {
 				endpoints = append(endpoints, Endpoint{
 					Host:            host,
 					Port:            port.Port,
-					SourceKind:      "Service",
+					SourceKind:      securityv1alpha1.SourceKindService,
 					SourceNamespace: svc.Namespace,
 					SourceName:      svc.Name,
 				})
@@ -141,7 +143,7 @@ func ExtractFromIngress(ing *networkingv1.Ingress) []Endpoint {
 			endpoints = append(endpoints, Endpoint{
 				Host:            host,
 				Port:            443,
-				SourceKind:      "Ingress",
+				SourceKind:      securityv1alpha1.SourceKindIngress,
 				SourceNamespace: ing.Namespace,
 				SourceName:      ing.Name,
 			})
@@ -177,7 +179,7 @@ func ExtractFromRoute(obj *unstructured.Unstructured) []Endpoint {
 	endpoints = append(endpoints, Endpoint{
 		Host:            host,
 		Port:            443,
-		SourceKind:      "Route",
+		SourceKind:      securityv1alpha1.SourceKindRoute,
 		SourceNamespace: obj.GetNamespace(),
 		SourceName:      obj.GetName(),
 	})
@@ -194,7 +196,7 @@ func ExtractFromHTTPRoute(obj *unstructured.Unstructured) []Endpoint {
 	var endpoints []Endpoint
 	for _, host := range hostnames {
 		endpoints = append(endpoints, Endpoint{
-			Host: host, Port: 443, SourceKind: "HTTPRoute",
+			Host: host, Port: 443, SourceKind: securityv1alpha1.SourceKindHTTPRoute,
 			SourceNamespace: obj.GetNamespace(), SourceName: obj.GetName(),
 		})
 	}
@@ -210,7 +212,7 @@ func ExtractFromTLSRoute(obj *unstructured.Unstructured) []Endpoint {
 	var endpoints []Endpoint
 	for _, host := range hostnames {
 		endpoints = append(endpoints, Endpoint{
-			Host: host, Port: 443, SourceKind: "TLSRoute",
+			Host: host, Port: 443, SourceKind: securityv1alpha1.SourceKindTLSRoute,
 			SourceNamespace: obj.GetNamespace(), SourceName: obj.GetName(),
 		})
 	}
@@ -251,7 +253,7 @@ func ExtractFromGateway(obj *unstructured.Unstructured) []Endpoint {
 			continue
 		}
 		endpoints = append(endpoints, Endpoint{
-			Host: host, Port: int32(port), SourceKind: "Gateway",
+			Host: host, Port: int32(port), SourceKind: securityv1alpha1.SourceKindGateway,
 			SourceNamespace: obj.GetNamespace(), SourceName: obj.GetName(),
 		})
 	}
@@ -433,7 +435,7 @@ func ExtractFromPod(pod *corev1.Pod) []Endpoint {
 					endpoints = append(endpoints, Endpoint{
 						Host:            ip,
 						Port:            port.ContainerPort,
-						SourceKind:      "Pod",
+						SourceKind:      securityv1alpha1.SourceKindPod,
 						SourceNamespace: pod.Namespace,
 						SourceName:      pod.Name,
 						IsProbePort:     isProbe,

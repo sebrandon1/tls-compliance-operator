@@ -199,13 +199,13 @@ func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	return ctrl.Result{}, nil
 }
 
-func (r *EndpointReconciler) handleEndpoints(ctx context.Context, endpoints []endpoint.Endpoint, sourceKind string) (ctrl.Result, error) {
+func (r *EndpointReconciler) handleEndpoints(ctx context.Context, endpoints []endpoint.Endpoint, sourceKind securityv1alpha1.SourceKind) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	var firstErr error
 	for _, ep := range endpoints {
 		if err := r.processEndpoint(ctx, ep); err != nil {
 			logger.Error(err, "failed to process endpoint", "host", ep.Host, "port", ep.Port)
-			metrics.RecordReconcileError(sourceKind, "process")
+			metrics.RecordReconcileError(string(sourceKind), "process")
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -227,7 +227,7 @@ func (r *EndpointReconciler) handleService(ctx context.Context, svc *corev1.Serv
 		metrics.RecordReconcile("success")
 		return ctrl.Result{}, nil
 	}
-	return r.handleEndpoints(ctx, endpoints, "Service")
+	return r.handleEndpoints(ctx, endpoints, securityv1alpha1.SourceKindService)
 }
 
 func (r *EndpointReconciler) handleHeadlessService(ctx context.Context, svc *corev1.Service) (ctrl.Result, error) {
@@ -257,28 +257,32 @@ func (r *EndpointReconciler) handleHeadlessService(ctx context.Context, svc *cor
 		metrics.RecordReconcile("success")
 		return ctrl.Result{}, nil
 	}
-	return r.handleEndpoints(ctx, endpoints, "Service")
+	return r.handleEndpoints(ctx, endpoints, securityv1alpha1.SourceKindService)
 }
 
 func (r *EndpointReconciler) handleIngress(ctx context.Context, ing *networkingv1.Ingress) (ctrl.Result, error) {
-	return r.handleEndpoints(ctx, endpoint.ExtractFromIngress(ing), "Ingress")
+	return r.handleEndpoints(ctx, endpoint.ExtractFromIngress(ing), securityv1alpha1.SourceKindIngress)
 }
 
 func (r *EndpointReconciler) handleRoute(ctx context.Context, route *unstructured.Unstructured) (ctrl.Result, error) {
-	return r.handleEndpoints(ctx, endpoint.ExtractFromRoute(route), "Route")
+	return r.handleEndpoints(ctx, endpoint.ExtractFromRoute(route), securityv1alpha1.SourceKindRoute)
 }
 
 func (r *EndpointReconciler) handleGatewayResource(ctx context.Context, obj *unstructured.Unstructured, gvk schema.GroupVersionKind) (ctrl.Result, error) {
 	var endpoints []endpoint.Endpoint
+	var sourceKind securityv1alpha1.SourceKind
 	switch gvk.Kind {
 	case "HTTPRoute":
 		endpoints = endpoint.ExtractFromHTTPRoute(obj)
+		sourceKind = securityv1alpha1.SourceKindHTTPRoute
 	case "TLSRoute":
 		endpoints = endpoint.ExtractFromTLSRoute(obj)
+		sourceKind = securityv1alpha1.SourceKindTLSRoute
 	case "Gateway":
 		endpoints = endpoint.ExtractFromGateway(obj)
+		sourceKind = securityv1alpha1.SourceKindGateway
 	}
-	return r.handleEndpoints(ctx, endpoints, gvk.Kind)
+	return r.handleEndpoints(ctx, endpoints, sourceKind)
 }
 
 func (r *EndpointReconciler) handleTarget(ctx context.Context, target *securityv1alpha1.TLSComplianceTarget) (ctrl.Result, error) {
@@ -287,7 +291,7 @@ func (r *EndpointReconciler) handleTarget(ctx context.Context, target *securityv
 	ep := endpoint.Endpoint{
 		Host:            target.Spec.Host,
 		Port:            target.Spec.Port,
-		SourceKind:      string(securityv1alpha1.SourceKindTarget),
+		SourceKind:      securityv1alpha1.SourceKindTarget,
 		SourceNamespace: "cluster-scoped",
 		SourceName:      target.Name,
 	}
@@ -296,7 +300,7 @@ func (r *EndpointReconciler) handleTarget(ctx context.Context, target *securityv
 
 	if err := r.processEndpoint(ctx, ep); err != nil {
 		logger.Error(err, "failed to process Target endpoint", "host", ep.Host, "port", ep.Port)
-		metrics.RecordReconcileError("Target", "process")
+		metrics.RecordReconcileError(string(securityv1alpha1.SourceKindTarget), "process")
 		r.updateTargetStatus(ctx, target.Name, crName, "", err.Error())
 		return ctrl.Result{}, err
 	}
@@ -386,7 +390,7 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep endpoint.En
 			Spec: securityv1alpha1.TLSComplianceReportSpec{
 				Host:            ep.Host,
 				Port:            ep.Port,
-				SourceKind:      securityv1alpha1.SourceKind(ep.SourceKind),
+				SourceKind:      ep.SourceKind,
 				SourceNamespace: ep.SourceNamespace,
 				SourceName:      ep.SourceName,
 			},

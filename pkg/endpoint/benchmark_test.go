@@ -21,6 +21,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 )
 
 func BenchmarkExtractFromService(b *testing.B) {
@@ -85,7 +87,7 @@ func BenchmarkGenerateCRName(b *testing.B) {
 	ep := Endpoint{
 		Host:            "my-service.default",
 		Port:            443,
-		SourceKind:      "Service",
+		SourceKind:      securityv1alpha1.SourceKindService,
 		SourceNamespace: "default",
 		SourceName:      "my-service",
 	}
@@ -100,7 +102,7 @@ func BenchmarkGenerateCRName_LongHost(b *testing.B) {
 	ep := Endpoint{
 		Host:            "very-long-service-name-that-exceeds-normal-limits.very-long-namespace-name",
 		Port:            443,
-		SourceKind:      "Service",
+		SourceKind:      securityv1alpha1.SourceKindService,
 		SourceNamespace: "very-long-namespace-name",
 		SourceName:      "very-long-service-name-that-exceeds-normal-limits",
 	}
