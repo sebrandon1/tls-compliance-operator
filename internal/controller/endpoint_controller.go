@@ -1127,9 +1127,10 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 
 	// Phase 1: Discover new pod endpoints
+	var podScanErr error
 	if err := r.scanPodEndpoints(ctx); err != nil {
 		logger.Error(err, "pod endpoint scan failed")
-		// Continue — don't fail the whole scan
+		podScanErr = err
 	}
 
 	var crList securityv1alpha1.TLSComplianceReportList
@@ -1184,7 +1185,7 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 	r.updateEndpointMetrics(crList.Items)
 
 	logger.Info("scan completed", "endpoints", len(crList.Items), "workers", workers)
-	return nil
+	return podScanErr
 }
 
 // updateEndpointMetrics recounts endpoints by compliance status.

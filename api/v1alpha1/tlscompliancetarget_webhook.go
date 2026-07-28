@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -32,11 +33,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
-var targetClient client.Reader
+var (
+	targetClient   client.Reader
+	targetClientMu sync.RWMutex
+)
 
 // SetupTLSComplianceTargetWebhookWithManager registers the validating webhook.
 func SetupTLSComplianceTargetWebhookWithManager(mgr ctrl.Manager) error {
+	targetClientMu.Lock()
 	targetClient = mgr.GetClient()
+	targetClientMu.Unlock()
 	return builder.WebhookManagedBy(mgr, &TLSComplianceTarget{}).
 		WithValidator(&TLSComplianceTargetValidator{}).
 		Complete()
@@ -94,11 +100,14 @@ func validateTargetSpec(target *TLSComplianceTarget) field.ErrorList {
 }
 
 func validateNoDuplicate(ctx context.Context, target *TLSComplianceTarget, selfName string) *field.Error {
-	if targetClient == nil {
+	targetClientMu.RLock()
+	cl := targetClient
+	targetClientMu.RUnlock()
+	if cl == nil {
 		return nil
 	}
 	var list TLSComplianceTargetList
-	if err := targetClient.List(ctx, &list); err != nil {
+	if err := cl.List(ctx, &list); err != nil {
 		return nil
 	}
 	for i := range list.Items {

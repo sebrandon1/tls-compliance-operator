@@ -252,6 +252,10 @@ func TestValidateEnvValue(t *testing.T) {
 		{"valid output-format csv", "output-format", "csv", false},
 		{"valid output-format junit", "output-format", "junit", false},
 		{"invalid output-format", "output-format", "xml", true},
+		{"valid retention-days", "report-retention-days", "30", false},
+		{"retention-days zero", "report-retention-days", "0", false},
+		{"retention-days negative", "report-retention-days", "-1", true},
+		{"retention-days non-integer", "report-retention-days", "abc", true},
 	}
 
 	for _, tc := range tests {
@@ -434,5 +438,36 @@ func TestWriteRunOnceOutput_BadPath(t *testing.T) {
 	err := writeRunOnceOutput(nil, cfg)
 	if err == nil {
 		t.Fatal("expected error for bad file path")
+	}
+}
+
+func TestResolveEnvConfig_ReportRetentionDays(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.Int("report-retention-days", 0, "")
+	_ = fs.Parse([]string{})
+
+	env := map[string]string{
+		"TLS_COMPLIANCE_REPORT_RETENTION_DAYS": "90",
+	}
+	lookup := func(key string) (string, bool) {
+		v, ok := env[key]
+		return v, ok
+	}
+
+	msgs := resolveEnvConfig(fs, lookup)
+
+	val := fs.Lookup("report-retention-days").Value.String()
+	if val != "90" {
+		t.Errorf("expected report-retention-days=90, got %s", val)
+	}
+
+	found := false
+	for _, msg := range msgs {
+		if strings.Contains(msg, "set via env") && strings.Contains(msg, "TLS_COMPLIANCE_REPORT_RETENTION_DAYS") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected log message indicating env var was applied")
 	}
 }

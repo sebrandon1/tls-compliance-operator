@@ -35,6 +35,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
@@ -2342,6 +2343,39 @@ func TestStartPeriodicScan_RunOnce(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for RunOnceDone signal")
+	}
+}
+
+func TestScanAllEndpoints_PropagatesPodScanError(t *testing.T) {
+	scheme := newTestScheme()
+	injectedErr := fmt.Errorf("injected pod list error")
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if _, ok := list.(*corev1.PodList); ok {
+					return injectedErr
+				}
+				return cl.List(ctx, list, opts...)
+			},
+		}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:     fakeClient,
+		Scheme:     scheme,
+		TLSChecker: &MockTLSChecker{},
+		Workers:    1,
+	}
+
+	err := r.scanAllEndpoints(context.Background())
+	if err == nil {
+		t.Fatal("expected scanAllEndpoints to return an error when pod scan fails")
+	}
+	if !strings.Contains(err.Error(), "injected pod list error") {
+		t.Errorf("expected injected error, got: %v", err)
 	}
 }
 
