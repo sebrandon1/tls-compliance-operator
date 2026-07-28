@@ -93,12 +93,6 @@ rules:
 - apiGroups:
   - security.telco.openshift.io
   resources:
-  - tlscompliancereports/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - security.telco.openshift.io
-  resources:
   - tlscompliancereports/status
   - tlscompliancetargets/status
   verbs:
