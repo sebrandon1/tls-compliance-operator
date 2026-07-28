@@ -26,10 +26,29 @@ import (
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 )
 
+// --- helpers ---
+
 func gaugeValue(g prometheus.Gauge) float64 {
 	m := &dto.Metric{}
 	_ = g.Write(m)
 	return m.GetGauge().GetValue()
+}
+
+func counterValue(c prometheus.Counter) float64 {
+	m := &dto.Metric{}
+	_ = c.(prometheus.Metric).Write(m)
+	return m.GetCounter().GetValue()
+}
+
+func gaugeVecValue(gv *prometheus.GaugeVec, labels ...string) float64 {
+	g, _ := gv.GetMetricWithLabelValues(labels...)
+	return gaugeValue(g)
+}
+
+func histogramCount(h prometheus.Histogram) uint64 {
+	m := &dto.Metric{}
+	_ = h.(prometheus.Metric).Write(m)
+	return m.GetHistogram().GetSampleCount()
 }
 
 func assertTimestampGaugeSetToNow(t *testing.T, recordFn func(), gauge prometheus.Gauge) {
@@ -43,6 +62,18 @@ func assertTimestampGaugeSetToNow(t *testing.T, recordFn func(), gauge prometheu
 		t.Errorf("expected timestamp between %v and %v, got %v", before, after, val)
 	}
 }
+
+func assertCounterInc(t *testing.T, c prometheus.Counter, fn func()) {
+	t.Helper()
+	before := counterValue(c)
+	fn()
+	after := counterValue(c)
+	if after != before+1 {
+		t.Errorf("expected counter to increment by 1, got %v -> %v", before, after)
+	}
+}
+
+// --- tests ---
 
 func TestRecordScanCycleCompleted(t *testing.T) {
 	assertTimestampGaugeSetToNow(t, RecordScanCycleCompleted, ScanCycleLastCompletedTimestamp)
@@ -64,28 +95,19 @@ func TestRecordFIPSMode(t *testing.T) {
 	}
 }
 
-func counterValue(c prometheus.Counter) float64 {
-	m := &dto.Metric{}
-	_ = c.(prometheus.Metric).Write(m)
-	return m.GetCounter().GetValue()
-}
-
-func gaugeVecValue(gv *prometheus.GaugeVec, labels ...string) float64 {
-	g, _ := gv.GetMetricWithLabelValues(labels...)
-	return gaugeValue(g)
-}
-
 func TestRecordReconcile(t *testing.T) {
-	before := counterValue(ReconcileTotal.WithLabelValues("success"))
-	RecordReconcile("success")
-	after := counterValue(ReconcileTotal.WithLabelValues("success"))
-	if after != before+1 {
-		t.Errorf("expected counter to increment by 1, got %v -> %v", before, after)
-	}
+	assertCounterInc(t, ReconcileTotal.WithLabelValues("success"), func() {
+		RecordReconcile("success")
+	})
 }
 
 func TestRecordCheckDuration(t *testing.T) {
+	before := histogramCount(CheckDurationSeconds)
 	RecordCheckDuration(1.5)
+	after := histogramCount(CheckDurationSeconds)
+	if after != before+1 {
+		t.Errorf("expected histogram sample count to increment by 1, got %v -> %v", before, after)
+	}
 }
 
 func TestRecordCertExpiry(t *testing.T) {
@@ -128,50 +150,57 @@ func TestRecordPQCReadiness(t *testing.T) {
 }
 
 func TestRecordScanCycleDuration(t *testing.T) {
+	before := histogramCount(ScanCycleDurationSeconds)
 	RecordScanCycleDuration(120.5)
+	after := histogramCount(ScanCycleDurationSeconds)
+	if after != before+1 {
+		t.Errorf("expected histogram sample count to increment by 1, got %v -> %v", before, after)
+	}
 }
 
 func TestRecordRetry(t *testing.T) {
-	before := counterValue(CheckRetriesTotal.WithLabelValues("timeout"))
-	RecordRetry("timeout")
-	after := counterValue(CheckRetriesTotal.WithLabelValues("timeout"))
-	if after != before+1 {
-		t.Errorf("expected counter to increment by 1, got %v -> %v", before, after)
-	}
+	assertCounterInc(t, CheckRetriesTotal.WithLabelValues("timeout"), func() {
+		RecordRetry("timeout")
+	})
 }
 
 func TestRecordRetriesExhausted(t *testing.T) {
-	before := counterValue(CheckRetriesExhaustedTotal)
-	RecordRetriesExhausted()
-	after := counterValue(CheckRetriesExhaustedTotal)
-	if after != before+1 {
-		t.Errorf("expected counter to increment by 1, got %v -> %v", before, after)
-	}
+	assertCounterInc(t, CheckRetriesExhaustedTotal, func() {
+		RecordRetriesExhausted()
+	})
 }
 
 func TestRecordReconcileError(t *testing.T) {
-	before := counterValue(ReconcileErrorsTotal.WithLabelValues("Service", "process"))
-	RecordReconcileError("Service", "process")
-	after := counterValue(ReconcileErrorsTotal.WithLabelValues("Service", "process"))
-	if after != before+1 {
-		t.Errorf("expected counter to increment by 1, got %v -> %v", before, after)
-	}
+	assertCounterInc(t, ReconcileErrorsTotal.WithLabelValues("Service", "process"), func() {
+		RecordReconcileError("Service", "process")
+	})
 }
 
 func TestDeleteEndpointMetrics(t *testing.T) {
-	RecordCertExpiry("del-host", "443", 90)
-	RecordForwardSecrecy("del-host", "443", true)
-	RecordVersionSupport("del-host", "443", "1.3", true)
-	RecordPQCReadiness("del-host", "443", securityv1alpha1.PQCReadinessPQCReady)
+	RecordCertExpiry("del-host", "8443", 90)
+	RecordForwardSecrecy("del-host", "8443", true)
+	RecordVersionSupport("del-host", "8443", "1.3", true)
+	RecordPQCReadiness("del-host", "8443", securityv1alpha1.PQCReadinessPQCReady)
 
-	DeleteEndpointMetrics("del-host", "443")
+	DeleteEndpointMetrics("del-host", "8443")
+
+	// After deletion, GetMetricWithLabelValues returns a fresh zero-value gauge.
+	if v := gaugeVecValue(CertificateExpiryDays, "del-host", "8443"); v != 0 {
+		t.Errorf("expected CertificateExpiryDays=0 after delete, got %v", v)
+	}
+	if v := gaugeVecValue(ForwardSecrecy, "del-host", "8443"); v != 0 {
+		t.Errorf("expected ForwardSecrecy=0 after delete, got %v", v)
+	}
+	if v := gaugeVecValue(VersionSupport, "del-host", "8443", "1.3"); v != 0 {
+		t.Errorf("expected VersionSupport=0 after delete, got %v", v)
+	}
+	if v := gaugeVecValue(PQCReadiness, "del-host", "8443", string(securityv1alpha1.PQCReadinessPQCReady)); v != 0 {
+		t.Errorf("expected PQCReadiness=0 after delete, got %v", v)
+	}
 }
 
 func TestRecordReportTTLDeleted(t *testing.T) {
-	before := counterValue(ReportsTTLDeletedTotal)
-	RecordReportTTLDeleted()
-	after := counterValue(ReportsTTLDeletedTotal)
-	if after != before+1 {
-		t.Errorf("expected counter to increment by 1, got %v -> %v", before, after)
-	}
+	assertCounterInc(t, ReportsTTLDeletedTotal, func() {
+		RecordReportTTLDeleted()
+	})
 }
