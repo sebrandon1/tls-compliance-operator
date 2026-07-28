@@ -944,11 +944,19 @@ spec:
 				"--output-format=" + format,
 				"--output-file=" + outputFile,
 			}, extraArgs...)
+
+			GinkgoWriter.Printf("run-once: format=%s file=%s args=%v\n", format, filename, extraArgs)
+			start := time.Now()
+
 			cmd := exec.Command(managerBin, args...)
 			output, err := utils.Run(cmd)
+
+			GinkgoWriter.Printf("run-once: completed in %s (format=%s)\n", time.Since(start).Round(time.Millisecond), format)
+
 			Expect(err).NotTo(HaveOccurred(), "run-once failed: %s", output)
 			data, err := os.ReadFile(outputFile)
 			Expect(err).NotTo(HaveOccurred(), "failed to read results file")
+			GinkgoWriter.Printf("run-once: output file size=%d bytes\n", len(data))
 			return data
 		}
 

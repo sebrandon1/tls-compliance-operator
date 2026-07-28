@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/onsi/ginkgo/v2" //nolint:revive
 )
@@ -37,7 +38,12 @@ func Run(cmd *exec.Cmd) (string, error) {
 	cmd.Env = append(os.Environ(), "GO111MODULE=on")
 	command := strings.Join(cmd.Args, " ")
 	_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "running: %s\n", command)
+	start := time.Now()
 	output, err := cmd.CombinedOutput()
+	elapsed := time.Since(start)
+	if elapsed >= 10*time.Second {
+		_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "completed in %s: %s\n", elapsed.Round(time.Millisecond), command)
+	}
 	if err != nil {
 		return string(output), fmt.Errorf("%s failed with error: (%v) %s", command, err, string(output))
 	}
