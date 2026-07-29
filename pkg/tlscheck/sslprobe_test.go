@@ -146,6 +146,41 @@ func TestProbeSSL30_TLS12ServerHello(t *testing.T) {
 	}
 }
 
+func TestProbeSSL30_OversizedRecordLen(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start listener: %v", err)
+	}
+	defer ln.Close() //nolint:errcheck
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close() //nolint:errcheck
+		buf := make([]byte, 512)
+		_, _ = conn.Read(buf)
+
+		// SSLv3 handshake record with recordLen exceeding maxTLSRecordPayload
+		response := []byte{
+			recordTypeHandshake, sslVersionSSL30Major, sslVersionSSL30Minor,
+			0xFF, 0xFF, // recordLen = 65535, exceeds 16384
+			handshakeTypeServerHello, 0, 0, 2,
+			sslVersionSSL30Major, sslVersionSSL30Minor,
+		}
+		_, _ = conn.Write(response)
+	}()
+
+	checker := NewTLSChecker(2 * time.Second)
+	ctx := context.Background()
+
+	supported := checker.ProbeSSL30(ctx, ln.Addr().String())
+	if supported {
+		t.Error("expected false for oversized record length")
+	}
+}
+
 // buildMockSSL30ServerHello constructs a minimal SSLv3 ServerHello response.
 func buildMockSSL30ServerHello() []byte {
 	// ServerHello body: version(2) + random(32) + session_id_len(1) + cipher(2) + compression(1)
