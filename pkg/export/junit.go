@@ -108,7 +108,7 @@ func reportToTestCase(r *securityv1alpha1.TLSComplianceReport) JUnitTestCase {
 		}
 	case securityv1alpha1.ComplianceStatusWarning:
 		tc.Failure = &JUnitFailure{
-			Message: "Warning: TLS 1.3 not supported",
+			Message: "Warning: endpoint supports modern TLS but also allows legacy versions",
 			Text:    failureDetail(r),
 		}
 	case securityv1alpha1.ComplianceStatusUnreachable,

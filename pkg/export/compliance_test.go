@@ -97,6 +97,11 @@ func TestHasNonCompliantReports(t *testing.T) {
 			reports:  []securityv1alpha1.TLSComplianceReport{makeReport(securityv1alpha1.ComplianceStatusMutualTLSRequired)},
 			expected: false,
 		},
+		{
+			name:     "Warning alone does not trigger",
+			reports:  []securityv1alpha1.TLSComplianceReport{makeReport(securityv1alpha1.ComplianceStatusWarning)},
+			expected: false,
+		},
 	}
 
 	for _, tc := range tests {
