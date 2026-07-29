@@ -87,9 +87,12 @@ var errWorkersBusy = errors.New("TLS check deferred: workers busy")
 
 const workerBusyRequeueDelay = 10 * time.Second
 
+const listPageSize = 500
+
 // EndpointReconciler reconciles Service, Ingress, and Route resources
 type EndpointReconciler struct {
 	client.Client
+	APIReader             client.Reader
 	Scheme                *runtime.Scheme
 	TLSChecker            tlscheck.Checker
 	Recorder              record.EventRecorder
@@ -114,6 +117,13 @@ type EndpointReconciler struct {
 	ManagerCtx            context.Context
 	checkSem              chan struct{}
 	checkSemOnce          sync.Once
+}
+
+func (r *EndpointReconciler) apiReader() client.Reader {
+	if r.APIReader != nil {
+		return r.APIReader
+	}
+	return r.Client
 }
 
 func (r *EndpointReconciler) updateStatusWithRetry(ctx context.Context, name string, mutateFn func(*securityv1alpha1.TLSComplianceReport)) error {
@@ -1107,41 +1117,48 @@ func (r *EndpointReconciler) runScanCycleWithError(ctx context.Context, logger l
 func (r *EndpointReconciler) scanPodEndpoints(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 
-	var podList corev1.PodList
-	if err := r.List(ctx, &podList); err != nil {
-		return fmt.Errorf("failed to list pods: %w", err)
-	}
-
-	for i := range podList.Items {
-		pod := &podList.Items[i]
-
-		if r.isNamespaceFiltered(pod.Namespace) {
-			continue
+	var continueToken string
+	for {
+		var podList corev1.PodList
+		if err := r.apiReader().List(ctx, &podList, client.Limit(listPageSize), client.Continue(continueToken)); err != nil {
+			return fmt.Errorf("failed to list pods: %w", err)
 		}
 
-		endpoints := endpoint.ExtractFromPod(pod)
-		for _, ep := range endpoints {
-			if err := r.processEndpoint(ctx, ep); err != nil {
-				logger.Error(err, "failed to process pod endpoint",
-					"pod", pod.Name, "namespace", pod.Namespace,
-					"host", ep.Host, "port", ep.Port)
+		for i := range podList.Items {
+			pod := &podList.Items[i]
+
+			if r.isNamespaceFiltered(pod.Namespace) {
 				continue
 			}
 
-			// Label hostNetwork pod CRs for queryability
-			if pod.Spec.HostNetwork {
-				crName := endpoint.GenerateCRName(ep)
-				if err := r.updateWithRetry(ctx, crName, func(cr *securityv1alpha1.TLSComplianceReport) {
-					labels := cr.Labels
-					if labels == nil {
-						labels = make(map[string]string)
+			endpoints := endpoint.ExtractFromPod(pod)
+			for _, ep := range endpoints {
+				if err := r.processEndpoint(ctx, ep); err != nil {
+					logger.Error(err, "failed to process pod endpoint",
+						"pod", pod.Name, "namespace", pod.Namespace,
+						"host", ep.Host, "port", ep.Port)
+					continue
+				}
+
+				if pod.Spec.HostNetwork {
+					crName := endpoint.GenerateCRName(ep)
+					if err := r.updateWithRetry(ctx, crName, func(cr *securityv1alpha1.TLSComplianceReport) {
+						labels := cr.Labels
+						if labels == nil {
+							labels = make(map[string]string)
+						}
+						labels["tls-compliance.telco.openshift.io/host-network"] = "true"
+						cr.Labels = labels
+					}); err != nil && !apierrors.IsNotFound(err) {
+						logger.Error(err, "failed to label hostNetwork CR", "name", crName)
 					}
-					labels["tls-compliance.telco.openshift.io/host-network"] = "true"
-					cr.Labels = labels
-				}); err != nil && !apierrors.IsNotFound(err) {
-					logger.Error(err, "failed to label hostNetwork CR", "name", crName)
 				}
 			}
+		}
+
+		continueToken = podList.Continue
+		if continueToken == "" {
+			break
 		}
 	}
 
@@ -1333,14 +1350,25 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 	}
 
 	if neededKinds[securityv1alpha1.SourceKindPod] {
-		var podList corev1.PodList
-		if err := r.List(ctx, &podList); err != nil {
-			logger.Error(err, "failed to list Pods for cleanup")
-		} else {
-			podSet := make(map[string]bool, len(podList.Items))
+		podSet := make(map[string]bool)
+		var podContinue string
+		var podErr error
+		for {
+			var podList corev1.PodList
+			if err := r.apiReader().List(ctx, &podList, client.Limit(listPageSize), client.Continue(podContinue)); err != nil {
+				logger.Error(err, "failed to list Pods for cleanup")
+				podErr = err
+				break
+			}
 			for i := range podList.Items {
 				podSet[sourceKey(podList.Items[i].Namespace, podList.Items[i].Name)] = true
 			}
+			podContinue = podList.Continue
+			if podContinue == "" {
+				break
+			}
+		}
+		if podErr == nil {
 			existingSources[securityv1alpha1.SourceKindPod] = podSet
 		}
 	}

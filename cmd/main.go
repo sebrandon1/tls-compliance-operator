@@ -417,6 +417,7 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 
 	endpointReconciler := &controller.EndpointReconciler{
 		Client:                mgr.GetClient(),
+		APIReader:             mgr.GetAPIReader(),
 		Scheme:                mgr.GetScheme(),
 		TLSChecker:            checker,
 		Recorder:              mgr.GetEventRecorderFor("tls-compliance-controller"), //nolint:staticcheck
