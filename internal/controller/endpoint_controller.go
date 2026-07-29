@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sort"
@@ -81,6 +82,10 @@ const (
 	EventReasonPQCNotReady         = "PQCNotReady"
 	RescanAnnotation               = "tls-compliance.telco.openshift.io/rescan"
 )
+
+var errWorkersBusy = errors.New("TLS check deferred: workers busy")
+
+const workerBusyRequeueDelay = 10 * time.Second
 
 // EndpointReconciler reconciles Service, Ingress, and Route resources
 type EndpointReconciler struct {
@@ -202,8 +207,13 @@ func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 func (r *EndpointReconciler) handleEndpoints(ctx context.Context, endpoints []endpoint.Endpoint, sourceKind securityv1alpha1.SourceKind) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	var firstErr error
+	var deferred bool
 	for _, ep := range endpoints {
 		if err := r.processEndpoint(ctx, ep); err != nil {
+			if errors.Is(err, errWorkersBusy) {
+				deferred = true
+				continue
+			}
 			logger.Error(err, "failed to process endpoint", "host", ep.Host, "port", ep.Port)
 			metrics.RecordReconcileError(string(sourceKind), "process")
 			if firstErr == nil {
@@ -213,6 +223,9 @@ func (r *EndpointReconciler) handleEndpoints(ctx context.Context, endpoints []en
 	}
 	if firstErr != nil {
 		return ctrl.Result{}, firstErr
+	}
+	if deferred {
+		return ctrl.Result{RequeueAfter: workerBusyRequeueDelay}, nil
 	}
 	metrics.RecordReconcile("success")
 	return ctrl.Result{}, nil
@@ -299,6 +312,9 @@ func (r *EndpointReconciler) handleTarget(ctx context.Context, target *securityv
 	crName := endpoint.GenerateCRName(ep)
 
 	if err := r.processEndpoint(ctx, ep); err != nil {
+		if errors.Is(err, errWorkersBusy) {
+			return ctrl.Result{RequeueAfter: workerBusyRequeueDelay}, nil
+		}
 		logger.Error(err, "failed to process Target endpoint", "host", ep.Host, "port", ep.Port)
 		metrics.RecordReconcileError(string(securityv1alpha1.SourceKindTarget), "process")
 		r.updateTargetStatus(ctx, target.Name, crName, "", err.Error())
@@ -460,7 +476,8 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep endpoint.En
 				r.performTLSCheck(checkCtx, crName, ep.Host, int(ep.Port), ep.SourceNamespace)
 			}()
 		default:
-			logger.V(1).Info("TLS check deferred to next scan cycle (workers busy)", "host", ep.Host, "port", ep.Port)
+			logger.V(1).Info("TLS check deferred, requeuing", "host", ep.Host, "port", ep.Port)
+			return errWorkersBusy
 		}
 
 		return nil
