@@ -38,6 +38,10 @@ type Checker interface {
 // DefaultTimeout is the default timeout for individual TLS connection attempts
 const DefaultTimeout = 5 * time.Second
 
+// maxCipherIterations caps the number of TLS connections made during cipher
+// enumeration to prevent pathological cases against servers supporting many suites.
+const maxCipherIterations = 20
+
 // DefaultALPNProtos is the list of ALPN protocols offered during TLS probing.
 var DefaultALPNProtos = []string{"h2", "http/1.1"}
 
@@ -291,7 +295,7 @@ func (c *TLSChecker) enumerateCiphers(ctx context.Context, addr, serverName stri
 	seenIDs := map[uint16]bool{firstCipherID: true}
 	dialer := &net.Dialer{Timeout: c.Timeout}
 
-	for {
+	for range maxCipherIterations {
 		select {
 		case <-ctx.Done():
 			return discovered
