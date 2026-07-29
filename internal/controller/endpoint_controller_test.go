@@ -2742,5 +2742,561 @@ func TestHandleTarget_ProcessEndpointError(t *testing.T) {
 	}
 }
 
+func TestHandleEndpoints_WorkersBusy_Requeues(t *testing.T) {
+	scheme := newTestScheme()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:     fakeClient,
+		Scheme:     scheme,
+		Workers:    1,
+		TLSChecker: &MockTLSChecker{},
+		Recorder:   record.NewFakeRecorder(10),
+		ManagerCtx: context.Background(),
+	}
+
+	r.initCheckSemaphore()
+	// Fill the semaphore so all workers appear busy
+	r.checkSem <- struct{}{}
+
+	endpoints := []endpoint.Endpoint{
+		{
+			Host:            "test-svc.default",
+			Port:            8443,
+			SourceKind:      securityv1alpha1.SourceKindService,
+			SourceNamespace: testNamespace,
+			SourceName:      "test-svc",
+		},
+	}
+
+	result, err := r.handleEndpoints(context.Background(), endpoints, securityv1alpha1.SourceKindService)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.RequeueAfter != workerBusyRequeueDelay {
+		t.Errorf("expected RequeueAfter=%v, got %v", workerBusyRequeueDelay, result.RequeueAfter)
+	}
+
+	// Drain the semaphore
+	<-r.checkSem
+}
+
+func TestHandleTarget_WorkersBusy_Requeues(t *testing.T) {
+	scheme := newTestScheme()
+
+	target := &securityv1alpha1.TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "busy-target"},
+		Spec: securityv1alpha1.TLSComplianceTargetSpec{
+			Host: "busy-host.example.com",
+			Port: 443,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(target).
+		WithStatusSubresource(target, &securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:     fakeClient,
+		Scheme:     scheme,
+		Workers:    1,
+		TLSChecker: &MockTLSChecker{},
+		Recorder:   record.NewFakeRecorder(10),
+		ManagerCtx: context.Background(),
+	}
+
+	r.initCheckSemaphore()
+	r.checkSem <- struct{}{}
+
+	result, err := r.handleTarget(context.Background(), target)
+	if err != nil {
+		t.Fatalf("expected no error from handleTarget when workers busy, got %v", err)
+	}
+	if result.RequeueAfter != workerBusyRequeueDelay {
+		t.Errorf("expected RequeueAfter=%v, got %v", workerBusyRequeueDelay, result.RequeueAfter)
+	}
+
+	<-r.checkSem
+}
+
+func TestParseNamespaceList(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected map[string]bool
+	}{
+		{
+			name:     "empty string",
+			input:    "",
+			expected: map[string]bool{},
+		},
+		{
+			name:     "single namespace",
+			input:    "default",
+			expected: map[string]bool{"default": true},
+		},
+		{
+			name:     "multiple namespaces",
+			input:    "default,kube-system,monitoring",
+			expected: map[string]bool{"default": true, "kube-system": true, "monitoring": true},
+		},
+		{
+			name:     "whitespace trimming",
+			input:    " default , kube-system , monitoring ",
+			expected: map[string]bool{"default": true, "kube-system": true, "monitoring": true},
+		},
+		{
+			name:     "trailing comma produces empty segment skipped",
+			input:    "default,kube-system,",
+			expected: map[string]bool{"default": true, "kube-system": true},
+		},
+		{
+			name:     "only commas",
+			input:    ",,,",
+			expected: map[string]bool{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ParseNamespaceList(tt.input)
+			if len(result) != len(tt.expected) {
+				t.Errorf("expected %d entries, got %d: %v", len(tt.expected), len(result), result)
+				return
+			}
+			for k, v := range tt.expected {
+				if result[k] != v {
+					t.Errorf("expected key %q=%v, got %v", k, v, result[k])
+				}
+			}
+		})
+	}
+}
+
+func TestFailureReasonToComplianceStatus(t *testing.T) {
+	tests := []struct {
+		reason   tlscheck.FailureReason
+		expected securityv1alpha1.ComplianceStatus
+	}{
+		{tlscheck.FailureReasonNoTLS, securityv1alpha1.ComplianceStatusNoTLS},
+		{tlscheck.FailureReasonPlaintextHTTP, securityv1alpha1.ComplianceStatusPlaintextHTTP},
+		{tlscheck.FailureReasonMutualTLSRequired, securityv1alpha1.ComplianceStatusMutualTLSRequired},
+		{tlscheck.FailureReasonTimeout, securityv1alpha1.ComplianceStatusTimeout},
+		{tlscheck.FailureReasonClosed, securityv1alpha1.ComplianceStatusClosed},
+		{tlscheck.FailureReasonFiltered, securityv1alpha1.ComplianceStatusFiltered},
+		{tlscheck.FailureReasonUnreachable, securityv1alpha1.ComplianceStatusUnreachable},
+		{tlscheck.FailureReason("SomethingUnknown"), securityv1alpha1.ComplianceStatusUnreachable},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.reason), func(t *testing.T) {
+			got := failureReasonToComplianceStatus(tt.reason)
+			if got != tt.expected {
+				t.Errorf("failureReasonToComplianceStatus(%q) = %q, want %q", tt.reason, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestHostPort(t *testing.T) {
+	tests := []struct {
+		host     string
+		port     int32
+		expected string
+	}{
+		{"192.168.1.1", 443, "192.168.1.1:443"},
+		{"example.com", 8443, "example.com:8443"},
+		{"::1", 443, "[::1]:443"},
+		{"fe80::1", 8080, "[fe80::1]:8080"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			got := hostPort(tt.host, tt.port)
+			if got != tt.expected {
+				t.Errorf("hostPort(%q, %d) = %q, want %q", tt.host, tt.port, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestUpdateConditions_TLSCompliant(t *testing.T) {
+	tests := []struct {
+		name           string
+		status         securityv1alpha1.ComplianceStatus
+		expectedStatus metav1.ConditionStatus
+		expectedReason string
+	}{
+		{
+			name:           "Compliant",
+			status:         securityv1alpha1.ComplianceStatusCompliant,
+			expectedStatus: metav1.ConditionTrue,
+			expectedReason: "Compliant",
+		},
+		{
+			name:           "NonCompliant",
+			status:         securityv1alpha1.ComplianceStatusNonCompliant,
+			expectedStatus: metav1.ConditionFalse,
+			expectedReason: "NonCompliant",
+		},
+		{
+			name:           "Unknown status",
+			status:         securityv1alpha1.ComplianceStatusUnreachable,
+			expectedStatus: metav1.ConditionUnknown,
+			expectedReason: "Unknown",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &EndpointReconciler{}
+			cr := &securityv1alpha1.TLSComplianceReport{}
+			result := &tlscheck.TLSCheckResult{}
+
+			r.updateConditions(cr, tt.status, result)
+
+			var found bool
+			for _, c := range cr.Status.Conditions {
+				if c.Type == "TLSCompliant" {
+					found = true
+					if c.Status != tt.expectedStatus {
+						t.Errorf("TLSCompliant status = %v, want %v", c.Status, tt.expectedStatus)
+					}
+					if c.Reason != tt.expectedReason {
+						t.Errorf("TLSCompliant reason = %q, want %q", c.Reason, tt.expectedReason)
+					}
+				}
+			}
+			if !found {
+				t.Error("TLSCompliant condition not found")
+			}
+		})
+	}
+}
+
+func TestUpdateConditions_CertificateValid(t *testing.T) {
+	tests := []struct {
+		name           string
+		cert           *tlscheck.CertificateDetails
+		certExpiryDays int
+		expectedStatus metav1.ConditionStatus
+		expectedReason string
+	}{
+		{
+			name:           "expired certificate",
+			cert:           &tlscheck.CertificateDetails{IsExpired: true, DaysUntilExpiry: -5},
+			certExpiryDays: 30,
+			expectedStatus: metav1.ConditionFalse,
+			expectedReason: "Expired",
+		},
+		{
+			name:           "expiring soon",
+			cert:           &tlscheck.CertificateDetails{IsExpired: false, DaysUntilExpiry: 15},
+			certExpiryDays: 30,
+			expectedStatus: metav1.ConditionFalse,
+			expectedReason: "Expiring",
+		},
+		{
+			name:           "valid certificate",
+			cert:           &tlscheck.CertificateDetails{IsExpired: false, DaysUntilExpiry: 365},
+			certExpiryDays: 30,
+			expectedStatus: metav1.ConditionTrue,
+			expectedReason: "Valid",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &EndpointReconciler{CertExpiryDays: tt.certExpiryDays}
+			cr := &securityv1alpha1.TLSComplianceReport{}
+			result := &tlscheck.TLSCheckResult{Certificate: tt.cert}
+
+			r.updateConditions(cr, securityv1alpha1.ComplianceStatusCompliant, result)
+
+			var found bool
+			for _, c := range cr.Status.Conditions {
+				if c.Type == "CertificateValid" {
+					found = true
+					if c.Status != tt.expectedStatus {
+						t.Errorf("CertificateValid status = %v, want %v", c.Status, tt.expectedStatus)
+					}
+					if c.Reason != tt.expectedReason {
+						t.Errorf("CertificateValid reason = %q, want %q", c.Reason, tt.expectedReason)
+					}
+				}
+			}
+			if !found {
+				t.Error("CertificateValid condition not found")
+			}
+		})
+	}
+}
+
+func TestUpdateConditions_NoCertificate(t *testing.T) {
+	r := &EndpointReconciler{}
+	cr := &securityv1alpha1.TLSComplianceReport{}
+	result := &tlscheck.TLSCheckResult{}
+
+	r.updateConditions(cr, securityv1alpha1.ComplianceStatusCompliant, result)
+
+	for _, c := range cr.Status.Conditions {
+		if c.Type == "CertificateValid" {
+			t.Error("CertificateValid condition should not be set when no certificate")
+		}
+	}
+}
+
+func TestUpdateConditions_PQCNoPQC(t *testing.T) {
+	r := &EndpointReconciler{}
+	cr := &securityv1alpha1.TLSComplianceReport{
+		Status: securityv1alpha1.TLSComplianceReportStatus{
+			PQCReadiness: securityv1alpha1.PQCReadinessNoPQC,
+		},
+	}
+	result := &tlscheck.TLSCheckResult{}
+
+	r.updateConditions(cr, securityv1alpha1.ComplianceStatusCompliant, result)
+
+	for _, c := range cr.Status.Conditions {
+		if c.Type == "PQCCompliant" {
+			if c.Status != metav1.ConditionUnknown {
+				t.Errorf("PQCCompliant status = %v, want Unknown", c.Status)
+			}
+			if c.Reason != "NoPQC" {
+				t.Errorf("PQCCompliant reason = %q, want NoPQC", c.Reason)
+			}
+			return
+		}
+	}
+	t.Error("PQCCompliant condition not found")
+}
+
+func TestEmitComplianceEvents(t *testing.T) {
+	tests := []struct {
+		name            string
+		certExpiryDays  int
+		complianceStatus securityv1alpha1.ComplianceStatus
+		pqcReadiness    securityv1alpha1.PQCReadiness
+		oldStatus       securityv1alpha1.ComplianceStatus
+		oldPQC          securityv1alpha1.PQCReadiness
+		result          *tlscheck.TLSCheckResult
+		expectedReason  string
+	}{
+		{
+			name:             "NonCompliant",
+			complianceStatus: securityv1alpha1.ComplianceStatusNonCompliant,
+			result:           &tlscheck.TLSCheckResult{},
+			expectedReason:   EventReasonTLSNonCompliant,
+		},
+		{
+			name:             "ComplianceChanged",
+			complianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+			oldStatus:        securityv1alpha1.ComplianceStatusNonCompliant,
+			result:           &tlscheck.TLSCheckResult{},
+			expectedReason:   EventReasonComplianceChanged,
+		},
+		{
+			name:             "PQCReady",
+			complianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+			pqcReadiness:     securityv1alpha1.PQCReadinessPQCReady,
+			oldPQC:           securityv1alpha1.PQCReadinessTLS13Capable,
+			result:           &tlscheck.TLSCheckResult{},
+			expectedReason:   EventReasonPQCReady,
+		},
+		{
+			name:             "CertificateExpired",
+			complianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+			result:           &tlscheck.TLSCheckResult{Certificate: &tlscheck.CertificateDetails{IsExpired: true}},
+			expectedReason:   EventReasonCertificateExpired,
+		},
+		{
+			name:             "CertificateExpiring",
+			certExpiryDays:   30,
+			complianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+			result:           &tlscheck.TLSCheckResult{Certificate: &tlscheck.CertificateDetails{IsExpired: false, DaysUntilExpiry: 10}},
+			expectedReason:   EventReasonCertificateExpiring,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := record.NewFakeRecorder(10)
+			r := &EndpointReconciler{Recorder: recorder, CertExpiryDays: tt.certExpiryDays}
+			cr := &securityv1alpha1.TLSComplianceReport{
+				Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "example.com", Port: 443},
+				Status: securityv1alpha1.TLSComplianceReportStatus{
+					ComplianceStatus: tt.complianceStatus,
+					PQCReadiness:     tt.pqcReadiness,
+				},
+			}
+
+			r.emitComplianceEvents(cr, tt.oldStatus, tt.oldPQC, tt.result)
+
+			select {
+			case event := <-recorder.Events:
+				if !strings.Contains(event, tt.expectedReason) {
+					t.Errorf("expected event with reason %q, got %q", tt.expectedReason, event)
+				}
+			default:
+				t.Errorf("expected %s event, got none", tt.expectedReason)
+			}
+		})
+	}
+}
+
+func TestEmitComplianceEvents_RecorderNil(t *testing.T) {
+	r := &EndpointReconciler{Recorder: nil}
+	cr := &securityv1alpha1.TLSComplianceReport{
+		Status: securityv1alpha1.TLSComplianceReportStatus{
+			ComplianceStatus: securityv1alpha1.ComplianceStatusNonCompliant,
+		},
+	}
+
+	r.emitComplianceEvents(cr, "", "", &tlscheck.TLSCheckResult{})
+}
+
+func TestCleanupOrphanedCRs_TTL(t *testing.T) {
+	tests := []struct {
+		name              string
+		retentionDays     int
+		lastCheckAt       *metav1.Time
+		creationTimestamp metav1.Time
+		expectedCRCount   int
+	}{
+		{
+			name:          "expired with LastCheckAt",
+			retentionDays: 1,
+			lastCheckAt:   func() *metav1.Time { t := metav1.NewTime(time.Now().Add(-48 * time.Hour)); return &t }(),
+			expectedCRCount: 0,
+		},
+		{
+			name:          "not expired",
+			retentionDays: 1,
+			lastCheckAt:   func() *metav1.Time { t := metav1.NewTime(time.Now().Add(-1 * time.Hour)); return &t }(),
+			expectedCRCount: 1,
+		},
+		{
+			name:              "nil LastCheckAt uses CreationTimestamp",
+			retentionDays:     1,
+			creationTimestamp: metav1.NewTime(time.Now().Add(-72 * time.Hour)),
+			expectedCRCount:   0,
+		},
+		{
+			name:          "disabled when RetentionDays is 0",
+			retentionDays: 0,
+			lastCheckAt:   func() *metav1.Time { t := metav1.NewTime(time.Now().Add(-72 * time.Hour)); return &t }(),
+			expectedCRCount: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := newTestScheme()
+			ctx := context.Background()
+
+			cr := &securityv1alpha1.TLSComplianceReport{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "test-service-443-abc12345",
+					Namespace:         testNamespace,
+					CreationTimestamp: tt.creationTimestamp,
+				},
+				Spec: securityv1alpha1.TLSComplianceReportSpec{
+					Host:            "test-service.default.svc",
+					Port:            443,
+					SourceKind:      securityv1alpha1.SourceKindService,
+					SourceName:      "test-service",
+					SourceNamespace: testNamespace,
+				},
+				Status: securityv1alpha1.TLSComplianceReportStatus{
+					LastCheckAt: tt.lastCheckAt,
+				},
+			}
+
+			svc := &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-service",
+					Namespace: testNamespace,
+				},
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(cr, svc).
+				WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+				Build()
+
+			r := &EndpointReconciler{
+				Client:              fakeClient,
+				Scheme:              scheme,
+				ReportRetentionDays: tt.retentionDays,
+			}
+
+			if err := r.cleanupOrphanedCRs(ctx); err != nil {
+				t.Fatalf("cleanupOrphanedCRs() error = %v", err)
+			}
+
+			var crList securityv1alpha1.TLSComplianceReportList
+			if err := fakeClient.List(ctx, &crList); err != nil {
+				t.Fatalf("List() error = %v", err)
+			}
+			if len(crList.Items) != tt.expectedCRCount {
+				t.Errorf("expected %d CRs, got %d", tt.expectedCRCount, len(crList.Items))
+			}
+		})
+	}
+}
+
+func TestCleanupOrphanedCRs_EmptyList(t *testing.T) {
+	scheme := newTestScheme()
+	ctx := context.Background()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	r := &EndpointReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+	}
+
+	if err := r.cleanupOrphanedCRs(ctx); err != nil {
+		t.Fatalf("cleanupOrphanedCRs() with empty list error = %v", err)
+	}
+}
+
+func TestInitCheckSemaphore_DefaultWorkers(t *testing.T) {
+	r := &EndpointReconciler{Workers: 0}
+	r.initCheckSemaphore()
+
+	if cap(r.checkSem) != 5 {
+		t.Errorf("expected default semaphore capacity of 5, got %d", cap(r.checkSem))
+	}
+}
+
+func TestInitCheckSemaphore_OnceSemantics(t *testing.T) {
+	r := &EndpointReconciler{Workers: 3}
+	r.initCheckSemaphore()
+	r.Workers = 10
+	r.initCheckSemaphore()
+
+	if cap(r.checkSem) != 3 {
+		t.Errorf("expected semaphore capacity to stay at 3 (sync.Once), got %d", cap(r.checkSem))
+	}
+}
+
+func TestDetermineComplianceStatus_SSL30Only(t *testing.T) {
+	result := &tlscheck.TLSCheckResult{SupportsSSL30: true}
+	got := determineComplianceStatus(result)
+	if got != securityv1alpha1.ComplianceStatusNonCompliant {
+		t.Errorf("SSL 3.0 only = %q, want NonCompliant", got)
+	}
+}
+
 // Ensure _ satisfies the client.Object interface for compile-time check
 var _ client.Object = &securityv1alpha1.TLSComplianceReport{}
