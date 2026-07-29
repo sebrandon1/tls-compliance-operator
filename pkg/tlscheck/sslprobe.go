@@ -34,6 +34,9 @@ const (
 	// Handshake message types
 	handshakeTypeClientHello = 1
 	handshakeTypeServerHello = 2
+
+	// maxTLSRecordPayload is the maximum TLS record payload per RFC 8446 §5.1.
+	maxTLSRecordPayload = 16384
 )
 
 // ssl30ClientHello is the pre-built SSLv3 ClientHello (static, never changes).
@@ -131,7 +134,7 @@ func isSSL30ServerHello(conn net.Conn) bool {
 
 	// Read enough of the handshake to check the message type and version
 	recordLen := binary.BigEndian.Uint16(header[3:5])
-	if recordLen < 6 {
+	if recordLen < 6 || recordLen > maxTLSRecordPayload {
 		return false
 	}
 
