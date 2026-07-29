@@ -1385,6 +1385,271 @@ func TestEndpointReconciler_ScanPodEndpoints_HostNetworkLabel(t *testing.T) {
 	}
 }
 
+func TestScanPodEndpoints_Paginated(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	pod1 := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-page1", Namespace: testNamespace},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "app", Ports: []corev1.ContainerPort{{ContainerPort: 443, Protocol: corev1.ProtocolTCP}}},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.0.0.1"},
+	}
+	pod2 := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-page2", Namespace: testNamespace},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "app", Ports: []corev1.ContainerPort{{ContainerPort: 8443, Protocol: corev1.ProtocolTCP}}},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.0.0.2"},
+	}
+
+	callCount := 0
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(pod1, pod2).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if podList, ok := list.(*corev1.PodList); ok {
+					callCount++
+					if err := cl.List(ctx, list, opts...); err != nil {
+						return err
+					}
+					if callCount == 1 && len(podList.Items) > 1 {
+						podList.Items = podList.Items[:1]
+						podList.Continue = "page2-token"
+					}
+					return nil
+				}
+				return cl.List(ctx, list, opts...)
+			},
+		}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		CertExpiryDays: 30,
+	}
+
+	err := reconciler.scanPodEndpoints(ctx)
+	if err != nil {
+		t.Fatalf("scanPodEndpoints() error = %v", err)
+	}
+
+	if callCount < 2 {
+		t.Errorf("expected at least 2 List calls for pagination, got %d", callCount)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("Failed to list TLSComplianceReports: %v", err)
+	}
+	if len(crList.Items) < 1 {
+		t.Error("expected at least 1 TLSComplianceReport from paginated scan")
+	}
+}
+
+func TestScanPodEndpoints_ListError(t *testing.T) {
+	scheme := newTestScheme()
+	injectedErr := fmt.Errorf("injected pod list error")
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if _, ok := list.(*corev1.PodList); ok {
+					return injectedErr
+				}
+				return cl.List(ctx, list, opts...)
+			},
+		}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		CertExpiryDays: 30,
+	}
+
+	err := reconciler.scanPodEndpoints(context.Background())
+	if err == nil {
+		t.Fatal("expected error from scanPodEndpoints when List fails")
+	}
+	if !strings.Contains(err.Error(), "injected pod list error") {
+		t.Errorf("expected injected error, got: %v", err)
+	}
+}
+
+func TestScanPodEndpoints_EmptyList(t *testing.T) {
+	scheme := newTestScheme()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		CertExpiryDays: 30,
+	}
+
+	err := reconciler.scanPodEndpoints(context.Background())
+	if err != nil {
+		t.Fatalf("scanPodEndpoints() with empty list error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(context.Background(), &crList); err != nil {
+		t.Fatalf("Failed to list CRs: %v", err)
+	}
+	if len(crList.Items) != 0 {
+		t.Errorf("expected 0 CRs from empty pod list, got %d", len(crList.Items))
+	}
+}
+
+func TestCleanupOrphanedCRs_PodListError_PreservesCRs(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	podCR := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "pod-sourced-cr",
+		},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host:            "10.0.0.5",
+			Port:            443,
+			SourceKind:      securityv1alpha1.SourceKindPod,
+			SourceNamespace: testNamespace,
+			SourceName:      "gone-pod",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(podCR).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if _, ok := list.(*corev1.PodList); ok {
+					return fmt.Errorf("injected pod list error")
+				}
+				return cl.List(ctx, list, opts...)
+			},
+		}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+	}
+
+	err := reconciler.cleanupOrphanedCRs(ctx)
+	if err != nil {
+		t.Fatalf("cleanupOrphanedCRs() error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("List CRs error = %v", err)
+	}
+	if len(crList.Items) != 1 {
+		t.Fatalf("expected pod-sourced CR to be preserved on List error, got %d CRs", len(crList.Items))
+	}
+	if crList.Items[0].Name != "pod-sourced-cr" {
+		t.Errorf("expected 'pod-sourced-cr' to survive, got %q", crList.Items[0].Name)
+	}
+}
+
+func TestCleanupOrphanedCRs_PodPagination(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	pod1 := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: testNamespace},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	pod2 := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-b", Namespace: testNamespace},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+
+	existingCR := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-b-cr"},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host:            "10.0.0.2",
+			Port:            443,
+			SourceKind:      securityv1alpha1.SourceKindPod,
+			SourceNamespace: testNamespace,
+			SourceName:      "pod-b",
+		},
+	}
+	orphanedCR := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "deleted-pod-cr"},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host:            "10.0.0.99",
+			Port:            443,
+			SourceKind:      securityv1alpha1.SourceKindPod,
+			SourceNamespace: testNamespace,
+			SourceName:      "deleted-pod",
+		},
+	}
+
+	podListCalls := 0
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(pod1, pod2, existingCR, orphanedCR).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if podList, ok := list.(*corev1.PodList); ok {
+					podListCalls++
+					if err := cl.List(ctx, list, opts...); err != nil {
+						return err
+					}
+					if podListCalls == 1 && len(podList.Items) > 1 {
+						podList.Items = podList.Items[:1]
+						podList.Continue = "page2"
+					}
+					return nil
+				}
+				return cl.List(ctx, list, opts...)
+			},
+		}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+	}
+
+	if err := reconciler.cleanupOrphanedCRs(ctx); err != nil {
+		t.Fatalf("cleanupOrphanedCRs() error = %v", err)
+	}
+
+	if podListCalls < 2 {
+		t.Errorf("expected at least 2 pod List calls for pagination, got %d", podListCalls)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("List CRs error = %v", err)
+	}
+	if len(crList.Items) != 1 {
+		t.Fatalf("expected 1 CR (orphan deleted, existing kept), got %d", len(crList.Items))
+	}
+	if crList.Items[0].Name != "pod-b-cr" {
+		t.Errorf("expected 'pod-b-cr' to survive cleanup, got %q", crList.Items[0].Name)
+	}
+}
+
 func TestEndpointReconciler_RetryThenSuccess(t *testing.T) {
 	ctx := context.Background()
 	scheme := newTestScheme()
@@ -3079,14 +3344,14 @@ func TestUpdateConditions_PQCNoPQC(t *testing.T) {
 
 func TestEmitComplianceEvents(t *testing.T) {
 	tests := []struct {
-		name            string
-		certExpiryDays  int
+		name             string
+		certExpiryDays   int
 		complianceStatus securityv1alpha1.ComplianceStatus
-		pqcReadiness    securityv1alpha1.PQCReadiness
-		oldStatus       securityv1alpha1.ComplianceStatus
-		oldPQC          securityv1alpha1.PQCReadiness
-		result          *tlscheck.TLSCheckResult
-		expectedReason  string
+		pqcReadiness     securityv1alpha1.PQCReadiness
+		oldStatus        securityv1alpha1.ComplianceStatus
+		oldPQC           securityv1alpha1.PQCReadiness
+		result           *tlscheck.TLSCheckResult
+		expectedReason   string
 	}{
 		{
 			name:             "NonCompliant",
@@ -3170,15 +3435,15 @@ func TestCleanupOrphanedCRs_TTL(t *testing.T) {
 		expectedCRCount   int
 	}{
 		{
-			name:          "expired with LastCheckAt",
-			retentionDays: 1,
-			lastCheckAt:   func() *metav1.Time { t := metav1.NewTime(time.Now().Add(-48 * time.Hour)); return &t }(),
+			name:            "expired with LastCheckAt",
+			retentionDays:   1,
+			lastCheckAt:     func() *metav1.Time { t := metav1.NewTime(time.Now().Add(-48 * time.Hour)); return &t }(),
 			expectedCRCount: 0,
 		},
 		{
-			name:          "not expired",
-			retentionDays: 1,
-			lastCheckAt:   func() *metav1.Time { t := metav1.NewTime(time.Now().Add(-1 * time.Hour)); return &t }(),
+			name:            "not expired",
+			retentionDays:   1,
+			lastCheckAt:     func() *metav1.Time { t := metav1.NewTime(time.Now().Add(-1 * time.Hour)); return &t }(),
 			expectedCRCount: 1,
 		},
 		{
@@ -3188,9 +3453,9 @@ func TestCleanupOrphanedCRs_TTL(t *testing.T) {
 			expectedCRCount:   0,
 		},
 		{
-			name:          "disabled when RetentionDays is 0",
-			retentionDays: 0,
-			lastCheckAt:   func() *metav1.Time { t := metav1.NewTime(time.Now().Add(-72 * time.Hour)); return &t }(),
+			name:            "disabled when RetentionDays is 0",
+			retentionDays:   0,
+			lastCheckAt:     func() *metav1.Time { t := metav1.NewTime(time.Now().Add(-72 * time.Hour)); return &t }(),
 			expectedCRCount: 1,
 		},
 	}
