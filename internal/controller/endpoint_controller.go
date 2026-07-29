@@ -464,16 +464,12 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep endpoint.En
 				fmt.Sprintf("Discovered TLS endpoint %s from %s %s/%s", hostPort(ep.Host, ep.Port), ep.SourceKind, ep.SourceNamespace, ep.SourceName))
 		}
 
-		checkCtx := r.ManagerCtx
-		if checkCtx == nil {
-			checkCtx = context.Background()
-		}
 		r.initCheckSemaphore()
 		select {
 		case r.checkSem <- struct{}{}:
 			go func() {
 				defer func() { <-r.checkSem }()
-				r.performTLSCheck(checkCtx, crName, ep.Host, int(ep.Port), ep.SourceNamespace)
+				r.performTLSCheck(r.ManagerCtx, crName, ep.Host, int(ep.Port), ep.SourceNamespace)
 			}()
 		default:
 			logger.V(1).Info("TLS check deferred, requeuing", "host", ep.Host, "port", ep.Port)
