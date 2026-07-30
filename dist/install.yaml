@@ -562,6 +562,9 @@ spec:
     - jsonPath: .status.complianceStatus
       name: Status
       type: string
+    - jsonPath: .status.reportName
+      name: Report
+      type: string
     - jsonPath: .status.lastScannedAt
       name: Last Scanned
       type: date
@@ -838,12 +841,6 @@ rules:
 - apiGroups:
   - security.telco.openshift.io
   resources:
-  - tlscompliancereports/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - security.telco.openshift.io
-  resources:
   - tlscompliancereports/status
   - tlscompliancetargets/status
   verbs:
@@ -963,6 +960,8 @@ spec:
     matchLabels:
       app.kubernetes.io/name: tls-compliance-operator
       control-plane: controller-manager
+  strategy:
+    type: Recreate
   template:
     metadata:
       annotations:
@@ -989,6 +988,7 @@ spec:
         name: manager
         ports: []
         readinessProbe:
+          failureThreshold: 18
           httpGet:
             path: /readyz
             port: 8081
@@ -997,10 +997,10 @@ spec:
         resources:
           limits:
             cpu: 500m
-            memory: 256Mi
+            memory: 512Mi
           requests:
             cpu: 10m
-            memory: 64Mi
+            memory: 128Mi
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
