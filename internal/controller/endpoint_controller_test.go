@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -58,12 +59,18 @@ func newTestScheme() *runtime.Scheme {
 
 // MockTLSChecker implements tlscheck.Checker for testing
 type MockTLSChecker struct {
-	Result *tlscheck.TLSCheckResult
-	Err    error
+	Result    *tlscheck.TLSCheckResult
+	Err       error
+	callCount atomic.Int32
 }
 
 func (m *MockTLSChecker) CheckEndpoint(_ context.Context, _ string, _ int) (*tlscheck.TLSCheckResult, error) {
+	m.callCount.Add(1)
 	return m.Result, m.Err
+}
+
+func (m *MockTLSChecker) CheckCount() int32 {
+	return m.callCount.Load()
 }
 
 // SequencedMockTLSChecker returns different results on successive calls
@@ -1113,6 +1120,274 @@ func TestEndpointReconciler_ProcessEndpoint_Idempotent(t *testing.T) {
 	if len(crList.Items) != 1 {
 		t.Errorf("Expected 1 CR, got %d", len(crList.Items))
 	}
+}
+
+func TestProcessEndpoint_RetriesPendingCR(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	checker := &MockTLSChecker{
+		Result: &tlscheck.TLSCheckResult{
+			SupportsTLS12: true,
+			SupportsTLS13: true,
+		},
+	}
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		TLSChecker:     checker,
+		CertExpiryDays: 30,
+		Workers:        1,
+		ManagerCtx:     ctx,
+	}
+
+	ep := endpoint.Endpoint{
+		Host:            "pending.example",
+		Port:            443,
+		SourceKind:      securityv1alpha1.SourceKindService,
+		SourceNamespace: "default",
+		SourceName:      "pending-svc",
+	}
+
+	crName := endpoint.GenerateCRName(ep)
+	now := metav1.Now()
+	cr := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: crName},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: ep.Host, Port: ep.Port,
+			SourceKind: ep.SourceKind, SourceNamespace: ep.SourceNamespace, SourceName: ep.SourceName,
+		},
+	}
+	if err := fakeClient.Create(ctx, cr); err != nil {
+		t.Fatalf("failed to create CR: %v", err)
+	}
+	cr.Status = securityv1alpha1.TLSComplianceReportStatus{
+		ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
+		CheckCount:       0,
+		FirstSeenAt:      &now,
+		LastSeenAt:       &now,
+	}
+	if err := fakeClient.Status().Update(ctx, cr); err != nil {
+		t.Fatalf("failed to update CR status: %v", err)
+	}
+
+	err := reconciler.processEndpoint(ctx, ep)
+	if err != nil {
+		t.Fatalf("processEndpoint() error = %v", err)
+	}
+
+	// Wait for the async TLS check goroutine to complete
+	time.Sleep(500 * time.Millisecond)
+
+	var updated securityv1alpha1.TLSComplianceReport
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: crName}, &updated); err != nil {
+		t.Fatalf("failed to get CR: %v", err)
+	}
+
+	if updated.Status.ComplianceStatus == securityv1alpha1.ComplianceStatusPending {
+		t.Error("CR should no longer be Pending after processEndpoint retried the check")
+	}
+}
+
+func TestProcessEndpoint_PendingWithCheckCountSkipsRetry(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	checker := &MockTLSChecker{
+		Result: &tlscheck.TLSCheckResult{
+			SupportsTLS12: true,
+		},
+	}
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		TLSChecker:     checker,
+		CertExpiryDays: 30,
+		Workers:        1,
+		ManagerCtx:     ctx,
+	}
+
+	ep := endpoint.Endpoint{
+		Host:            "pending-checked.example",
+		Port:            443,
+		SourceKind:      securityv1alpha1.SourceKindService,
+		SourceNamespace: "default",
+		SourceName:      "pending-checked-svc",
+	}
+
+	crName := endpoint.GenerateCRName(ep)
+	now := metav1.Now()
+	cr := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: crName},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: ep.Host, Port: ep.Port,
+			SourceKind: ep.SourceKind, SourceNamespace: ep.SourceNamespace, SourceName: ep.SourceName,
+		},
+	}
+	if err := fakeClient.Create(ctx, cr); err != nil {
+		t.Fatalf("failed to create CR: %v", err)
+	}
+	cr.Status = securityv1alpha1.TLSComplianceReportStatus{
+		ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
+		CheckCount:       1,
+		FirstSeenAt:      &now,
+		LastSeenAt:       &now,
+	}
+	if err := fakeClient.Status().Update(ctx, cr); err != nil {
+		t.Fatalf("failed to update CR status: %v", err)
+	}
+
+	checkerCallsBefore := checker.CheckCount()
+	err := reconciler.processEndpoint(ctx, ep)
+	if err != nil {
+		t.Fatalf("processEndpoint() error = %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	if checker.CheckCount() != checkerCallsBefore {
+		t.Error("TLS checker should not be called for Pending CR with CheckCount > 0")
+	}
+}
+
+func TestProcessEndpoint_NonPendingSkipsRetry(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	checker := &MockTLSChecker{
+		Result: &tlscheck.TLSCheckResult{
+			SupportsTLS12: true,
+		},
+	}
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		TLSChecker:     checker,
+		CertExpiryDays: 30,
+		Workers:        1,
+		ManagerCtx:     ctx,
+	}
+
+	ep := endpoint.Endpoint{
+		Host:            "compliant.example",
+		Port:            443,
+		SourceKind:      securityv1alpha1.SourceKindService,
+		SourceNamespace: "default",
+		SourceName:      "compliant-svc",
+	}
+
+	crName := endpoint.GenerateCRName(ep)
+	now := metav1.Now()
+	cr := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: crName},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: ep.Host, Port: ep.Port,
+			SourceKind: ep.SourceKind, SourceNamespace: ep.SourceNamespace, SourceName: ep.SourceName,
+		},
+	}
+	if err := fakeClient.Create(ctx, cr); err != nil {
+		t.Fatalf("failed to create CR: %v", err)
+	}
+	cr.Status = securityv1alpha1.TLSComplianceReportStatus{
+		ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+		CheckCount:       1,
+		FirstSeenAt:      &now,
+		LastSeenAt:       &now,
+	}
+	if err := fakeClient.Status().Update(ctx, cr); err != nil {
+		t.Fatalf("failed to update CR status: %v", err)
+	}
+
+	checkerCallsBefore := checker.CheckCount()
+	err := reconciler.processEndpoint(ctx, ep)
+	if err != nil {
+		t.Fatalf("processEndpoint() error = %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	if checker.CheckCount() != checkerCallsBefore {
+		t.Error("TLS checker should not be called for non-Pending CR")
+	}
+}
+
+func TestProcessEndpoint_PendingRetryWorkersBusy(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		TLSChecker:     &MockTLSChecker{},
+		CertExpiryDays: 30,
+		Workers:        1,
+		ManagerCtx:     ctx,
+	}
+
+	// Fill the semaphore so workers are busy
+	reconciler.initCheckSemaphore()
+	reconciler.checkSem <- struct{}{}
+
+	ep := endpoint.Endpoint{
+		Host:            "busy-retry.example",
+		Port:            443,
+		SourceKind:      securityv1alpha1.SourceKindService,
+		SourceNamespace: "default",
+		SourceName:      "busy-retry-svc",
+	}
+
+	crName := endpoint.GenerateCRName(ep)
+	now := metav1.Now()
+	cr := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: crName},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: ep.Host, Port: ep.Port,
+			SourceKind: ep.SourceKind, SourceNamespace: ep.SourceNamespace, SourceName: ep.SourceName,
+		},
+	}
+	if err := fakeClient.Create(ctx, cr); err != nil {
+		t.Fatalf("failed to create CR: %v", err)
+	}
+	cr.Status = securityv1alpha1.TLSComplianceReportStatus{
+		ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
+		CheckCount:       0,
+		FirstSeenAt:      &now,
+		LastSeenAt:       &now,
+	}
+	if err := fakeClient.Status().Update(ctx, cr); err != nil {
+		t.Fatalf("failed to update CR status: %v", err)
+	}
+
+	err := reconciler.processEndpoint(ctx, ep)
+	if err != errWorkersBusy {
+		t.Errorf("processEndpoint() error = %v, want errWorkersBusy", err)
+	}
+
+	// Drain semaphore
+	<-reconciler.checkSem
 }
 
 func TestEndpointReconciler_ScanPodEndpoints(t *testing.T) {

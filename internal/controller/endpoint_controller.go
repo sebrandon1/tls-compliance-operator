@@ -500,6 +500,20 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep endpoint.En
 		return fmt.Errorf("failed to update TLSComplianceReport LastSeenAt: %w", err)
 	}
 
+	if existingCR.Status.ComplianceStatus == securityv1alpha1.ComplianceStatusPending && existingCR.Status.CheckCount == 0 {
+		r.initCheckSemaphore()
+		select {
+		case r.checkSem <- struct{}{}:
+			go func() {
+				defer func() { <-r.checkSem }()
+				r.performTLSCheck(r.ManagerCtx, crName, ep.Host, int(ep.Port), ep.SourceNamespace)
+			}()
+		default:
+			logger.V(1).Info("TLS check deferred for pending CR, requeuing", "host", ep.Host, "port", ep.Port)
+			return errWorkersBusy
+		}
+	}
+
 	return nil
 }
 
