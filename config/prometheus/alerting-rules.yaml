@@ -19,7 +19,7 @@ spec:
           annotations:
             summary: "TLS endpoint is non-compliant"
             description: "{{ $value }} endpoint(s) have been non-compliant for more than 1 hour. These endpoints only support TLS 1.0/1.1 without any modern TLS version."
-            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator#compliance-logic"
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator/blob/main/docs/troubleshooting.md#common-compliance-statuses"
 
         - alert: TLSCertificateExpiringSoon
           expr: tls_compliance_certificate_expiry_days > 0 and tls_compliance_certificate_expiry_days < 30
@@ -29,7 +29,7 @@ spec:
           annotations:
             summary: "TLS certificate expiring soon"
             description: "Certificate for {{ $labels.host }}:{{ $labels.port }} expires in {{ $value }} days."
-            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator#compliance-logic"
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator/blob/main/docs/configuration.md#certificate-monitoring"
 
         - alert: TLSCertificateExpired
           expr: tls_compliance_certificate_expiry_days <= 0
@@ -39,7 +39,7 @@ spec:
           annotations:
             summary: "TLS certificate has expired"
             description: "Certificate for {{ $labels.host }}:{{ $labels.port }} expired {{ $value | humanize }} days ago."
-            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator#compliance-logic"
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator/blob/main/docs/troubleshooting.md#common-compliance-statuses"
 
         - alert: TLSScanCycleSlow
           expr: histogram_quantile(0.95, rate(tls_compliance_scan_cycle_duration_seconds_bucket[1h])) > 300
@@ -49,7 +49,7 @@ spec:
           annotations:
             summary: "TLS scan cycle is slow"
             description: "The 95th percentile scan cycle duration is {{ $value | humanizeDuration }}, exceeding the 5-minute threshold."
-            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator#compliance-logic"
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator/blob/main/docs/configuration.md#scanning"
 
         - alert: TLSScanCycleStalled
           expr: time() - tls_compliance_scan_cycle_last_completed_timestamp > 7200
@@ -59,7 +59,7 @@ spec:
           annotations:
             summary: "TLS periodic scan cycle is stalled"
             description: "No scan cycle has completed in over 2 hours (default interval is 1 hour). The periodic scan goroutine may be stuck or crashed."
-            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator#compliance-logic"
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator/blob/main/docs/troubleshooting.md#reports-stuck-in-pending"
 
         - alert: TLSCleanupCycleStalled
           expr: time() - tls_compliance_cleanup_cycle_last_completed_timestamp > 600
@@ -69,7 +69,7 @@ spec:
           annotations:
             summary: "TLS cleanup cycle is stalled"
             description: "No cleanup cycle has completed in over 10 minutes (default interval is 5 minutes). The cleanup goroutine may be stuck or crashed."
-            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator#compliance-logic"
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator/blob/main/docs/troubleshooting.md#viewing-operator-configuration"
 
         - alert: TLSEndpointUnreachable
           expr: tls_compliance_endpoints_total{status="Unreachable"} > 0
@@ -79,4 +79,4 @@ spec:
           annotations:
             summary: "TLS endpoint is unreachable"
             description: "{{ $value }} endpoint(s) have been unreachable for more than 24 hours. Verify the endpoints are running and network policies allow access."
-            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator#compliance-logic"
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator/blob/main/docs/troubleshooting.md#common-compliance-statuses"
