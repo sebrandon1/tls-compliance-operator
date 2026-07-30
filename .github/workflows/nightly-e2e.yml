@@ -30,7 +30,7 @@ jobs:
           key: envtest-${{ runner.os }}-${{ hashFiles('Makefile', 'go.sum') }}
 
       - name: Create Kubernetes cluster
-        uses: palmsoftware/quick-k8s@v1.0.0
+        uses: palmsoftware/quick-k8s@v1.0.1
         with:
           numControlPlaneNodes: 1
           numWorkerNodes: 1
