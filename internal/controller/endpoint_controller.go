@@ -356,7 +356,7 @@ func (r *EndpointReconciler) handleRescan(ctx context.Context, report *securityv
 		return ctrl.Result{}, fmt.Errorf("removing rescan annotation: %w", err)
 	}
 
-	r.performTLSCheck(ctx, report.Name, report.Spec.Host, int(report.Spec.Port), report.Spec.SourceNamespace)
+	r.performTLSCheck(ctx, report.Name, report.Spec.Host, int(report.Spec.Port), report.Spec.SourceNamespace, false)
 	return ctrl.Result{}, nil
 }
 
@@ -482,7 +482,7 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep endpoint.En
 		case r.checkSem <- struct{}{}:
 			go func() {
 				defer func() { <-r.checkSem }()
-				r.performTLSCheck(r.ManagerCtx, crName, ep.Host, int(ep.Port), ep.SourceNamespace)
+				r.performTLSCheck(r.ManagerCtx, crName, ep.Host, int(ep.Port), ep.SourceNamespace, true)
 			}()
 		default:
 			logger.V(1).Info("TLS check deferred, requeuing", "host", ep.Host, "port", ep.Port)
@@ -506,7 +506,7 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep endpoint.En
 		case r.checkSem <- struct{}{}:
 			go func() {
 				defer func() { <-r.checkSem }()
-				r.performTLSCheck(r.ManagerCtx, crName, ep.Host, int(ep.Port), ep.SourceNamespace)
+				r.performTLSCheck(r.ManagerCtx, crName, ep.Host, int(ep.Port), ep.SourceNamespace, true)
 			}()
 		default:
 			logger.V(1).Info("TLS check deferred for pending CR, requeuing", "host", ep.Host, "port", ep.Port)
@@ -528,7 +528,7 @@ func (r *EndpointReconciler) getNamespaceLimiter(namespace string) *rate.Limiter
 	return r.DefaultNamespaceRate
 }
 
-func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host string, port int, namespace string) {
+func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host string, port int, namespace string, holdsSemaphore bool) {
 	logger := log.FromContext(ctx).WithValues("crName", crName)
 
 	if r.TLSChecker == nil {
@@ -589,11 +589,23 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 			// Update CR with retry status
 			r.updateRetryStatus(ctx, crName, attempt+1, retryDelay, result.FailureReason, checkErr)
 
-			// Context-aware sleep
+			if holdsSemaphore {
+				// Release worker slot during backoff so other checks can run
+				<-r.checkSem
+			}
+
 			select {
 			case <-ctx.Done():
+				if holdsSemaphore {
+					r.checkSem <- struct{}{}
+				}
 				return
 			case <-time.After(retryDelay):
+			}
+
+			if holdsSemaphore {
+				// Reacquire worker slot for next attempt
+				r.checkSem <- struct{}{}
 			}
 		}
 	}
@@ -1089,11 +1101,23 @@ func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return builder.Complete(r)
 }
 
-// StartPeriodicScan starts a goroutine that scans all endpoints immediately
-// on startup, then re-checks on every tick of the configured interval.
-func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval time.Duration) {
+// StartPeriodicScan starts a goroutine that scans all endpoints after leader
+// election completes, then re-checks on every tick of the configured interval.
+// The elected channel should come from mgr.Elected() to ensure the informer
+// cache is synced before scanning.
+func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval time.Duration, elected <-chan struct{}) {
 	go func() {
 		logger := log.FromContext(ctx).WithName("periodic-scan")
+
+		if elected != nil {
+			logger.Info("waiting for leader election before initial scan")
+			select {
+			case <-ctx.Done():
+				return
+			case <-elected:
+				logger.Info("leader election complete, starting initial scan")
+			}
+		}
 
 		logger.Info("running initial TLS scan of all endpoints")
 		scanErr := r.runScanCycleWithError(ctx, logger)
@@ -1248,7 +1272,7 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 					return
 				default:
 				}
-				r.performTLSCheck(ctx, item.name, item.host, item.port, item.namespace)
+				r.performTLSCheck(ctx, item.name, item.host, item.port, item.namespace, false)
 			}
 		}()
 	}
