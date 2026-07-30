@@ -1097,7 +1097,6 @@ func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval tim
 
 		logger.Info("running initial TLS scan of all endpoints")
 		scanErr := r.runScanCycleWithError(ctx, logger)
-		r.InitialScanDone.Store(true)
 
 		if r.RunOnce {
 			logger.Info("run-once mode: scan complete, signaling done")
@@ -1203,6 +1202,8 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 		logger.Error(err, "pod endpoint scan failed")
 		podScanErr = err
 	}
+
+	r.InitialScanDone.Store(true)
 
 	var crList securityv1alpha1.TLSComplianceReportList
 	if err := r.List(ctx, &crList); err != nil {

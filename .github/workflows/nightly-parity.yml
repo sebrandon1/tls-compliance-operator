@@ -57,7 +57,7 @@ jobs:
 
       - name: Wait for operator readiness
         run: |
-          kubectl wait --for=condition=available --timeout=120s deployment/tls-compliance-operator-controller-manager -n tls-compliance-operator-system
+          kubectl wait --for=condition=available --timeout=300s deployment/tls-compliance-operator-controller-manager -n tls-compliance-operator-system
 
       - name: Run parity tests
         run: |
