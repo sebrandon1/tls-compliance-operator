@@ -638,22 +638,38 @@ func TestDetermineComplianceStatus(t *testing.T) {
 			expected: securityv1alpha1.ComplianceStatusCompliant,
 		},
 		{
-			name: "Compliant - all versions (Old profile)",
+			name: "Warning - all versions (Old profile)",
 			result: &tlscheck.TLSCheckResult{
 				SupportsTLS10: true,
 				SupportsTLS11: true,
 				SupportsTLS12: true,
 				SupportsTLS13: true,
 			},
-			expected: securityv1alpha1.ComplianceStatusCompliant,
+			expected: securityv1alpha1.ComplianceStatusWarning,
 		},
 		{
-			name: "Compliant - TLS 1.0 with 1.2",
+			name: "Warning - TLS 1.0 with 1.2",
 			result: &tlscheck.TLSCheckResult{
 				SupportsTLS10: true,
 				SupportsTLS12: true,
 			},
-			expected: securityv1alpha1.ComplianceStatusCompliant,
+			expected: securityv1alpha1.ComplianceStatusWarning,
+		},
+		{
+			name: "Warning - TLS 1.1 with 1.3",
+			result: &tlscheck.TLSCheckResult{
+				SupportsTLS11: true,
+				SupportsTLS13: true,
+			},
+			expected: securityv1alpha1.ComplianceStatusWarning,
+		},
+		{
+			name: "Warning - SSL 3.0 with TLS 1.2",
+			result: &tlscheck.TLSCheckResult{
+				SupportsSSL30: true,
+				SupportsTLS12: true,
+			},
+			expected: securityv1alpha1.ComplianceStatusWarning,
 		},
 		{
 			name: "NonCompliant - TLS 1.0 only",
@@ -3211,6 +3227,12 @@ func TestUpdateConditions_TLSCompliant(t *testing.T) {
 			expectedReason: "NonCompliant",
 		},
 		{
+			name:           "Warning",
+			status:         securityv1alpha1.ComplianceStatusWarning,
+			expectedStatus: metav1.ConditionTrue,
+			expectedReason: "Warning",
+		},
+		{
 			name:           "Unknown status",
 			status:         securityv1alpha1.ComplianceStatusUnreachable,
 			expectedStatus: metav1.ConditionUnknown,
@@ -3353,6 +3375,12 @@ func TestEmitComplianceEvents(t *testing.T) {
 		result           *tlscheck.TLSCheckResult
 		expectedReason   string
 	}{
+		{
+			name:             "Warning",
+			complianceStatus: securityv1alpha1.ComplianceStatusWarning,
+			result:           &tlscheck.TLSCheckResult{},
+			expectedReason:   EventReasonTLSWarning,
+		},
 		{
 			name:             "NonCompliant",
 			complianceStatus: securityv1alpha1.ComplianceStatusNonCompliant,

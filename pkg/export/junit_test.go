@@ -137,6 +137,49 @@ func TestWriteJUnit_NonCompliantFail(t *testing.T) {
 	}
 }
 
+func TestWriteJUnit_WarningFail(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:       "mixed.example",
+				Port:       443,
+				SourceKind: securityv1alpha1.SourceKindService,
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusWarning,
+				TLSVersions: securityv1alpha1.TLSVersionSupport{
+					TLS10: true,
+					TLS12: true,
+					TLS13: true,
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	err := WriteJUnit(&buf, reports)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var suites JUnitTestSuites
+	if err := xml.Unmarshal(buf.Bytes(), &suites); err != nil {
+		t.Fatalf("invalid XML: %v", err)
+	}
+
+	suite := suites.TestSuites[0]
+	if suite.Failures != 1 {
+		t.Errorf("expected 1 failure, got %d", suite.Failures)
+	}
+	tc := suite.TestCases[0]
+	if tc.Failure == nil {
+		t.Fatal("expected failure for warning endpoint")
+	}
+	if !strings.Contains(tc.Failure.Message, "Warning") {
+		t.Errorf("expected Warning in failure message, got: %s", tc.Failure.Message)
+	}
+}
+
 func TestWriteJUnit_MixedResults(t *testing.T) {
 	reports := []securityv1alpha1.TLSComplianceReport{
 		{

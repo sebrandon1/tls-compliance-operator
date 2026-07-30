@@ -44,7 +44,7 @@ const (
 	ComplianceStatusCompliant ComplianceStatus = "Compliant"
 	// ComplianceStatusNonCompliant means only legacy TLS (1.0/1.1/SSL 3.0) is supported with no TLS 1.2 or 1.3
 	ComplianceStatusNonCompliant ComplianceStatus = "NonCompliant"
-	// ComplianceStatusWarning is reserved for future use (not currently produced by the controller)
+	// ComplianceStatusWarning means the endpoint supports modern TLS (1.2/1.3) but also allows legacy versions (SSL 3.0/TLS 1.0/1.1)
 	ComplianceStatusWarning ComplianceStatus = "Warning"
 	// ComplianceStatusUnreachable means the endpoint could not be reached (generic failure)
 	ComplianceStatusUnreachable ComplianceStatus = "Unreachable"
