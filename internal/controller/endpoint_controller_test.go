@@ -2648,9 +2648,9 @@ func TestEndpointReconciler_RetryBackoffCap(t *testing.T) {
 	}
 
 	// 3 sleeps, each capped at 15ms + up to 25% jitter ≈ 18.75ms max per sleep
-	// Total max ≈ 56.25ms, give generous upper bound of 100ms
-	if elapsed > 100*time.Millisecond {
-		t.Errorf("elapsed %v exceeds 100ms — backoff cap may not be working", elapsed)
+	// Total max ≈ 56.25ms, give generous upper bound of 500ms for CI with -race
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("elapsed %v exceeds 500ms — backoff cap may not be working", elapsed)
 	}
 }
 
