@@ -1072,7 +1072,9 @@ func TestEndpointReconciler_StartPeriodicScan(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	reconciler.StartPeriodicScan(ctx, 100*time.Millisecond)
+	elected := make(chan struct{})
+	close(elected)
+	reconciler.StartPeriodicScan(ctx, 100*time.Millisecond, elected)
 	time.Sleep(150 * time.Millisecond)
 	cancel()
 	time.Sleep(50 * time.Millisecond)
@@ -1992,7 +1994,7 @@ func TestEndpointReconciler_RetryThenSuccess(t *testing.T) {
 		RetryBackoff:   10 * time.Millisecond,
 	}
 
-	reconciler.performTLSCheck(ctx, crName, "test.example.com", 443, "default")
+	reconciler.performTLSCheck(ctx, crName, "test.example.com", 443, "default", false)
 
 	// Should have called checker twice (1 failure + 1 success)
 	if checker.CallCount() != 2 {
@@ -2068,7 +2070,7 @@ func TestEndpointReconciler_RetryExhausted(t *testing.T) {
 		RetryBackoff:   10 * time.Millisecond,
 	}
 
-	reconciler.performTLSCheck(ctx, crName, "unreachable.example.com", 443, "default")
+	reconciler.performTLSCheck(ctx, crName, "unreachable.example.com", 443, "default", false)
 
 	// Should have called checker 3 times (1 initial + 2 retries)
 	if checker.CallCount() != 3 {
@@ -2085,6 +2087,242 @@ func TestEndpointReconciler_RetryExhausted(t *testing.T) {
 	}
 	if updatedCR.Status.RetryCount != 0 {
 		t.Errorf("RetryCount = %d, want 0 (cleared after completion)", updatedCR.Status.RetryCount)
+	}
+}
+
+func TestPerformTLSCheck_ReleasesSemaphoreDuringBackoff(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	crName := "sem-release-test-cr"
+	now := metav1.Now()
+	cr := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: crName},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: "test.example.com", Port: 443,
+			SourceKind: securityv1alpha1.SourceKindService, SourceNamespace: "default", SourceName: "test-svc",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{
+			ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
+			FirstSeenAt:      &now,
+			LastSeenAt:       &now,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cr).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	checker := &SequencedMockTLSChecker{
+		Results: []*tlscheck.TLSCheckResult{
+			{FailureReason: tlscheck.FailureReasonUnreachable},
+			{SupportsTLS12: true, SupportsTLS13: true, CipherSuites: map[string][]string{}},
+		},
+		Errors: []error{
+			fmt.Errorf("connection refused"),
+			nil,
+		},
+	}
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		TLSChecker:     checker,
+		CertExpiryDays: 30,
+		MaxRetries:     3,
+		RetryBackoff:   200 * time.Millisecond,
+		Workers:        1,
+	}
+	reconciler.initCheckSemaphore()
+
+	// Acquire the semaphore (simulating processEndpoint's acquire)
+	reconciler.checkSem <- struct{}{}
+
+	// Run performTLSCheck in a goroutine (it will fail once, then backoff)
+	done := make(chan struct{})
+	go func() {
+		defer func() { <-reconciler.checkSem }()
+		reconciler.performTLSCheck(ctx, crName, "test.example.com", 443, "default", true)
+		close(done)
+	}()
+
+	// Wait briefly for the first check to fail and backoff to start
+	time.Sleep(50 * time.Millisecond)
+
+	// The semaphore should be free during the backoff sleep
+	select {
+	case reconciler.checkSem <- struct{}{}:
+		// Successfully acquired — semaphore was released during backoff
+		<-reconciler.checkSem
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("semaphore was not released during retry backoff — worker starvation bug")
+	}
+
+	<-done
+}
+
+func TestPerformTLSCheck_SemaphoreBalancedOnContextCancel(t *testing.T) {
+	scheme := newTestScheme()
+
+	crName := "sem-cancel-test-cr"
+	now := metav1.Now()
+	cr := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: crName},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: "cancel.example.com", Port: 443,
+			SourceKind: securityv1alpha1.SourceKindService, SourceNamespace: "default", SourceName: "cancel-svc",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{
+			ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
+			FirstSeenAt:      &now,
+			LastSeenAt:       &now,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cr).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	checker := &SequencedMockTLSChecker{
+		Results: []*tlscheck.TLSCheckResult{
+			{FailureReason: tlscheck.FailureReasonUnreachable},
+			{FailureReason: tlscheck.FailureReasonUnreachable},
+		},
+		Errors: []error{
+			fmt.Errorf("connection refused"),
+			fmt.Errorf("connection refused"),
+		},
+	}
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		TLSChecker:     checker,
+		CertExpiryDays: 30,
+		MaxRetries:     3,
+		RetryBackoff:   200 * time.Millisecond,
+		Workers:        1,
+	}
+	reconciler.initCheckSemaphore()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	reconciler.checkSem <- struct{}{}
+
+	done := make(chan struct{})
+	go func() {
+		defer func() { <-reconciler.checkSem }()
+		reconciler.performTLSCheck(ctx, crName, "cancel.example.com", 443, "default", true)
+		close(done)
+	}()
+
+	// Wait for first check to fail and backoff to begin
+	time.Sleep(50 * time.Millisecond)
+
+	// Cancel context during backoff sleep
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("performTLSCheck did not return after context cancellation")
+	}
+
+	// Verify semaphore capacity is correct — should have exactly 0 tokens in the channel
+	if len(reconciler.checkSem) != 0 {
+		t.Errorf("semaphore has %d tokens, want 0 (balanced after cancel)", len(reconciler.checkSem))
+	}
+	if cap(reconciler.checkSem) != 1 {
+		t.Errorf("semaphore capacity is %d, want 1", cap(reconciler.checkSem))
+	}
+}
+
+func TestPerformTLSCheck_MultiRetrySemaphoreRelease(t *testing.T) {
+	scheme := newTestScheme()
+
+	crName := "multi-retry-sem-cr"
+	now := metav1.Now()
+	cr := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: crName},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: "multi.example.com", Port: 443,
+			SourceKind: securityv1alpha1.SourceKindService, SourceNamespace: "default", SourceName: "multi-svc",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{
+			ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
+			FirstSeenAt:      &now,
+			LastSeenAt:       &now,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cr).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	checker := &SequencedMockTLSChecker{
+		Results: []*tlscheck.TLSCheckResult{
+			{FailureReason: tlscheck.FailureReasonUnreachable},
+			{FailureReason: tlscheck.FailureReasonUnreachable},
+			{SupportsTLS12: true, SupportsTLS13: true, CipherSuites: map[string][]string{}},
+		},
+		Errors: []error{
+			fmt.Errorf("connection refused"),
+			fmt.Errorf("connection refused"),
+			nil,
+		},
+	}
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		TLSChecker:     checker,
+		CertExpiryDays: 30,
+		MaxRetries:     3,
+		RetryBackoff:   100 * time.Millisecond,
+		Workers:        1,
+	}
+	reconciler.initCheckSemaphore()
+
+	reconciler.checkSem <- struct{}{}
+
+	done := make(chan struct{})
+	go func() {
+		defer func() { <-reconciler.checkSem }()
+		reconciler.performTLSCheck(context.Background(), crName, "multi.example.com", 443, "default", true)
+		close(done)
+	}()
+
+	// Probe the semaphore during each backoff window
+	for i := range 2 {
+		time.Sleep(50 * time.Millisecond)
+		select {
+		case reconciler.checkSem <- struct{}{}:
+			<-reconciler.checkSem
+		case <-time.After(500 * time.Millisecond):
+			t.Fatalf("semaphore not released during backoff window %d", i+1)
+		}
+		// Wait for the backoff to finish and next attempt to start
+		time.Sleep(150 * time.Millisecond)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("performTLSCheck did not complete")
+	}
+
+	if checker.CallCount() != 3 {
+		t.Errorf("expected 3 calls, got %d", checker.CallCount())
+	}
+
+	if len(reconciler.checkSem) != 0 {
+		t.Errorf("semaphore has %d tokens, want 0", len(reconciler.checkSem))
 	}
 }
 
@@ -2136,7 +2374,7 @@ func TestEndpointReconciler_NoRetryOnNoTLS(t *testing.T) {
 		RetryBackoff:   10 * time.Millisecond,
 	}
 
-	reconciler.performTLSCheck(ctx, crName, "notls.example.com", 80, "default")
+	reconciler.performTLSCheck(ctx, crName, "notls.example.com", 80, "default", false)
 
 	// Should only call once — NoTLS is not transient
 	if checker.CallCount() != 1 {
@@ -2200,7 +2438,7 @@ func TestEndpointReconciler_NoRetryOnPlaintextHTTP(t *testing.T) {
 		RetryBackoff:   10 * time.Millisecond,
 	}
 
-	reconciler.performTLSCheck(ctx, crName, "http.example.com", 80, "default")
+	reconciler.performTLSCheck(ctx, crName, "http.example.com", 80, "default", false)
 
 	if checker.CallCount() != 1 {
 		t.Errorf("expected 1 call (no retry for PlaintextHTTP), got %d", checker.CallCount())
@@ -2263,7 +2501,7 @@ func TestEndpointReconciler_NoRetryOnMutualTLS(t *testing.T) {
 		RetryBackoff:   10 * time.Millisecond,
 	}
 
-	reconciler.performTLSCheck(ctx, crName, "mtls.example.com", 443, "default")
+	reconciler.performTLSCheck(ctx, crName, "mtls.example.com", 443, "default", false)
 
 	// Should only call once — MutualTLSRequired is not transient
 	if checker.CallCount() != 1 {
@@ -2327,7 +2565,7 @@ func TestEndpointReconciler_RetryDisabled(t *testing.T) {
 		RetryBackoff:   10 * time.Millisecond,
 	}
 
-	reconciler.performTLSCheck(ctx, crName, "timeout.example.com", 443, "default")
+	reconciler.performTLSCheck(ctx, crName, "timeout.example.com", 443, "default", false)
 
 	// Should only call once — retries disabled
 	if checker.CallCount() != 1 {
@@ -2402,7 +2640,7 @@ func TestEndpointReconciler_RetryBackoffCap(t *testing.T) {
 	}
 
 	start := time.Now()
-	reconciler.performTLSCheck(ctx, crName, "slow.example.com", 443, "default")
+	reconciler.performTLSCheck(ctx, crName, "slow.example.com", 443, "default", false)
 	elapsed := time.Since(start)
 
 	if checker.CallCount() != 4 {
@@ -2456,7 +2694,9 @@ func TestPeriodicScan_UpdatesCRStatus(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	reconciler.StartPeriodicScan(ctx, 50*time.Millisecond)
+	elected := make(chan struct{})
+	close(elected)
+	reconciler.StartPeriodicScan(ctx, 50*time.Millisecond, elected)
 	time.Sleep(150 * time.Millisecond)
 	cancel()
 	time.Sleep(50 * time.Millisecond)
@@ -2554,7 +2794,9 @@ func TestPeriodicScan_RespectsContextCancellation(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	reconciler.StartPeriodicScan(ctx, 1*time.Hour)
+	elected := make(chan struct{})
+	close(elected)
+	reconciler.StartPeriodicScan(ctx, 1*time.Hour, elected)
 	cancel()
 	time.Sleep(50 * time.Millisecond)
 }
@@ -2872,6 +3114,95 @@ func TestEmitComplianceEvents_PQCNotReady_FIPSEnabled_LegacyTLS(t *testing.T) {
 	}
 }
 
+func TestStartPeriodicScan_WaitsForElection(t *testing.T) {
+	scheme := newTestScheme()
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:     fakeClient,
+		Scheme:     scheme,
+		TLSChecker: &MockTLSChecker{},
+		Workers:    1,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	elected := make(chan struct{})
+	r.StartPeriodicScan(ctx, time.Hour, elected)
+
+	// InitialScanDone should still be false — election hasn't fired
+	time.Sleep(50 * time.Millisecond)
+	if r.InitialScanDone.Load() {
+		t.Fatal("InitialScanDone should be false before leader election")
+	}
+
+	// Fire the election
+	close(elected)
+	time.Sleep(100 * time.Millisecond)
+
+	if !r.InitialScanDone.Load() {
+		t.Fatal("InitialScanDone should be true after leader election")
+	}
+}
+
+func TestStartPeriodicScan_NilElectedChannel(t *testing.T) {
+	scheme := newTestScheme()
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:     fakeClient,
+		Scheme:     scheme,
+		TLSChecker: &MockTLSChecker{},
+		Workers:    1,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	r.StartPeriodicScan(ctx, time.Hour, nil)
+	time.Sleep(100 * time.Millisecond)
+
+	if !r.InitialScanDone.Load() {
+		t.Fatal("InitialScanDone should be true immediately with nil elected channel")
+	}
+}
+
+func TestStartPeriodicScan_ContextCancelledBeforeElection(t *testing.T) {
+	scheme := newTestScheme()
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:     fakeClient,
+		Scheme:     scheme,
+		TLSChecker: &MockTLSChecker{},
+		Workers:    1,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	elected := make(chan struct{})
+
+	r.StartPeriodicScan(ctx, time.Hour, elected)
+
+	// Cancel before election fires
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	time.Sleep(100 * time.Millisecond)
+
+	if r.InitialScanDone.Load() {
+		t.Fatal("InitialScanDone should be false when context cancelled before election")
+	}
+}
+
 func TestStartPeriodicScan_RunOnce(t *testing.T) {
 	scheme := newTestScheme()
 	fakeClient := fake.NewClientBuilder().
@@ -2891,7 +3222,9 @@ func TestStartPeriodicScan_RunOnce(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	r.StartPeriodicScan(ctx, time.Hour)
+	elected := make(chan struct{})
+	close(elected)
+	r.StartPeriodicScan(ctx, time.Hour, elected)
 
 	select {
 	case err := <-r.RunOnceDone:
