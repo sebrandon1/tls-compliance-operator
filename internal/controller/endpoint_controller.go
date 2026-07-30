@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -115,6 +116,7 @@ type EndpointReconciler struct {
 	DefaultNamespaceRate  *rate.Limiter
 	RunOnce               bool
 	RunOnceDone           chan error
+	InitialScanDone       atomic.Bool
 	ManagerCtx            context.Context
 	checkSem              chan struct{}
 	checkSemOnce          sync.Once
@@ -1081,6 +1083,7 @@ func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval tim
 
 		logger.Info("running initial TLS scan of all endpoints")
 		scanErr := r.runScanCycleWithError(ctx, logger)
+		r.InitialScanDone.Store(true)
 
 		if r.RunOnce {
 			logger.Info("run-once mode: scan complete, signaling done")

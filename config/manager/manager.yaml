@@ -61,6 +61,7 @@ spec:
             port: 8081
           initialDelaySeconds: 5
           periodSeconds: 10
+          failureThreshold: 18
         resources:
           limits:
             cpu: 500m

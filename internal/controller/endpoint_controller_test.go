@@ -2626,6 +2626,10 @@ func TestStartPeriodicScan_RunOnce(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for RunOnceDone signal")
 	}
+
+	if !r.InitialScanDone.Load() {
+		t.Error("InitialScanDone should be true after StartPeriodicScan completes")
+	}
 }
 
 func TestScanAllEndpoints_PropagatesPodScanError(t *testing.T) {
@@ -3588,6 +3592,20 @@ func TestDetermineComplianceStatus_SSL30Only(t *testing.T) {
 	got := determineComplianceStatus(result)
 	if got != securityv1alpha1.ComplianceStatusNonCompliant {
 		t.Errorf("SSL 3.0 only = %q, want NonCompliant", got)
+	}
+}
+
+func TestInitialScanDone(t *testing.T) {
+	r := &EndpointReconciler{}
+
+	if r.InitialScanDone.Load() {
+		t.Error("InitialScanDone should be false by default")
+	}
+
+	r.InitialScanDone.Store(true)
+
+	if !r.InitialScanDone.Load() {
+		t.Error("InitialScanDone should be true after Store(true)")
 	}
 }
 

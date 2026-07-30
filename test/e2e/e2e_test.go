@@ -114,7 +114,7 @@ var _ = Describe("Manager", Ordered, func() {
 
 		By("waiting for patched rollout to complete")
 		cmd = exec.Command("kubectl", "rollout", "status", "deployment",
-			"tls-compliance-operator-controller-manager", "-n", namespace, "--timeout=120s")
+			"tls-compliance-operator-controller-manager", "-n", namespace, "--timeout=300s")
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to wait for rollout")
 	})
