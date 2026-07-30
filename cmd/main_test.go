@@ -18,9 +18,12 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
@@ -469,5 +472,28 @@ func TestResolveEnvConfig_ReportRetentionDays(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected log message indicating env var was applied")
+	}
+}
+
+func TestReadyzCheck_BeforeAndAfterScan(t *testing.T) {
+	var scanDone atomic.Bool
+
+	checker := func(_ *http.Request) error {
+		if !scanDone.Load() {
+			return fmt.Errorf("initial TLS scan not yet completed")
+		}
+		return nil
+	}
+
+	if err := checker(nil); err == nil {
+		t.Fatal("readyz should return error before initial scan")
+	} else if !strings.Contains(err.Error(), "initial TLS scan not yet completed") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+
+	scanDone.Store(true)
+
+	if err := checker(nil); err != nil {
+		t.Errorf("readyz should return nil after initial scan, got: %v", err)
 	}
 }
