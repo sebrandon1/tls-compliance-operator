@@ -686,7 +686,7 @@ func TestTLSChecker_ClientCert_mTLSEndpoint(t *testing.T) {
 	}
 }
 
-func startTLSServerWithCipherSuites(t *testing.T, cert tls.Certificate, version uint16, cipherSuites []uint16) (string, int, func()) {
+func startTLSServerWithCipherSuites(t *testing.T, cert tls.Certificate, version uint16, cipherSuites []uint16) (string, int, func()) { //nolint:unparam // version is parameterized for reuse
 	t.Helper()
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},

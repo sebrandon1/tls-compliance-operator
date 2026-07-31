@@ -1,0 +1,70 @@
+version: "2"
+
+linters:
+  enable:
+    - bodyclose
+    - copyloopvar
+    - durationcheck
+    - errorlint
+    - fatcontext
+    - gocritic
+    - gosec
+    - misspell
+    - nilerr
+    - nolintlint
+    - promlinter
+    - revive
+    - unconvert
+    - unparam
+    - usestdlibvars
+
+  settings:
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+      disabled-checks:
+        - ifElseChain
+        - appendCombine
+        - exitAfterDefer
+
+    gosec:
+      excludes:
+        - G104 # handled by errcheck linter with nolint directives
+        - G109 # port numbers are validated before conversion
+        - G115 # port/byte conversions are range-checked
+        - G402 # InsecureSkipVerify — intentional for TLS probing
+
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+    revive:
+      rules:
+        - name: dot-imports
+          disabled: true
+
+    errorlint:
+      asserts: false
+
+  exclusions:
+    presets:
+      - std-error-handling
+      - common-false-positives
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+      - path: _test\.go
+        text: "hugeParam"
+        linters:
+          - gocritic
+
+output:
+  sort-order:
+    - linter
+    - file
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -34,8 +34,7 @@ func (c *TLSChecker) probeHTTP(ctx context.Context, addr, host string) bool {
 	if err != nil {
 		return false
 	}
-	defer conn.Close() //nolint:errcheck
-
+	defer conn.Close()
 	deadline := time.Now().Add(c.Timeout)
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
 		deadline = ctxDeadline

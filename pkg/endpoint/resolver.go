@@ -56,14 +56,14 @@ func IsHeadlessService(svc *corev1.Service) bool {
 // headless service. Each address × TLS port yields one endpoint.
 func ExtractFromHeadlessService(svc *corev1.Service, addresses []string) []Endpoint {
 	var endpoints []Endpoint
-	for _, port := range svc.Spec.Ports {
-		if !isTLSPort(port) {
+	for i := range svc.Spec.Ports {
+		if !isTLSPort(&svc.Spec.Ports[i]) {
 			continue
 		}
 		for _, addr := range addresses {
 			endpoints = append(endpoints, Endpoint{
 				Host:            addr,
-				Port:            port.Port,
+				Port:            svc.Spec.Ports[i].Port,
 				SourceKind:      securityv1alpha1.SourceKindService,
 				SourceNamespace: svc.Namespace,
 				SourceName:      svc.Name,
@@ -84,12 +84,12 @@ func ExtractFromService(svc *corev1.Service) []Endpoint {
 
 	var endpoints []Endpoint
 
-	for _, port := range svc.Spec.Ports {
-		if isTLSPort(port) {
+	for i := range svc.Spec.Ports {
+		if isTLSPort(&svc.Spec.Ports[i]) {
 			host := fmt.Sprintf("%s.%s", svc.Name, svc.Namespace)
 			endpoints = append(endpoints, Endpoint{
 				Host:            host,
-				Port:            port.Port,
+				Port:            svc.Spec.Ports[i].Port,
 				SourceKind:      securityv1alpha1.SourceKindService,
 				SourceNamespace: svc.Namespace,
 				SourceName:      svc.Name,
@@ -117,11 +117,11 @@ func extractFromExternalNameService(svc *corev1.Service) []Endpoint {
 			SourceName:      svc.Name,
 		})
 	} else {
-		for _, port := range svc.Spec.Ports {
-			if isTLSPort(port) {
+		for i := range svc.Spec.Ports {
+			if isTLSPort(&svc.Spec.Ports[i]) {
 				endpoints = append(endpoints, Endpoint{
 					Host:            host,
-					Port:            port.Port,
+					Port:            svc.Spec.Ports[i].Port,
 					SourceKind:      securityv1alpha1.SourceKindService,
 					SourceNamespace: svc.Namespace,
 					SourceName:      svc.Name,
@@ -263,7 +263,7 @@ func ExtractFromGateway(obj *unstructured.Unstructured) []Endpoint {
 // GenerateCRName creates a deterministic CR name from an endpoint.
 // Format: <sanitized-host>-<port>-<8-char-hash>
 // The hash is derived from sourceKind/sourceNamespace/sourceName/host/port.
-func GenerateCRName(ep Endpoint) string {
+func GenerateCRName(ep *Endpoint) string {
 	// Generate hash from the full identity
 	identity := fmt.Sprintf("%s/%s/%s/%s/%d", ep.SourceKind, ep.SourceNamespace, ep.SourceName, ep.Host, ep.Port)
 	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(identity)))[:8]
@@ -341,8 +341,8 @@ func collectProbePorts(pod *corev1.Pod) map[int32]probePortInfo {
 			}
 
 			if probe.GRPC != nil && probe.GRPC.Port > 0 {
-				if _, exists := probePorts[int32(probe.GRPC.Port)]; !exists {
-					probePorts[int32(probe.GRPC.Port)] = probePortInfo{}
+				if _, exists := probePorts[probe.GRPC.Port]; !exists {
+					probePorts[probe.GRPC.Port] = probePortInfo{}
 				}
 			}
 		}
@@ -415,8 +415,8 @@ func ExtractFromPod(pod *corev1.Pod) []Endpoint {
 	var endpoints []Endpoint
 	seen := make(map[int32]bool)
 
-	for _, container := range pod.Spec.Containers {
-		for _, port := range container.Ports {
+	for ci := range pod.Spec.Containers {
+		for _, port := range pod.Spec.Containers[ci].Ports {
 			if port.Protocol != "" && port.Protocol != corev1.ProtocolTCP {
 				continue
 			}
@@ -490,6 +490,6 @@ func isTLSContainerPort(port corev1.ContainerPort) bool {
 }
 
 // isTLSPort checks if a ServicePort is likely a TLS port
-func isTLSPort(port corev1.ServicePort) bool {
+func isTLSPort(port *corev1.ServicePort) bool {
 	return isTLSPortByNumberAndName(port.Port, port.Name)
 }

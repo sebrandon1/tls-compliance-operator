@@ -206,7 +206,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	reports, err = export.FilterReports(reports, filterOpts)
+	reports, err = export.FilterReports(reports, &filterOpts)
 	if err != nil {
 		return err
 	}
@@ -239,7 +239,7 @@ func runSummary(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
-	reports, err = export.FilterReports(reports, filterOpts)
+	reports, err = export.FilterReports(reports, &filterOpts)
 	if err != nil {
 		return err
 	}
@@ -264,9 +264,9 @@ func runGet(_ *cobra.Command, args []string) error {
 
 	if len(args) > 0 {
 		name := args[0]
-		for _, r := range reports {
-			if r.Name == name {
-				matched := []securityv1alpha1.TLSComplianceReport{r}
+		for i := range reports {
+			if reports[i].Name == name {
+				matched := []securityv1alpha1.TLSComplianceReport{reports[i]}
 				if err := outputReports(matched); err != nil {
 					return err
 				}
@@ -276,7 +276,7 @@ func runGet(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("report %q not found", name)
 	}
 
-	reports, err = export.FilterReports(reports, filterOpts)
+	reports, err = export.FilterReports(reports, &filterOpts)
 	if err != nil {
 		return err
 	}
@@ -310,19 +310,19 @@ func printReportTable(reports []securityv1alpha1.TLSComplianceReport) error {
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "NAME\tHOST\tPORT\tSOURCE\tCOMPLIANCE\tGRADE\tFS\tTLS 1.3\tTLS 1.2\tPQC\tMLKEM")
-	for _, r := range reports {
+	for i := range reports {
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			r.Name,
-			r.Spec.Host,
-			r.Spec.Port,
-			string(r.Spec.SourceKind),
-			string(r.Status.ComplianceStatus),
-			r.Status.OverallCipherGrade,
-			boolDash(r.Status.ForwardSecrecy),
-			boolDash(r.Status.TLSVersions.TLS13),
-			boolDash(r.Status.TLSVersions.TLS12),
-			string(r.Status.PQCReadiness),
-			boolDash(r.Status.MLKEMSupported),
+			reports[i].Name,
+			reports[i].Spec.Host,
+			reports[i].Spec.Port,
+			string(reports[i].Spec.SourceKind),
+			string(reports[i].Status.ComplianceStatus),
+			reports[i].Status.OverallCipherGrade,
+			boolDash(reports[i].Status.ForwardSecrecy),
+			boolDash(reports[i].Status.TLSVersions.TLS13),
+			boolDash(reports[i].Status.TLSVersions.TLS12),
+			string(reports[i].Status.PQCReadiness),
+			boolDash(reports[i].Status.MLKEMSupported),
 		)
 	}
 	return w.Flush()
@@ -334,33 +334,33 @@ func printReportTableWide(reports []securityv1alpha1.TLSComplianceReport) error 
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "NAME\tHOST\tPORT\tSOURCE\tNAMESPACE\tCOMPLIANCE\tGRADE\tFS\tTLS 1.3\tTLS 1.2\tTLS 1.0\tSSL 3.0\tPQC\tMLKEM\tISSUER\tCERT EXPIRY")
-	for _, r := range reports {
+	for i := range reports {
 		issuer := "-"
 		expiry := "-"
-		if r.Status.CertificateInfo != nil {
-			if r.Status.CertificateInfo.Issuer != "" {
-				issuer = r.Status.CertificateInfo.Issuer
+		if reports[i].Status.CertificateInfo != nil {
+			if reports[i].Status.CertificateInfo.Issuer != "" {
+				issuer = reports[i].Status.CertificateInfo.Issuer
 			}
-			if r.Status.CertificateInfo.NotAfter != nil {
-				expiry = r.Status.CertificateInfo.NotAfter.Format("2006-01-02")
+			if reports[i].Status.CertificateInfo.NotAfter != nil {
+				expiry = reports[i].Status.CertificateInfo.NotAfter.Format("2006-01-02")
 			}
 		}
 
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			r.Name,
-			r.Spec.Host,
-			r.Spec.Port,
-			string(r.Spec.SourceKind),
-			r.Spec.SourceNamespace,
-			string(r.Status.ComplianceStatus),
-			r.Status.OverallCipherGrade,
-			boolDash(r.Status.ForwardSecrecy),
-			boolDash(r.Status.TLSVersions.TLS13),
-			boolDash(r.Status.TLSVersions.TLS12),
-			boolDash(r.Status.TLSVersions.TLS10),
-			boolDash(r.Status.TLSVersions.SSL30),
-			string(r.Status.PQCReadiness),
-			boolDash(r.Status.MLKEMSupported),
+			reports[i].Name,
+			reports[i].Spec.Host,
+			reports[i].Spec.Port,
+			string(reports[i].Spec.SourceKind),
+			reports[i].Spec.SourceNamespace,
+			string(reports[i].Status.ComplianceStatus),
+			reports[i].Status.OverallCipherGrade,
+			boolDash(reports[i].Status.ForwardSecrecy),
+			boolDash(reports[i].Status.TLSVersions.TLS13),
+			boolDash(reports[i].Status.TLSVersions.TLS12),
+			boolDash(reports[i].Status.TLSVersions.TLS10),
+			boolDash(reports[i].Status.TLSVersions.SSL30),
+			string(reports[i].Status.PQCReadiness),
+			boolDash(reports[i].Status.MLKEMSupported),
 			issuer,
 			expiry,
 		)
@@ -375,15 +375,15 @@ func runDescribe(_ *cobra.Command, args []string) error {
 	}
 
 	name := args[0]
-	for _, r := range reports {
-		if r.Name == name {
-			return printReportDetail(r)
+	for i := range reports {
+		if reports[i].Name == name {
+			return printReportDetail(&reports[i])
 		}
 	}
 	return fmt.Errorf("report %q not found", name)
 }
 
-func printReportDetail(r securityv1alpha1.TLSComplianceReport) error {
+func printReportDetail(r *securityv1alpha1.TLSComplianceReport) error {
 	w := os.Stdout
 
 	_, _ = fmt.Fprintf(w, "Name:         %s\n", r.Name)
@@ -684,19 +684,19 @@ func runTargetList(_ *cobra.Command, _ []string) error {
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "NAME\tHOST\tPORT\tSTATUS\tREPORT\tLAST SCANNED\tAGE")
-	for _, t := range targets {
+	for i := range targets {
 		lastScanned := "-"
-		if t.Status.LastScannedAt != nil {
-			lastScanned = t.Status.LastScannedAt.Format("2006-01-02T15:04:05Z")
+		if targets[i].Status.LastScannedAt != nil {
+			lastScanned = targets[i].Status.LastScannedAt.Format("2006-01-02T15:04:05Z")
 		}
-		report := t.Status.ReportName
+		report := targets[i].Status.ReportName
 		if report == "" {
 			report = "-"
 		}
-		age := formatAge(time.Since(t.CreationTimestamp.Time))
+		age := formatAge(time.Since(targets[i].CreationTimestamp.Time))
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\n",
-			t.Name, t.Spec.Host, t.Spec.Port,
-			string(t.Status.ComplianceStatus),
+			targets[i].Name, targets[i].Spec.Host, targets[i].Spec.Port,
+			string(targets[i].Status.ComplianceStatus),
 			report, lastScanned, age)
 	}
 	return w.Flush()

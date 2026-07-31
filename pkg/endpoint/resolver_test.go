@@ -338,7 +338,7 @@ func TestGenerateCRName(t *testing.T) {
 		SourceName:      "my-service",
 	}
 
-	name := GenerateCRName(ep)
+	name := GenerateCRName(&ep)
 
 	// Should not exceed 63 characters
 	if len(name) > MaxCRNameLength {
@@ -356,7 +356,7 @@ func TestGenerateCRName(t *testing.T) {
 	}
 
 	// Should be deterministic
-	name2 := GenerateCRName(ep)
+	name2 := GenerateCRName(&ep)
 	if name != name2 {
 		t.Errorf("GenerateCRName is not deterministic: %s != %s", name, name2)
 	}
@@ -378,8 +378,8 @@ func TestGenerateCRName_Uniqueness(t *testing.T) {
 		SourceName:      "service-b",
 	}
 
-	name1 := GenerateCRName(ep1)
-	name2 := GenerateCRName(ep2)
+	name1 := GenerateCRName(&ep1)
+	name2 := GenerateCRName(&ep2)
 
 	if name1 == name2 {
 		t.Errorf("different endpoints should produce different names: %s", name1)
@@ -395,7 +395,7 @@ func TestGenerateCRName_LongHost(t *testing.T) {
 		SourceName:      "very-long-service-name-that-exceeds-normal-limits",
 	}
 
-	name := GenerateCRName(ep)
+	name := GenerateCRName(&ep)
 	if len(name) > MaxCRNameLength {
 		t.Errorf("name length %d exceeds max %d: %s", len(name), MaxCRNameLength, name)
 	}
@@ -431,7 +431,7 @@ func TestIsTLSPort(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isTLSPort(tt.port)
+			got := isTLSPort(&tt.port)
 			if got != tt.want {
 				t.Errorf("isTLSPort(%v) = %v, want %v", tt.port, got, tt.want)
 			}
@@ -1036,7 +1036,7 @@ func TestGenerateCRName_IPv6(t *testing.T) {
 		SourceName:      "my-pod",
 	}
 
-	name := GenerateCRName(ep)
+	name := GenerateCRName(&ep)
 
 	if len(name) > MaxCRNameLength {
 		t.Errorf("name too long: %d > %d", len(name), MaxCRNameLength)
@@ -1074,13 +1074,15 @@ func TestSetExtraTLSPorts(t *testing.T) {
 
 	SetExtraTLSPorts(map[int32]bool{12345: true, 54321: true})
 
-	if !isTLSPort(corev1.ServicePort{Port: 12345}) {
+	p12345 := corev1.ServicePort{Port: 12345}
+	if !isTLSPort(&p12345) {
 		t.Error("expected port 12345 to be detected as TLS after SetExtraTLSPorts")
 	}
 	if !isTLSContainerPort(corev1.ContainerPort{ContainerPort: 54321}) {
 		t.Error("expected port 54321 to be detected as TLS after SetExtraTLSPorts")
 	}
-	if isTLSPort(corev1.ServicePort{Port: 99999}) {
+	p99999 := corev1.ServicePort{Port: 99999}
+	if isTLSPort(&p99999) {
 		t.Error("unexpected TLS detection for port 99999")
 	}
 }

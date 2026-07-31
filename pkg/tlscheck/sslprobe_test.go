@@ -56,14 +56,13 @@ func TestProbeSSL30_NonSSLServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start listener: %v", err)
 	}
-	defer ln.Close() //nolint:errcheck
-
+	defer ln.Close()
 	go func() {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		defer conn.Close() //nolint:errcheck
+		defer conn.Close()
 		// Read the ClientHello and respond with HTTP
 		buf := make([]byte, 512)
 		_, _ = conn.Read(buf)
@@ -85,14 +84,13 @@ func TestProbeSSL30_MockSSL30Server(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start listener: %v", err)
 	}
-	defer ln.Close() //nolint:errcheck
-
+	defer ln.Close()
 	go func() {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		defer conn.Close() //nolint:errcheck
+		defer conn.Close()
 		// Read the ClientHello
 		buf := make([]byte, 512)
 		_, _ = conn.Read(buf)
@@ -116,14 +114,13 @@ func TestProbeSSL30_TLS12ServerHello(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start listener: %v", err)
 	}
-	defer ln.Close() //nolint:errcheck
-
+	defer ln.Close()
 	go func() {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		defer conn.Close() //nolint:errcheck
+		defer conn.Close()
 		buf := make([]byte, 512)
 		_, _ = conn.Read(buf)
 
@@ -151,14 +148,13 @@ func TestProbeSSL30_OversizedRecordLen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start listener: %v", err)
 	}
-	defer ln.Close() //nolint:errcheck
-
+	defer ln.Close()
 	go func() {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		defer conn.Close() //nolint:errcheck
+		defer conn.Close()
 		buf := make([]byte, 512)
 		_, _ = conn.Read(buf)
 

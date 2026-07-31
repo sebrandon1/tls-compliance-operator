@@ -98,8 +98,7 @@ func (c *TLSChecker) ProbeSSL30(ctx context.Context, addr string) bool {
 	if err != nil {
 		return false
 	}
-	defer conn.Close() //nolint:errcheck
-
+	defer conn.Close()
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	} else {

@@ -68,7 +68,7 @@ func testReports() []securityv1alpha1.TLSComplianceReport {
 
 func TestFilterReports_EmptyFilters(t *testing.T) {
 	reports := testReports()
-	filtered, _ := FilterReports(reports, FilterOptions{})
+	filtered, _ := FilterReports(reports, &FilterOptions{})
 
 	if len(filtered) != len(reports) {
 		t.Errorf("expected %d reports, got %d", len(reports), len(filtered))
@@ -77,7 +77,7 @@ func TestFilterReports_EmptyFilters(t *testing.T) {
 
 func TestFilterReports_ByNamespace(t *testing.T) {
 	reports := testReports()
-	filtered, _ := FilterReports(reports, FilterOptions{Namespace: "default"})
+	filtered, _ := FilterReports(reports, &FilterOptions{Namespace: "default"})
 
 	if len(filtered) != 2 {
 		t.Fatalf("expected 2 reports in default namespace, got %d", len(filtered))
@@ -91,7 +91,7 @@ func TestFilterReports_ByNamespace(t *testing.T) {
 
 func TestFilterReports_ByStatus(t *testing.T) {
 	reports := testReports()
-	filtered, _ := FilterReports(reports, FilterOptions{Status: "NonCompliant"})
+	filtered, _ := FilterReports(reports, &FilterOptions{Status: "NonCompliant"})
 
 	if len(filtered) != 1 {
 		t.Fatalf("expected 1 NonCompliant report, got %d", len(filtered))
@@ -103,7 +103,7 @@ func TestFilterReports_ByStatus(t *testing.T) {
 
 func TestFilterReports_ByStatusCaseInsensitive(t *testing.T) {
 	reports := testReports()
-	filtered, _ := FilterReports(reports, FilterOptions{Status: "noncompliant"})
+	filtered, _ := FilterReports(reports, &FilterOptions{Status: "noncompliant"})
 
 	if len(filtered) != 1 {
 		t.Fatalf("expected 1 report, got %d", len(filtered))
@@ -112,7 +112,7 @@ func TestFilterReports_ByStatusCaseInsensitive(t *testing.T) {
 
 func TestFilterReports_BySource(t *testing.T) {
 	reports := testReports()
-	filtered, _ := FilterReports(reports, FilterOptions{Source: "Service"})
+	filtered, _ := FilterReports(reports, &FilterOptions{Source: "Service"})
 
 	if len(filtered) != 1 {
 		t.Fatalf("expected 1 Service report, got %d", len(filtered))
@@ -124,7 +124,7 @@ func TestFilterReports_BySource(t *testing.T) {
 
 func TestFilterReports_BySourceCaseInsensitive(t *testing.T) {
 	reports := testReports()
-	filtered, _ := FilterReports(reports, FilterOptions{Source: "service"})
+	filtered, _ := FilterReports(reports, &FilterOptions{Source: "service"})
 
 	if len(filtered) != 1 {
 		t.Fatalf("expected 1 report, got %d", len(filtered))
@@ -133,7 +133,7 @@ func TestFilterReports_BySourceCaseInsensitive(t *testing.T) {
 
 func TestFilterReports_CombinedFilters(t *testing.T) {
 	reports := testReports()
-	filtered, _ := FilterReports(reports, FilterOptions{
+	filtered, _ := FilterReports(reports, &FilterOptions{
 		Namespace: "default",
 		Status:    "Compliant",
 	})
@@ -145,7 +145,7 @@ func TestFilterReports_CombinedFilters(t *testing.T) {
 
 func TestFilterReports_CombinedFiltersAllThree(t *testing.T) {
 	reports := testReports()
-	filtered, _ := FilterReports(reports, FilterOptions{
+	filtered, _ := FilterReports(reports, &FilterOptions{
 		Namespace: "default",
 		Status:    "Compliant",
 		Source:    "Route",
@@ -161,7 +161,7 @@ func TestFilterReports_CombinedFiltersAllThree(t *testing.T) {
 
 func TestFilterReports_NoMatch(t *testing.T) {
 	reports := testReports()
-	filtered, _ := FilterReports(reports, FilterOptions{Namespace: "nonexistent"})
+	filtered, _ := FilterReports(reports, &FilterOptions{Namespace: "nonexistent"})
 
 	if len(filtered) != 0 {
 		t.Errorf("expected 0 reports, got %d", len(filtered))
@@ -169,7 +169,7 @@ func TestFilterReports_NoMatch(t *testing.T) {
 }
 
 func TestFilterReports_NilInput(t *testing.T) {
-	filtered, _ := FilterReports(nil, FilterOptions{Namespace: "default"})
+	filtered, _ := FilterReports(nil, &FilterOptions{Namespace: "default"})
 
 	if len(filtered) != 0 {
 		t.Errorf("expected 0 reports, got %d", len(filtered))
@@ -192,7 +192,7 @@ func TestFilterReports_ByPQCStatus(t *testing.T) {
 		},
 	}
 
-	filtered, _ := FilterReports(reports, FilterOptions{PQCStatus: "LegacyTLS"})
+	filtered, _ := FilterReports(reports, &FilterOptions{PQCStatus: "LegacyTLS"})
 	if len(filtered) != 1 {
 		t.Fatalf("expected 1 LegacyTLS report, got %d", len(filtered))
 	}
@@ -209,7 +209,7 @@ func TestFilterReports_ByPQCStatusCaseInsensitive(t *testing.T) {
 		},
 	}
 
-	filtered, _ := FilterReports(reports, FilterOptions{PQCStatus: "pqcready"})
+	filtered, _ := FilterReports(reports, &FilterOptions{PQCStatus: "pqcready"})
 	if len(filtered) != 1 {
 		t.Fatalf("expected 1 report, got %d", len(filtered))
 	}
@@ -239,7 +239,7 @@ func TestFilterReports_ByExpired(t *testing.T) {
 		},
 	}
 
-	filtered, _ := FilterReports(reports, FilterOptions{Expired: true})
+	filtered, _ := FilterReports(reports, &FilterOptions{Expired: true})
 	if len(filtered) != 1 {
 		t.Fatalf("expected 1 expired report, got %d", len(filtered))
 	}
@@ -275,7 +275,7 @@ func TestFilterReports_ByExpiresWithin(t *testing.T) {
 		},
 	}
 
-	filtered, _ := FilterReports(reports, FilterOptions{ExpiresWithin: "30d"})
+	filtered, _ := FilterReports(reports, &FilterOptions{ExpiresWithin: "30d"})
 	if len(filtered) != 1 {
 		t.Fatalf("expected 1 report expiring within 30d, got %d", len(filtered))
 	}
@@ -309,7 +309,7 @@ func TestFilterReports_CombinedWithPQC(t *testing.T) {
 		},
 	}
 
-	filtered, _ := FilterReports(reports, FilterOptions{Namespace: "prod", PQCStatus: "LegacyTLS"})
+	filtered, _ := FilterReports(reports, &FilterOptions{Namespace: "prod", PQCStatus: "LegacyTLS"})
 	if len(filtered) != 1 {
 		t.Fatalf("expected 1 report, got %d", len(filtered))
 	}
@@ -338,7 +338,7 @@ func TestFilterReports_ByIssuer(t *testing.T) {
 		},
 	}
 
-	filtered, _ := FilterReports(reports, FilterOptions{Issuer: "let's encrypt"})
+	filtered, _ := FilterReports(reports, &FilterOptions{Issuer: "let's encrypt"})
 	if len(filtered) != 1 {
 		t.Fatalf("expected 1 report, got %d", len(filtered))
 	}
@@ -363,7 +363,7 @@ func TestFilterReports_BySubject(t *testing.T) {
 		},
 	}
 
-	filtered, _ := FilterReports(reports, FilterOptions{Subject: "example.com"})
+	filtered, _ := FilterReports(reports, &FilterOptions{Subject: "example.com"})
 	if len(filtered) != 1 {
 		t.Fatalf("expected 1 report, got %d", len(filtered))
 	}
@@ -390,7 +390,7 @@ func TestFilterReports_CombinedIssuerAndStatus(t *testing.T) {
 		},
 	}
 
-	filtered, _ := FilterReports(reports, FilterOptions{Issuer: "self-signed", Status: "NonCompliant"})
+	filtered, _ := FilterReports(reports, &FilterOptions{Issuer: "self-signed", Status: "NonCompliant"})
 	if len(filtered) != 1 {
 		t.Fatalf("expected 1 report, got %d", len(filtered))
 	}
@@ -407,7 +407,7 @@ func TestFilterReports_NoCertExcludedByIssuer(t *testing.T) {
 		},
 	}
 
-	filtered, _ := FilterReports(reports, FilterOptions{Issuer: "anything"})
+	filtered, _ := FilterReports(reports, &FilterOptions{Issuer: "anything"})
 	if len(filtered) != 0 {
 		t.Errorf("expected 0 reports for nil cert info, got %d", len(filtered))
 	}
@@ -474,7 +474,7 @@ func TestFilterReports_ByTLSVersion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := FilterReports(reports, FilterOptions{TLSVersion: tt.version})
+			got, err := FilterReports(reports, &FilterOptions{TLSVersion: tt.version})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -513,7 +513,7 @@ func TestFilterReports_ByGrade(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := FilterReports(reports, FilterOptions{Grade: tt.grade, MinGrade: tt.minGrade})
+			got, err := FilterReports(reports, &FilterOptions{Grade: tt.grade, MinGrade: tt.minGrade})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

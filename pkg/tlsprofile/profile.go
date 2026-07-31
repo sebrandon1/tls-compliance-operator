@@ -154,7 +154,7 @@ func DefaultProfile() Profile {
 // the given profile. It verifies the minimum TLS version, that all negotiated
 // ciphers are in the allowed list, and that negotiated curves are in the
 // allowed groups list (when the profile specifies groups).
-func CheckCompliance(profile Profile, supportsTLS10, supportsTLS11, supportsTLS12, supportsTLS13 bool, cipherSuites map[string][]string, negotiatedCurves map[string]string) ComplianceResult {
+func CheckCompliance(profile *Profile, supportsTLS10, supportsTLS11, supportsTLS12, supportsTLS13 bool, cipherSuites map[string][]string, negotiatedCurves map[string]string) ComplianceResult {
 	result := ComplianceResult{
 		ProfileType:     string(profile.Type),
 		GroupsCompliant: true,
