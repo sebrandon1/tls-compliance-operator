@@ -138,6 +138,15 @@ var (
 		[]string{"source_kind", "error_type"},
 	)
 
+	// ScanCycleErrorsTotal tracks the number of periodic scan cycle failures
+	ScanCycleErrorsTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: MetricsNamespace,
+			Name:      "scan_cycle_errors_total",
+			Help:      "Total number of periodic scan cycle failures",
+		},
+	)
+
 	// ScanCycleLastCompletedTimestamp records the Unix timestamp of the last successful periodic scan
 	ScanCycleLastCompletedTimestamp = prometheus.NewGauge(
 		prometheus.GaugeOpts{
@@ -184,6 +193,7 @@ func init() {
 		PQCReadiness,
 		ReconcileTotal,
 		ScanCycleDurationSeconds,
+		ScanCycleErrorsTotal,
 		CheckRetriesTotal,
 		CheckRetriesExhaustedTotal,
 		ReconcileErrorsTotal,
@@ -247,6 +257,11 @@ func RecordPQCReadiness(host, port string, readiness securityv1alpha1.PQCReadine
 // RecordScanCycleDuration records the duration of a full scan cycle
 func RecordScanCycleDuration(durationSeconds float64) {
 	ScanCycleDurationSeconds.Observe(durationSeconds)
+}
+
+// RecordScanCycleError records a periodic scan cycle failure
+func RecordScanCycleError() {
+	ScanCycleErrorsTotal.Inc()
 }
 
 // RecordRetry records a TLS check retry attempt with the given failure reason

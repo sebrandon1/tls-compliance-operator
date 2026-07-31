@@ -18,6 +18,7 @@ package export
 
 import (
 	"bytes"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,9 @@ func TestComputeSummary_Empty(t *testing.T) {
 
 	if s.Total != 0 {
 		t.Errorf("expected Total 0, got %d", s.Total)
+	}
+	if s.TLSCapable != 0 {
+		t.Errorf("expected TLSCapable 0, got %d", s.TLSCapable)
 	}
 	if s.CompliancePercent != 0 {
 		t.Errorf("expected CompliancePercent 0, got %f", s.CompliancePercent)
@@ -62,6 +66,9 @@ func TestComputeSummary_AllCompliant(t *testing.T) {
 
 	if s.Total != 2 {
 		t.Errorf("expected Total 2, got %d", s.Total)
+	}
+	if s.TLSCapable != 2 {
+		t.Errorf("expected TLSCapable 2, got %d", s.TLSCapable)
 	}
 	if s.CompliancePercent != 100 {
 		t.Errorf("expected 100%% compliance, got %f", s.CompliancePercent)
@@ -115,8 +122,12 @@ func TestComputeSummary_MixedStatuses(t *testing.T) {
 	if s.Total != 4 {
 		t.Errorf("expected Total 4, got %d", s.Total)
 	}
-	if s.CompliancePercent != 50 {
-		t.Errorf("expected 50%% compliance, got %f", s.CompliancePercent)
+	if s.TLSCapable != 3 {
+		t.Errorf("expected TLSCapable 3, got %d", s.TLSCapable)
+	}
+	expected := float64(2) / float64(3) * 100
+	if math.Abs(s.CompliancePercent-expected) > 0.01 {
+		t.Errorf("expected ~%.2f%% compliance, got %f", expected, s.CompliancePercent)
 	}
 	if s.ByStatus[securityv1alpha1.ComplianceStatusCompliant] != 2 {
 		t.Errorf("expected 2 compliant, got %d", s.ByStatus[securityv1alpha1.ComplianceStatusCompliant])
@@ -259,8 +270,9 @@ func TestComputeSummary_PQCReadiness(t *testing.T) {
 	if s.ByPQCReadiness[securityv1alpha1.PQCReadinessNoPQC] != 1 {
 		t.Errorf("expected 1 NoPQC, got %d", s.ByPQCReadiness[securityv1alpha1.PQCReadinessNoPQC])
 	}
-	if s.PQCReadyPercent != 25 {
-		t.Errorf("expected 25%% PQC ready, got %f", s.PQCReadyPercent)
+	expectedPQC := float64(1) / float64(3) * 100
+	if math.Abs(s.PQCReadyPercent-expectedPQC) > 0.01 {
+		t.Errorf("expected ~%.2f%% PQC ready, got %f", expectedPQC, s.PQCReadyPercent)
 	}
 	if s.MLKEMProbeCount != 1 {
 		t.Errorf("expected 1 MLKEM probe count, got %d", s.MLKEMProbeCount)
@@ -291,6 +303,9 @@ func TestWriteSummary_Output(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, "Total Endpoints:") {
 		t.Error("expected output to contain 'Total Endpoints:'")
+	}
+	if !strings.Contains(output, "TLS-Capable Endpoints:") {
+		t.Error("expected output to contain 'TLS-Capable Endpoints:'")
 	}
 	if !strings.Contains(output, "Compliance Rate:") {
 		t.Error("expected output to contain 'Compliance Rate:'")
@@ -360,6 +375,9 @@ func TestWriteSummary_Empty(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, "Total Endpoints:") {
 		t.Error("expected output to contain 'Total Endpoints:'")
+	}
+	if !strings.Contains(output, "TLS-Capable Endpoints:") {
+		t.Error("expected output to contain 'TLS-Capable Endpoints:'")
 	}
 	if !strings.Contains(output, "0.0%") {
 		t.Error("expected 0.0% compliance rate")
@@ -668,5 +686,122 @@ func TestComputeSummary_GatewayAPISourceKinds(t *testing.T) {
 		if !strings.Contains(output, kind) {
 			t.Errorf("expected output to contain %q", kind)
 		}
+	}
+}
+
+func TestComputeSummary_AllNonTLS(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusNoTLS},
+		},
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusPlaintextHTTP},
+		},
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusClosed},
+		},
+	}
+
+	s := ComputeSummary(reports, time.Now())
+	if s.Total != 3 {
+		t.Errorf("expected Total 3, got %d", s.Total)
+	}
+	if s.TLSCapable != 0 {
+		t.Errorf("expected TLSCapable 0, got %d", s.TLSCapable)
+	}
+	if s.CompliancePercent != 0 {
+		t.Errorf("expected 0%% compliance, got %f", s.CompliancePercent)
+	}
+	if s.ForwardSecrecyPercent != 0 {
+		t.Errorf("expected 0%% forward secrecy, got %f", s.ForwardSecrecyPercent)
+	}
+	if s.PQCReadyPercent != 0 {
+		t.Errorf("expected 0%% PQC ready, got %f", s.PQCReadyPercent)
+	}
+}
+
+func TestWriteSummary_AllNonTLS_SuppressesForwardSecrecy(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusNoTLS},
+		},
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusClosed},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteSummary(&buf, reports); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Total Endpoints:") {
+		t.Error("expected output to contain 'Total Endpoints:'")
+	}
+	if strings.Contains(output, "Forward Secrecy:") {
+		t.Error("expected output to NOT contain 'Forward Secrecy:' when no TLS-capable endpoints exist")
+	}
+}
+
+func TestComputeSummary_TLSCapableMix(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				ForwardSecrecy:   true,
+			},
+		},
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusNonCompliant,
+			},
+		},
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusWarning,
+				ForwardSecrecy:   true,
+			},
+		},
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusMutualTLSRequired,
+			},
+		},
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusNoTLS},
+		},
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusTimeout},
+		},
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusPending},
+		},
+	}
+
+	s := ComputeSummary(reports, time.Now())
+	if s.Total != 7 {
+		t.Errorf("expected Total 7, got %d", s.Total)
+	}
+	if s.TLSCapable != 4 {
+		t.Errorf("expected TLSCapable 4, got %d", s.TLSCapable)
+	}
+	if s.CompliancePercent != 25 {
+		t.Errorf("expected 25%% compliance, got %f", s.CompliancePercent)
+	}
+	if s.ForwardSecrecyPercent != 50 {
+		t.Errorf("expected 50%% forward secrecy, got %f", s.ForwardSecrecyPercent)
 	}
 }

@@ -49,6 +49,15 @@ var knownPQCReadiness = []securityv1alpha1.PQCReadiness{
 	securityv1alpha1.PQCReadinessNoPQC,
 }
 
+// tlsCapableStatuses defines which ComplianceStatus values represent endpoints
+// that actively attempted or completed a TLS handshake.
+var tlsCapableStatuses = map[securityv1alpha1.ComplianceStatus]bool{
+	securityv1alpha1.ComplianceStatusCompliant:         true,
+	securityv1alpha1.ComplianceStatusNonCompliant:      true,
+	securityv1alpha1.ComplianceStatusWarning:           true,
+	securityv1alpha1.ComplianceStatusMutualTLSRequired: true,
+}
+
 // knownSourceKinds defines the deterministic order for source kind output.
 var knownSourceKinds = []securityv1alpha1.SourceKind{
 	securityv1alpha1.SourceKindService,
@@ -64,6 +73,7 @@ var knownSourceKinds = []securityv1alpha1.SourceKind{
 // Summary holds aggregated statistics for a set of TLS compliance reports.
 type Summary struct {
 	Total                 int
+	TLSCapable            int
 	ByStatus              map[securityv1alpha1.ComplianceStatus]int
 	BySourceKind          map[securityv1alpha1.SourceKind]int
 	ByPQCReadiness        map[securityv1alpha1.PQCReadiness]int
@@ -93,6 +103,9 @@ func ComputeSummary(reports []securityv1alpha1.TLSComplianceReport, now time.Tim
 	for i := range reports {
 		r := &reports[i]
 		s.ByStatus[r.Status.ComplianceStatus]++
+		if tlsCapableStatuses[r.Status.ComplianceStatus] {
+			s.TLSCapable++
+		}
 		s.BySourceKind[r.Spec.SourceKind]++
 		if r.Status.ForwardSecrecy {
 			s.ForwardSecrecyCount++
@@ -127,12 +140,12 @@ func ComputeSummary(reports []securityv1alpha1.TLSComplianceReport, now time.Tim
 		}
 	}
 
-	if s.Total > 0 {
+	if s.TLSCapable > 0 {
 		compliant := s.ByStatus[securityv1alpha1.ComplianceStatusCompliant]
-		s.CompliancePercent = float64(compliant) / float64(s.Total) * 100
-		s.ForwardSecrecyPercent = float64(s.ForwardSecrecyCount) / float64(s.Total) * 100
+		s.CompliancePercent = float64(compliant) / float64(s.TLSCapable) * 100
+		s.ForwardSecrecyPercent = float64(s.ForwardSecrecyCount) / float64(s.TLSCapable) * 100
 		pqcReady := s.ByPQCReadiness[securityv1alpha1.PQCReadinessPQCReady]
-		s.PQCReadyPercent = float64(pqcReady) / float64(s.Total) * 100
+		s.PQCReadyPercent = float64(pqcReady) / float64(s.TLSCapable) * 100
 	}
 
 	return s
@@ -161,9 +174,10 @@ func WriteSummary(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) e
 	ew.printf("TLS Compliance Summary\n")
 	ew.printf("======================\n\n")
 	ew.printf("Total Endpoints:\t%d\n", s.Total)
+	ew.printf("TLS-Capable Endpoints:\t%d\n", s.TLSCapable)
 	ew.printf("Compliance Rate:\t%.1f%%\n", s.CompliancePercent)
-	if s.Total > 0 {
-		ew.printf("Forward Secrecy:\t%d/%d (%.1f%%)\n", s.ForwardSecrecyCount, s.Total, s.ForwardSecrecyPercent)
+	if s.TLSCapable > 0 {
+		ew.printf("Forward Secrecy:\t%d/%d (%.1f%%)\n", s.ForwardSecrecyCount, s.TLSCapable, s.ForwardSecrecyPercent)
 	}
 	ew.printf("\n")
 
@@ -198,7 +212,7 @@ func WriteSummary(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) e
 			ew.printf("FIPS Mode:\tActive -- ML-KEM key exchange unavailable\n")
 		}
 		ew.printf("PQC Ready Rate:\t%.1f%%\n", s.PQCReadyPercent)
-		ew.printf("ML-KEM Supported (active probe):\t%d/%d\n", s.MLKEMProbeCount, s.Total)
+		ew.printf("ML-KEM Supported (active probe):\t%d/%d\n", s.MLKEMProbeCount, s.TLSCapable)
 		for _, readiness := range knownPQCReadiness {
 			count := s.ByPQCReadiness[readiness]
 			if count > 0 {

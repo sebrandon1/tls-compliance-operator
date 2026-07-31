@@ -923,6 +923,19 @@ spec:
 				Expect(line).To(HaveSuffix("|"), "each line should end with pipe")
 			}
 		})
+
+		It("should show TLS-Capable Endpoints in summary output", func() {
+			cmd := exec.Command(pluginBinary, "summary")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to run kubectl-tlsreport summary")
+
+			Expect(output).To(ContainSubstring("Total Endpoints:"),
+				"summary should show Total Endpoints")
+			Expect(output).To(ContainSubstring("TLS-Capable Endpoints:"),
+				"summary should show TLS-Capable Endpoints count")
+			Expect(output).To(ContainSubstring("Compliance Rate:"),
+				"summary should show Compliance Rate")
+		})
 	})
 
 	Context("Run-Once Mode", Label("run-once"), Ordered, func() {
