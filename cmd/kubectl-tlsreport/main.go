@@ -21,8 +21,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -74,7 +76,10 @@ func checkExitCode(reports []securityv1alpha1.TLSComplianceReport) error {
 }
 
 func main() {
-	if err := newRootCmd().Execute(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := newRootCmd().ExecuteContext(ctx); err != nil {
 		var ece exitCodeError
 		if errors.As(err, &ece) {
 			os.Exit(ece.code)
@@ -201,7 +206,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("unknown format: %s (supported: csv, json, yaml, junit, markdown, md)", format)
 	}
 
-	reports, err := fetchReports()
+	reports, err := fetchReports(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -233,8 +238,8 @@ func runExport(cmd *cobra.Command, args []string) error {
 	return checkExitCode(reports)
 }
 
-func runSummary(_ *cobra.Command, _ []string) error {
-	reports, err := fetchReports()
+func runSummary(cmd *cobra.Command, _ []string) error {
+	reports, err := fetchReports(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -256,8 +261,8 @@ func runSummary(_ *cobra.Command, _ []string) error {
 	return checkExitCode(reports)
 }
 
-func runGet(_ *cobra.Command, args []string) error {
-	reports, err := fetchReports()
+func runGet(cmd *cobra.Command, args []string) error {
+	reports, err := fetchReports(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -368,8 +373,8 @@ func printReportTableWide(reports []securityv1alpha1.TLSComplianceReport) error 
 	return w.Flush()
 }
 
-func runDescribe(_ *cobra.Command, args []string) error {
-	reports, err := fetchReports()
+func runDescribe(cmd *cobra.Command, args []string) error {
+	reports, err := fetchReports(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -665,16 +670,16 @@ func newTargetDeleteCmd() *cobra.Command {
 		Use:   "delete <name>",
 		Short: "Delete a TLSComplianceTarget by name",
 		Args:  cobra.MaximumNArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			return runTargetDelete(args, deleteAll)
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTargetDelete(cmd.Context(), args, deleteAll)
 		},
 	}
 	cmd.Flags().BoolVar(&deleteAll, "all", false, "Delete all TLSComplianceTargets")
 	return cmd
 }
 
-func runTargetList(_ *cobra.Command, _ []string) error {
-	targets, err := fetchTargets()
+func runTargetList(cmd *cobra.Command, _ []string) error {
+	targets, err := fetchTargets(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -702,7 +707,7 @@ func runTargetList(_ *cobra.Command, _ []string) error {
 	return w.Flush()
 }
 
-func runTargetCreate(_ *cobra.Command, args []string) error {
+func runTargetCreate(cmd *cobra.Command, args []string) error {
 	host := args[0]
 	port, err := strconv.Atoi(args[1])
 	if err != nil || port < 1 || port > 65535 {
@@ -726,7 +731,7 @@ func runTargetCreate(_ *cobra.Command, args []string) error {
 		},
 	}
 
-	if err := c.Create(context.Background(), target); err != nil {
+	if err := c.Create(cmd.Context(), target); err != nil {
 		return fmt.Errorf("creating target: %w", err)
 	}
 
@@ -734,7 +739,7 @@ func runTargetCreate(_ *cobra.Command, args []string) error {
 	return nil
 }
 
-func runTargetDelete(args []string, deleteAll bool) error {
+func runTargetDelete(ctx context.Context, args []string, deleteAll bool) error {
 	if !deleteAll && len(args) == 0 {
 		return fmt.Errorf("target name required (or use --all)")
 	}
@@ -745,12 +750,12 @@ func runTargetDelete(args []string, deleteAll bool) error {
 	}
 
 	if deleteAll {
-		targets, err := fetchTargets()
+		targets, err := fetchTargets(ctx)
 		if err != nil {
 			return err
 		}
 		for i := range targets {
-			if err := c.Delete(context.Background(), &targets[i]); err != nil {
+			if err := c.Delete(ctx, &targets[i]); err != nil {
 				return fmt.Errorf("deleting target %s: %w", targets[i].Name, err)
 			}
 			fmt.Fprintf(os.Stderr, "tlscompliancetarget/%s deleted\n", targets[i].Name)
@@ -761,20 +766,20 @@ func runTargetDelete(args []string, deleteAll bool) error {
 	target := &securityv1alpha1.TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: args[0]},
 	}
-	if err := c.Delete(context.Background(), target); err != nil {
+	if err := c.Delete(ctx, target); err != nil {
 		return fmt.Errorf("deleting target %q: %w", args[0], err)
 	}
 	fmt.Fprintf(os.Stderr, "tlscompliancetarget/%s deleted\n", args[0])
 	return nil
 }
 
-func fetchTargets() ([]securityv1alpha1.TLSComplianceTarget, error) {
+func fetchTargets(ctx context.Context) ([]securityv1alpha1.TLSComplianceTarget, error) {
 	c, err := buildClient()
 	if err != nil {
 		return nil, err
 	}
 	var targetList securityv1alpha1.TLSComplianceTargetList
-	if err := c.List(context.Background(), &targetList); err != nil {
+	if err := c.List(ctx, &targetList); err != nil {
 		return nil, fmt.Errorf("listing TLSComplianceTargets: %w", err)
 	}
 	return targetList.Items, nil
@@ -815,8 +820,8 @@ func newRescanCmd() *cobra.Command {
   # Rescan and wait for completion
   kubectl tlsreport rescan my-service-443-abc12345 --wait`,
 		Args: cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			return runRescan(args[0], waitFlag, timeout)
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRescan(cmd.Context(), args[0], waitFlag, timeout)
 		},
 	}
 	cmd.Flags().BoolVar(&waitFlag, "wait", false, "Wait for the rescan to complete")
@@ -824,14 +829,14 @@ func newRescanCmd() *cobra.Command {
 	return cmd
 }
 
-func runRescan(name string, wait bool, timeout time.Duration) error {
+func runRescan(ctx context.Context, name string, wait bool, timeout time.Duration) error {
 	c, err := buildClient()
 	if err != nil {
 		return err
 	}
 
 	var report securityv1alpha1.TLSComplianceReport
-	if err := c.Get(context.Background(), client.ObjectKey{Name: name}, &report); err != nil {
+	if err := c.Get(ctx, client.ObjectKey{Name: name}, &report); err != nil {
 		return fmt.Errorf("report %q not found: %w", name, err)
 	}
 
@@ -839,7 +844,7 @@ func runRescan(name string, wait bool, timeout time.Duration) error {
 		report.Annotations = make(map[string]string)
 	}
 	report.Annotations[rescanAnnotation] = time.Now().UTC().Format(time.RFC3339)
-	if err := c.Update(context.Background(), &report); err != nil {
+	if err := c.Update(ctx, &report); err != nil {
 		return fmt.Errorf("triggering rescan: %w", err)
 	}
 
@@ -849,7 +854,7 @@ func runRescan(name string, wait bool, timeout time.Duration) error {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	for {
@@ -892,7 +897,7 @@ func buildClient() (client.Client, error) {
 	return c, nil
 }
 
-func fetchReports() ([]securityv1alpha1.TLSComplianceReport, error) {
+func fetchReports(ctx context.Context) ([]securityv1alpha1.TLSComplianceReport, error) {
 	c, err := buildClient()
 	if err != nil {
 		return nil, err
@@ -908,7 +913,7 @@ func fetchReports() ([]securityv1alpha1.TLSComplianceReport, error) {
 	}
 
 	var reportList securityv1alpha1.TLSComplianceReportList
-	if err := c.List(context.Background(), &reportList, listOpts...); err != nil {
+	if err := c.List(ctx, &reportList, listOpts...); err != nil {
 		return nil, fmt.Errorf("listing TLSComplianceReports: %w", err)
 	}
 

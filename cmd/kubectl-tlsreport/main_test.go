@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -124,7 +125,7 @@ func TestKubeconfigFlag_UsesExplicitPath(t *testing.T) {
 	kubecontext = ""
 	defer func() { kubeconfig = ""; kubecontext = "" }()
 
-	_, err := fetchReports()
+	_, err := fetchReports(context.Background())
 	if err == nil {
 		t.Fatal("expected error with nonexistent kubeconfig")
 	}
@@ -138,7 +139,7 @@ func TestContextFlag_UsesOverride(t *testing.T) {
 	kubecontext = "nonexistent-context"
 	defer func() { kubeconfig = ""; kubecontext = "" }()
 
-	_, err := fetchReports()
+	_, err := fetchReports(context.Background())
 	// Without a valid kubeconfig this will fail, but we verify the flag
 	// is accepted and doesn't cause a flag-parsing error
 	if err == nil {
