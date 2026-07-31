@@ -1163,14 +1163,10 @@ func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval tim
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				r.runScanCycle(ctx, logger)
+				_ = r.runScanCycleWithError(ctx, logger)
 			}
 		}
 	}()
-}
-
-func (r *EndpointReconciler) runScanCycle(ctx context.Context, logger logr.Logger) {
-	_ = r.runScanCycleWithError(ctx, logger)
 }
 
 func (r *EndpointReconciler) runScanCycleWithError(ctx context.Context, logger logr.Logger) error {
@@ -1180,13 +1176,14 @@ func (r *EndpointReconciler) runScanCycleWithError(ctx context.Context, logger l
 	err := r.scanAllEndpoints(ctx)
 	if err != nil {
 		logger.Error(err, "failed to complete periodic scan")
+		metrics.RecordScanCycleError()
 	} else {
 		metrics.RecordScanCycleCompleted()
 	}
 
 	duration := time.Since(start)
 	metrics.RecordScanCycleDuration(duration.Seconds())
-	logger.Info("periodic TLS scan completed", "duration", duration)
+	logger.Info("periodic TLS scan finished", "duration", duration, "success", err == nil)
 	return err
 }
 

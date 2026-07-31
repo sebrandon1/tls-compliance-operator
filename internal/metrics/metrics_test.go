@@ -149,6 +149,12 @@ func TestRecordPQCReadiness(t *testing.T) {
 	}
 }
 
+func TestRecordScanCycleError(t *testing.T) {
+	assertCounterInc(t, ScanCycleErrorsTotal, func() {
+		RecordScanCycleError()
+	})
+}
+
 func TestRecordScanCycleDuration(t *testing.T) {
 	before := histogramCount(ScanCycleDurationSeconds)
 	RecordScanCycleDuration(120.5)
