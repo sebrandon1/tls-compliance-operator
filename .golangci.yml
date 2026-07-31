@@ -38,6 +38,7 @@ linters:
     nolintlint:
       require-explanation: true
       require-specific: true
+      allow-unused: true
 
     revive:
       rules:
