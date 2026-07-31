@@ -246,31 +246,32 @@ func isMTLSError(err error) bool {
 
 // tryTLSVersion attempts to connect with a specific TLS version
 func (c *TLSChecker) tryTLSVersion(ctx context.Context, addr, serverName string, version uint16) (supported bool, cipherSuiteID uint16, cipherSuite string, curveName string, alpnProto string, cert *CertificateDetails, err error) {
-	dialer := &net.Dialer{
-		Timeout: c.Timeout,
-	}
-
-	tlsConfig := &tls.Config{
-		MinVersion:         version,
-		MaxVersion:         version,
-		InsecureSkipVerify: true, //nolint:gosec // We report cert info but don't enforce trust
-		ServerName:         serverName,
-		NextProtos:         DefaultALPNProtos,
+	dialer := &tls.Dialer{
+		NetDialer: &net.Dialer{Timeout: c.Timeout},
+		Config: &tls.Config{
+			MinVersion:         version,
+			MaxVersion:         version,
+			InsecureSkipVerify: true,
+			ServerName:         serverName,
+			NextProtos:         DefaultALPNProtos,
+		},
 	}
 	if c.ClientCert != nil {
-		tlsConfig.Certificates = []tls.Certificate{*c.ClientCert}
+		dialer.Config.Certificates = []tls.Certificate{*c.ClientCert}
 	}
 
-	conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
+	rawConn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		// mTLS: server requires a client certificate but we proved it speaks this TLS version
 		if isMTLSError(err) {
 			return true, 0, "", "", "", nil, err
 		}
 		return false, 0, "", "", "", nil, err
 	}
-	defer conn.Close() //nolint:errcheck
-
+	defer rawConn.Close()
+	conn, ok := rawConn.(*tls.Conn)
+	if !ok {
+		return false, 0, "", "", "", nil, fmt.Errorf("unexpected connection type from TLS dialer")
+	}
 	state := conn.ConnectionState()
 	cipherSuiteName := tls.CipherSuiteName(state.CipherSuite)
 
@@ -315,7 +316,7 @@ func (c *TLSChecker) enumerateCiphers(ctx context.Context, addr, serverName stri
 		tlsConfig := &tls.Config{
 			MinVersion:         version,
 			MaxVersion:         version,
-			InsecureSkipVerify: true, //nolint:gosec // We probe capabilities, not trust
+			InsecureSkipVerify: true,
 			ServerName:         serverName,
 			CipherSuites:       remaining,
 		}
@@ -329,8 +330,7 @@ func (c *TLSChecker) enumerateCiphers(ctx context.Context, addr, serverName stri
 		}
 
 		state := conn.ConnectionState()
-		conn.Close() //nolint:errcheck
-
+		conn.Close()
 		if seenIDs[state.CipherSuite] {
 			break
 		}
@@ -345,28 +345,26 @@ func (c *TLSChecker) enumerateCiphers(ctx context.Context, addr, serverName stri
 // exchange curves to determine whether the server supports post-quantum key
 // exchange. Tests X25519MLKEM768, SecP256r1MLKEM768, and SecP384r1MLKEM1024.
 func (c *TLSChecker) probeMLKEM(ctx context.Context, addr, serverName string) bool {
-	dialer := &net.Dialer{
-		Timeout: c.Timeout,
-	}
-
-	tlsConfig := &tls.Config{
-		MinVersion: tls.VersionTLS13,
-		MaxVersion: tls.VersionTLS13,
-		CurvePreferences: []tls.CurveID{
-			tls.X25519MLKEM768,
-			tls.SecP256r1MLKEM768,
-			tls.SecP384r1MLKEM1024,
+	dialer := &tls.Dialer{
+		NetDialer: &net.Dialer{Timeout: c.Timeout},
+		Config: &tls.Config{
+			MinVersion: tls.VersionTLS13,
+			MaxVersion: tls.VersionTLS13,
+			CurvePreferences: []tls.CurveID{
+				tls.X25519MLKEM768,
+				tls.SecP256r1MLKEM768,
+				tls.SecP384r1MLKEM1024,
+			},
+			InsecureSkipVerify: true,
+			ServerName:         serverName,
 		},
-		InsecureSkipVerify: true, //nolint:gosec // We probe capabilities, not trust
-		ServerName:         serverName,
 	}
 
-	conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return false
 	}
-	conn.Close() //nolint:errcheck
-
+	conn.Close()
 	return true
 }
 

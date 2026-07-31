@@ -94,7 +94,7 @@ func BenchmarkGenerateCRName(b *testing.B) {
 
 	b.ResetTimer()
 	for b.Loop() {
-		_ = GenerateCRName(ep)
+		_ = GenerateCRName(&ep)
 	}
 }
 
@@ -109,7 +109,7 @@ func BenchmarkGenerateCRName_LongHost(b *testing.B) {
 
 	b.ResetTimer()
 	for b.Loop() {
-		_ = GenerateCRName(ep)
+		_ = GenerateCRName(&ep)
 	}
 }
 
@@ -127,7 +127,7 @@ func BenchmarkIsTLSPort(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		for i := range ports {
-			_ = isTLSPort(ports[i])
+			_ = isTLSPort(&ports[i])
 		}
 	}
 }

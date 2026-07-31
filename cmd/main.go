@@ -421,7 +421,7 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 		APIReader:             mgr.GetAPIReader(),
 		Scheme:                mgr.GetScheme(),
 		TLSChecker:            checker,
-		Recorder:              mgr.GetEventRecorderFor("tls-compliance-controller"), //nolint:staticcheck
+		Recorder:              mgr.GetEventRecorderFor("tls-compliance-controller"), //nolint:staticcheck // migrating to events API is a separate task
 		IncludeNamespaces:     includedNS,
 		ExcludeNamespaces:     excludedNS,
 		CertExpiryDays:        cfg.certExpiryWarningDays,
@@ -503,6 +503,7 @@ func main() {
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running manager")
+		cancel()
 		os.Exit(1)
 	}
 }
@@ -557,7 +558,7 @@ func writeRunOnceOutput(reports []securityv1alpha1.TLSComplianceReport, cfg *ope
 		if err != nil {
 			return fmt.Errorf("creating output file: %w", err)
 		}
-		defer f.Close() //nolint:errcheck
+		defer f.Close()
 		w = f
 		setupLog.Info("writing results", "file", cfg.outputFile, "format", cfg.outputFormat)
 	}

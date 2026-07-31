@@ -174,7 +174,7 @@ func validateNoDuplicate(ctx context.Context, target *TLSComplianceTarget, selfN
 	}
 	var list TLSComplianceTargetList
 	if err := cl.List(ctx, &list); err != nil {
-		return nil
+		return nil //nolint:nilerr // allow create/update when API is unavailable
 	}
 	for i := range list.Items {
 		existing := &list.Items[i]

@@ -62,7 +62,7 @@ func (f *Fetcher) RefreshAll(ctx context.Context) {
 		logger.V(1).Info("could not fetch APIServer TLS profile, using default", "error", err)
 		profile = DefaultProfile()
 	}
-	f.setProfile(ComponentAPIServer, profile)
+	f.setProfile(ComponentAPIServer, &profile)
 	f.setAdherence(adherence)
 
 	// Fetch IngressController profile
@@ -71,7 +71,7 @@ func (f *Fetcher) RefreshAll(ctx context.Context) {
 		logger.V(1).Info("could not fetch IngressController TLS profile, using default", "error", err)
 		profile = DefaultProfile()
 	}
-	f.setProfile(ComponentIngressController, profile)
+	f.setProfile(ComponentIngressController, &profile)
 
 	// Fetch KubeletConfig profile
 	profile, err = f.fetchKubeletConfigProfile(ctx)
@@ -79,7 +79,7 @@ func (f *Fetcher) RefreshAll(ctx context.Context) {
 		logger.V(1).Info("could not fetch KubeletConfig TLS profile, using default", "error", err)
 		profile = DefaultProfile()
 	}
-	f.setProfile(ComponentKubeletConfig, profile)
+	f.setProfile(ComponentKubeletConfig, &profile)
 
 	logger.Info("TLS security profiles refreshed")
 }
@@ -106,10 +106,10 @@ func (f *Fetcher) StartPeriodicRefresh(ctx context.Context, interval time.Durati
 	}()
 }
 
-func (f *Fetcher) setProfile(component Component, profile Profile) {
+func (f *Fetcher) setProfile(component Component, profile *Profile) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.profiles[component] = profile
+	f.profiles[component] = *profile
 }
 
 // GetAdherence returns the cached TLS adherence mode from the APIServer config.

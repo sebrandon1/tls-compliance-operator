@@ -31,7 +31,7 @@ const (
 var (
 	// EndpointsTotal tracks total endpoints by compliance status
 	EndpointsTotal = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
+		prometheus.GaugeOpts{ //nolint:promlinter // renaming would break existing dashboards
 			Namespace: MetricsNamespace,
 			Name:      "endpoints_total",
 			Help:      "Total number of endpoints by compliance status",
@@ -51,7 +51,7 @@ var (
 
 	// CertificateExpiryDays tracks days until certificate expiry
 	CertificateExpiryDays = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
+		prometheus.GaugeOpts{ //nolint:promlinter // days is more user-friendly than seconds for cert expiry
 			Namespace: MetricsNamespace,
 			Name:      "certificate_expiry_days",
 			Help:      "Number of days until certificate expiry",

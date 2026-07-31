@@ -56,7 +56,7 @@ var gradeRank = map[string]int{
 }
 
 // IsEmpty returns true if no filters are set.
-func (o FilterOptions) IsEmpty() bool {
+func (o *FilterOptions) IsEmpty() bool {
 	return o.Namespace == "" && o.Status == "" && o.Source == "" &&
 		o.PQCStatus == "" && o.ExpiresWithin == "" && !o.Expired &&
 		o.Issuer == "" && o.Subject == "" && o.TLSVersion == "" &&
@@ -66,7 +66,7 @@ func (o FilterOptions) IsEmpty() bool {
 // FilterReports returns the subset of reports matching all non-empty filter criteria.
 // Filters are combined with AND logic. Empty filters are pass-through.
 // Returns an error if ExpiresWithin contains an unparseable duration.
-func FilterReports(reports []securityv1alpha1.TLSComplianceReport, opts FilterOptions) ([]securityv1alpha1.TLSComplianceReport, error) {
+func FilterReports(reports []securityv1alpha1.TLSComplianceReport, opts *FilterOptions) ([]securityv1alpha1.TLSComplianceReport, error) {
 	if opts.IsEmpty() {
 		return reports, nil
 	}
@@ -109,7 +109,7 @@ func ParseExpiresWithin(s string) (time.Duration, error) {
 	return time.ParseDuration(s)
 }
 
-func matchesFilter(r *securityv1alpha1.TLSComplianceReport, opts FilterOptions, now time.Time, expiresWithin time.Duration) bool {
+func matchesFilter(r *securityv1alpha1.TLSComplianceReport, opts *FilterOptions, now time.Time, expiresWithin time.Duration) bool {
 	if opts.Namespace != "" && r.Spec.SourceNamespace != opts.Namespace {
 		return false
 	}

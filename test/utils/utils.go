@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/onsi/ginkgo/v2" //nolint:revive
+	"github.com/onsi/ginkgo/v2"
 )
 
 // Run executes the provided command within this context
@@ -45,7 +45,7 @@ func Run(cmd *exec.Cmd) (string, error) {
 		_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "completed in %s: %s\n", elapsed.Round(time.Millisecond), command)
 	}
 	if err != nil {
-		return string(output), fmt.Errorf("%s failed with error: (%v) %s", command, err, string(output))
+		return string(output), fmt.Errorf("%s failed with error: (%w) %s", command, err, string(output))
 	}
 
 	return string(output), nil

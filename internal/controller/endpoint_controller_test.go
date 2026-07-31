@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -1104,12 +1105,12 @@ func TestEndpointReconciler_ProcessEndpoint_Idempotent(t *testing.T) {
 	}
 
 	// Process same endpoint twice
-	err := reconciler.processEndpoint(ctx, ep)
+	err := reconciler.processEndpoint(ctx, &ep)
 	if err != nil {
 		t.Fatalf("first processEndpoint() error = %v", err)
 	}
 
-	err = reconciler.processEndpoint(ctx, ep)
+	err = reconciler.processEndpoint(ctx, &ep)
 	if err != nil {
 		t.Fatalf("second processEndpoint() error = %v", err)
 	}
@@ -1157,7 +1158,7 @@ func TestProcessEndpoint_RetriesPendingCR(t *testing.T) {
 		SourceName:      "pending-svc",
 	}
 
-	crName := endpoint.GenerateCRName(ep)
+	crName := endpoint.GenerateCRName(&ep)
 	now := metav1.Now()
 	cr := &securityv1alpha1.TLSComplianceReport{
 		ObjectMeta: metav1.ObjectMeta{Name: crName},
@@ -1179,7 +1180,7 @@ func TestProcessEndpoint_RetriesPendingCR(t *testing.T) {
 		t.Fatalf("failed to update CR status: %v", err)
 	}
 
-	err := reconciler.processEndpoint(ctx, ep)
+	err := reconciler.processEndpoint(ctx, &ep)
 	if err != nil {
 		t.Fatalf("processEndpoint() error = %v", err)
 	}
@@ -1229,7 +1230,7 @@ func TestProcessEndpoint_PendingWithCheckCountSkipsRetry(t *testing.T) {
 		SourceName:      "pending-checked-svc",
 	}
 
-	crName := endpoint.GenerateCRName(ep)
+	crName := endpoint.GenerateCRName(&ep)
 	now := metav1.Now()
 	cr := &securityv1alpha1.TLSComplianceReport{
 		ObjectMeta: metav1.ObjectMeta{Name: crName},
@@ -1252,7 +1253,7 @@ func TestProcessEndpoint_PendingWithCheckCountSkipsRetry(t *testing.T) {
 	}
 
 	checkerCallsBefore := checker.CheckCount()
-	err := reconciler.processEndpoint(ctx, ep)
+	err := reconciler.processEndpoint(ctx, &ep)
 	if err != nil {
 		t.Fatalf("processEndpoint() error = %v", err)
 	}
@@ -1296,7 +1297,7 @@ func TestProcessEndpoint_NonPendingSkipsRetry(t *testing.T) {
 		SourceName:      "compliant-svc",
 	}
 
-	crName := endpoint.GenerateCRName(ep)
+	crName := endpoint.GenerateCRName(&ep)
 	now := metav1.Now()
 	cr := &securityv1alpha1.TLSComplianceReport{
 		ObjectMeta: metav1.ObjectMeta{Name: crName},
@@ -1319,7 +1320,7 @@ func TestProcessEndpoint_NonPendingSkipsRetry(t *testing.T) {
 	}
 
 	checkerCallsBefore := checker.CheckCount()
-	err := reconciler.processEndpoint(ctx, ep)
+	err := reconciler.processEndpoint(ctx, &ep)
 	if err != nil {
 		t.Fatalf("processEndpoint() error = %v", err)
 	}
@@ -1361,7 +1362,7 @@ func TestProcessEndpoint_PendingRetryWorkersBusy(t *testing.T) {
 		SourceName:      "busy-retry-svc",
 	}
 
-	crName := endpoint.GenerateCRName(ep)
+	crName := endpoint.GenerateCRName(&ep)
 	now := metav1.Now()
 	cr := &securityv1alpha1.TLSComplianceReport{
 		ObjectMeta: metav1.ObjectMeta{Name: crName},
@@ -1383,8 +1384,8 @@ func TestProcessEndpoint_PendingRetryWorkersBusy(t *testing.T) {
 		t.Fatalf("failed to update CR status: %v", err)
 	}
 
-	err := reconciler.processEndpoint(ctx, ep)
-	if err != errWorkersBusy {
+	err := reconciler.processEndpoint(ctx, &ep)
+	if !errors.Is(err, errWorkersBusy) {
 		t.Errorf("processEndpoint() error = %v, want errWorkersBusy", err)
 	}
 
@@ -3439,7 +3440,7 @@ func TestHandleTarget_SetsOwnerReference(t *testing.T) {
 		SourceNamespace: "cluster-scoped",
 		SourceName:      "test-target",
 	}
-	reportName := endpoint.GenerateCRName(ep)
+	reportName := endpoint.GenerateCRName(&ep)
 
 	report := &securityv1alpha1.TLSComplianceReport{
 		ObjectMeta: metav1.ObjectMeta{

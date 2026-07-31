@@ -203,7 +203,7 @@ func TestPrintReportDetail_FIPSDetected(t *testing.T) {
 	report.Status.FIPSDetected = true
 
 	output := captureStdout(t, func() {
-		_ = printReportDetail(report)
+		_ = printReportDetail(&report)
 	})
 
 	if !strings.Contains(output, "FIPS Mode:") {
@@ -224,7 +224,7 @@ func TestPrintReportDetail_FIPSNotDetected(t *testing.T) {
 	report.Status.PQCReadiness = securityv1alpha1.PQCReadinessTLS13Capable
 
 	output := captureStdout(t, func() {
-		_ = printReportDetail(report)
+		_ = printReportDetail(&report)
 	})
 
 	if strings.Contains(output, "FIPS Mode:") {

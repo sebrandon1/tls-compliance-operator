@@ -221,13 +221,13 @@ func (r *EndpointReconciler) handleEndpoints(ctx context.Context, endpoints []en
 	logger := log.FromContext(ctx)
 	var firstErr error
 	var deferred bool
-	for _, ep := range endpoints {
-		if err := r.processEndpoint(ctx, ep); err != nil {
+	for i := range endpoints {
+		if err := r.processEndpoint(ctx, &endpoints[i]); err != nil {
 			if errors.Is(err, errWorkersBusy) {
 				deferred = true
 				continue
 			}
-			logger.Error(err, "failed to process endpoint", "host", ep.Host, "port", ep.Port)
+			logger.Error(err, "failed to process endpoint", "host", endpoints[i].Host, "port", endpoints[i].Port)
 			metrics.RecordReconcileError(string(sourceKind), "process")
 			if firstErr == nil {
 				firstErr = err
@@ -322,9 +322,9 @@ func (r *EndpointReconciler) handleTarget(ctx context.Context, target *securityv
 		SourceName:      target.Name,
 	}
 
-	crName := endpoint.GenerateCRName(ep)
+	crName := endpoint.GenerateCRName(&ep)
 
-	if err := r.processEndpoint(ctx, ep); err != nil {
+	if err := r.processEndpoint(ctx, &ep); err != nil {
 		if errors.Is(err, errWorkersBusy) {
 			return ctrl.Result{RequeueAfter: workerBusyRequeueDelay}, nil
 		}
@@ -425,7 +425,7 @@ func (r *EndpointReconciler) ensureOwnerReference(ctx context.Context, reportNam
 }
 
 // processEndpoint creates or updates a TLSComplianceReport CR for an endpoint
-func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep endpoint.Endpoint) error {
+func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep *endpoint.Endpoint) error {
 	logger := log.FromContext(ctx)
 	crName := endpoint.GenerateCRName(ep)
 	now := metav1.Now()
@@ -828,7 +828,7 @@ func (r *EndpointReconciler) checkProfileCompliance(cr *securityv1alpha1.TLSComp
 
 	for component, profile := range profiles {
 		compResult := tlsprofile.CheckCompliance(
-			profile,
+			&profile,
 			result.SupportsTLS10,
 			result.SupportsTLS11,
 			result.SupportsTLS12,
@@ -1183,16 +1183,16 @@ func (r *EndpointReconciler) scanPodEndpoints(ctx context.Context) error {
 			}
 
 			endpoints := endpoint.ExtractFromPod(pod)
-			for _, ep := range endpoints {
-				if err := r.processEndpoint(ctx, ep); err != nil {
+			for i := range endpoints {
+				if err := r.processEndpoint(ctx, &endpoints[i]); err != nil {
 					logger.Error(err, "failed to process pod endpoint",
 						"pod", pod.Name, "namespace", pod.Namespace,
-						"host", ep.Host, "port", ep.Port)
+						"host", endpoints[i].Host, "port", endpoints[i].Port)
 					continue
 				}
 
 				if pod.Spec.HostNetwork {
-					crName := endpoint.GenerateCRName(ep)
+					crName := endpoint.GenerateCRName(&endpoints[i])
 					if err := r.updateWithRetry(ctx, crName, func(cr *securityv1alpha1.TLSComplianceReport) {
 						labels := cr.Labels
 						if labels == nil {
@@ -1301,8 +1301,8 @@ func (r *EndpointReconciler) updateEndpointMetrics(reports []securityv1alpha1.TL
 		string(securityv1alpha1.ComplianceStatusUnknown):           0,
 	}
 
-	for _, cr := range reports {
-		status := string(cr.Status.ComplianceStatus)
+	for i := range reports {
+		status := string(reports[i].Status.ComplianceStatus)
 		if _, ok := counts[status]; ok {
 			counts[status]++
 		}
