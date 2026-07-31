@@ -542,6 +542,27 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 		}
 	}
 
+	result, checkErr := r.retryTLSCheck(ctx, crName, host, port, holdsSemaphore)
+	if result == nil && checkErr == nil {
+		return
+	}
+
+	outcome := r.applyCheckResult(ctx, crName, host, port, result, checkErr)
+	if outcome != nil {
+		r.recordCheckMetrics(ctx, crName, host, port, result, outcome)
+	}
+}
+
+type checkOutcome struct {
+	oldComplianceStatus securityv1alpha1.ComplianceStatus
+	oldPQCReadiness     securityv1alpha1.PQCReadiness
+	forwardSecrecy      bool
+	pqcReadiness        securityv1alpha1.PQCReadiness
+}
+
+func (r *EndpointReconciler) retryTLSCheck(ctx context.Context, crName, host string, port int, holdsSemaphore bool) (*tlscheck.TLSCheckResult, error) {
+	logger := log.FromContext(ctx).WithValues("crName", crName)
+
 	maxAttempts := 1 + r.MaxRetries
 	retryBackoff := r.RetryBackoff
 	if retryBackoff <= 0 {
@@ -565,17 +586,14 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	for attempt := range maxAttempts {
 		result, checkErr = r.TLSChecker.CheckEndpoint(ctx, host, port)
 
-		// Success — break out
 		if checkErr == nil {
 			break
 		}
 
-		// Non-transient failure — no retry
 		if result == nil || !result.FailureReason.IsTransient() {
 			break
 		}
 
-		// Transient failure with retries remaining
 		if attempt < maxAttempts-1 {
 			retryDelay := backoff.Step()
 			logger.Info("transient TLS check failure, retrying",
@@ -586,11 +604,9 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 
 			metrics.RecordRetry(string(result.FailureReason))
 
-			// Update CR with retry status
 			r.updateRetryStatus(ctx, crName, attempt+1, retryDelay, result.FailureReason, checkErr)
 
 			if holdsSemaphore {
-				// Release worker slot during backoff so other checks can run
 				<-r.checkSem
 			}
 
@@ -599,18 +615,21 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 				if holdsSemaphore {
 					r.checkSem <- struct{}{}
 				}
-				return
+				return nil, nil
 			case <-time.After(retryDelay):
 			}
 
 			if holdsSemaphore {
-				// Reacquire worker slot for next attempt
 				r.checkSem <- struct{}{}
 			}
 		}
 	}
 
-	portStr := fmt.Sprintf("%d", port)
+	return result, checkErr
+}
+
+func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host string, port int, result *tlscheck.TLSCheckResult, checkErr error) *checkOutcome {
+	logger := log.FromContext(ctx).WithValues("crName", crName)
 
 	if checkErr != nil {
 		var failReason tlscheck.FailureReason
@@ -652,14 +671,13 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 				if err := r.Get(ctx, client.ObjectKey{Name: crName}, &cr); err == nil {
 					r.Recorder.Event(&cr, corev1.EventTypeWarning, EventReasonRetryExhausted,
 						fmt.Sprintf("TLS check retries exhausted for %s after %d attempts: %s",
-							hostPort(host, int32(port)), maxAttempts, failReason))
+							hostPort(host, int32(port)), 1+r.MaxRetries, failReason))
 				}
 			}
 		}
-		return
+		return nil
 	}
 
-	// Pre-compute values that don't depend on the CR
 	cipherGrades := tlscheck.GradeCipherSuites(result.CipherSuites)
 	overallGrade := tlscheck.OverallGrade(result.CipherSuites, cipherGrades)
 	forwardSecrecy := tlscheck.AllCiphersHaveForwardSecrecy(result.CipherSuites)
@@ -733,10 +751,20 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 		r.updateConditions(cr, complianceStatus, result)
 	}); err != nil {
 		logger.Error(err, "failed to update TLSComplianceReport with check results")
-		return
+		return nil
 	}
 
-	// Record metrics (idempotent, safe outside retry)
+	return &checkOutcome{
+		oldComplianceStatus: oldComplianceStatus,
+		oldPQCReadiness:     oldPQCReadiness,
+		forwardSecrecy:      forwardSecrecy,
+		pqcReadiness:        pqcReadiness,
+	}
+}
+
+func (r *EndpointReconciler) recordCheckMetrics(ctx context.Context, crName, host string, port int, result *tlscheck.TLSCheckResult, outcome *checkOutcome) {
+	portStr := fmt.Sprintf("%d", port)
+
 	metrics.RecordCheckDuration(result.CheckDuration.Seconds())
 	if r.MetricsPerEndpoint {
 		metrics.RecordVersionSupport(host, portStr, "ssl3.0", result.SupportsSSL30)
@@ -744,17 +772,16 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 		metrics.RecordVersionSupport(host, portStr, "1.1", result.SupportsTLS11)
 		metrics.RecordVersionSupport(host, portStr, "1.2", result.SupportsTLS12)
 		metrics.RecordVersionSupport(host, portStr, "1.3", result.SupportsTLS13)
-		metrics.RecordForwardSecrecy(host, portStr, forwardSecrecy)
-		metrics.RecordPQCReadiness(host, portStr, pqcReadiness)
+		metrics.RecordForwardSecrecy(host, portStr, outcome.forwardSecrecy)
+		metrics.RecordPQCReadiness(host, portStr, outcome.pqcReadiness)
 		if result.Certificate != nil {
 			metrics.RecordCertExpiry(host, portStr, float64(result.Certificate.DaysUntilExpiry))
 		}
 	}
 
-	// Emit events (need fresh CR for event object)
 	var cr securityv1alpha1.TLSComplianceReport
 	if err := r.Get(ctx, client.ObjectKey{Name: crName}, &cr); err == nil {
-		r.emitComplianceEvents(&cr, oldComplianceStatus, oldPQCReadiness, result)
+		r.emitComplianceEvents(&cr, outcome.oldComplianceStatus, outcome.oldPQCReadiness, result)
 	}
 }
 
