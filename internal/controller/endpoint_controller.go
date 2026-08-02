@@ -1253,9 +1253,55 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 
 	r.InitialScanDone.Store(true)
 
-	var crList securityv1alpha1.TLSComplianceReportList
-	if err := r.List(ctx, &crList); err != nil {
-		return fmt.Errorf("failed to list TLSComplianceReports: %w", err)
+	type scanItem struct {
+		name       string
+		host       string
+		port       int
+		namespace  string
+		status     securityv1alpha1.ComplianceStatus
+		checkCount int64
+	}
+
+	statusCounts := map[string]float64{
+		string(securityv1alpha1.ComplianceStatusCompliant):         0,
+		string(securityv1alpha1.ComplianceStatusNonCompliant):      0,
+		string(securityv1alpha1.ComplianceStatusWarning):           0,
+		string(securityv1alpha1.ComplianceStatusUnreachable):       0,
+		string(securityv1alpha1.ComplianceStatusTimeout):           0,
+		string(securityv1alpha1.ComplianceStatusClosed):            0,
+		string(securityv1alpha1.ComplianceStatusFiltered):          0,
+		string(securityv1alpha1.ComplianceStatusNoTLS):             0,
+		string(securityv1alpha1.ComplianceStatusPlaintextHTTP):     0,
+		string(securityv1alpha1.ComplianceStatusMutualTLSRequired): 0,
+		string(securityv1alpha1.ComplianceStatusPending):           0,
+		string(securityv1alpha1.ComplianceStatusUnknown):           0,
+	}
+
+	var allItems []scanItem
+	var continueToken string
+	for {
+		var crList securityv1alpha1.TLSComplianceReportList
+		if err := r.apiReader().List(ctx, &crList, client.Limit(listPageSize), client.Continue(continueToken)); err != nil {
+			return fmt.Errorf("failed to list TLSComplianceReports: %w", err)
+		}
+		for i := range crList.Items {
+			cr := &crList.Items[i]
+			allItems = append(allItems, scanItem{
+				name:       cr.Name,
+				host:       cr.Spec.Host,
+				port:       int(cr.Spec.Port),
+				namespace:  cr.Spec.SourceNamespace,
+				status:     cr.Status.ComplianceStatus,
+				checkCount: cr.Status.CheckCount,
+			})
+			if _, ok := statusCounts[string(cr.Status.ComplianceStatus)]; ok {
+				statusCounts[string(cr.Status.ComplianceStatus)]++
+			}
+		}
+		continueToken = crList.Continue
+		if continueToken == "" {
+			break
+		}
 	}
 
 	workers := r.Workers
@@ -1263,30 +1309,22 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 		workers = 5
 	}
 
-	type scanItem struct {
-		name      string
-		host      string
-		port      int
-		namespace string
-	}
-
-	items := make(chan scanItem, len(crList.Items))
-	sort.SliceStable(crList.Items, func(i, j int) bool {
-		iPending := crList.Items[i].Status.ComplianceStatus == securityv1alpha1.ComplianceStatusPending ||
-			crList.Items[i].Status.CheckCount == 0
-		jPending := crList.Items[j].Status.ComplianceStatus == securityv1alpha1.ComplianceStatusPending ||
-			crList.Items[j].Status.CheckCount == 0
+	sort.SliceStable(allItems, func(i, j int) bool {
+		iPending := allItems[i].status == securityv1alpha1.ComplianceStatusPending ||
+			allItems[i].checkCount == 0
+		jPending := allItems[j].status == securityv1alpha1.ComplianceStatusPending ||
+			allItems[j].checkCount == 0
 		return iPending && !jPending
 	})
 
-	for i := range crList.Items {
-		cr := &crList.Items[i]
-		items <- scanItem{name: cr.Name, host: cr.Spec.Host, port: int(cr.Spec.Port), namespace: cr.Spec.SourceNamespace}
+	items := make(chan scanItem, len(allItems))
+	for i := range allItems {
+		items <- allItems[i]
 	}
 	close(items)
 
 	var wg sync.WaitGroup
-	for range min(workers, len(crList.Items)) {
+	for range min(workers, len(allItems)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -1302,37 +1340,15 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 	}
 	wg.Wait()
 
-	r.updateEndpointMetrics(crList.Items)
+	r.updateEndpointMetrics(statusCounts)
 
-	logger.Info("scan completed", "endpoints", len(crList.Items), "workers", workers)
+	logger.Info("scan completed", "endpoints", len(allItems), "workers", workers)
 	return podScanErr
 }
 
-// updateEndpointMetrics recounts endpoints by compliance status.
-func (r *EndpointReconciler) updateEndpointMetrics(reports []securityv1alpha1.TLSComplianceReport) {
-	counts := map[string]float64{
-		string(securityv1alpha1.ComplianceStatusCompliant):         0,
-		string(securityv1alpha1.ComplianceStatusNonCompliant):      0,
-		string(securityv1alpha1.ComplianceStatusWarning):           0,
-		string(securityv1alpha1.ComplianceStatusUnreachable):       0,
-		string(securityv1alpha1.ComplianceStatusTimeout):           0,
-		string(securityv1alpha1.ComplianceStatusClosed):            0,
-		string(securityv1alpha1.ComplianceStatusFiltered):          0,
-		string(securityv1alpha1.ComplianceStatusNoTLS):             0,
-		string(securityv1alpha1.ComplianceStatusPlaintextHTTP):     0,
-		string(securityv1alpha1.ComplianceStatusMutualTLSRequired): 0,
-		string(securityv1alpha1.ComplianceStatusPending):           0,
-		string(securityv1alpha1.ComplianceStatusUnknown):           0,
-	}
-
-	for i := range reports {
-		status := string(reports[i].Status.ComplianceStatus)
-		if _, ok := counts[status]; ok {
-			counts[status]++
-		}
-	}
-
-	for status, count := range counts {
+// updateEndpointMetrics sets the per-status endpoint gauge from pre-computed counts.
+func (r *EndpointReconciler) updateEndpointMetrics(statusCounts map[string]float64) {
+	for status, count := range statusCounts {
 		metrics.EndpointsTotal.WithLabelValues(status).Set(count)
 	}
 }
@@ -1366,99 +1382,152 @@ func sourceKey(namespace, name string) string {
 
 // cleanupOrphanedCRs removes TLSComplianceReport CRs whose source resources no longer exist.
 // It batches source resource lookups by listing each resource type once, then cross-referencing
-// in memory to avoid N+1 API calls.
+// in memory to avoid N+1 API calls. All listings use paginated API calls to bound peak memory.
 func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 
-	var crList securityv1alpha1.TLSComplianceReportList
-	if err := r.List(ctx, &crList); err != nil {
-		return fmt.Errorf("failed to list TLSComplianceReports: %w", err)
-	}
-
-	if len(crList.Items) == 0 {
-		return nil
-	}
-
+	// Pass 1: paginate CRs to discover which source kinds are in use.
 	neededKinds := make(map[securityv1alpha1.SourceKind]bool)
-	for i := range crList.Items {
-		neededKinds[crList.Items[i].Spec.SourceKind] = true
+	var crContinue string
+	var foundCRs bool
+	for {
+		var crList securityv1alpha1.TLSComplianceReportList
+		if err := r.apiReader().List(ctx, &crList, client.Limit(listPageSize), client.Continue(crContinue)); err != nil {
+			return fmt.Errorf("failed to list TLSComplianceReports: %w", err)
+		}
+		for i := range crList.Items {
+			neededKinds[crList.Items[i].Spec.SourceKind] = true
+			foundCRs = true
+		}
+		crContinue = crList.Continue
+		if crContinue == "" {
+			break
+		}
+	}
+
+	if !foundCRs {
+		return nil
 	}
 
 	existingSources := make(map[securityv1alpha1.SourceKind]map[string]bool)
 
 	if neededKinds[securityv1alpha1.SourceKindService] {
-		var svcList corev1.ServiceList
-		if err := r.List(ctx, &svcList); err != nil {
-			logger.Error(err, "failed to list Services for cleanup")
-		} else {
-			svcSet := make(map[string]bool, len(svcList.Items))
+		svcSet := make(map[string]bool)
+		var token string
+		var listErr error
+		for {
+			var svcList corev1.ServiceList
+			if err := r.apiReader().List(ctx, &svcList, client.Limit(listPageSize), client.Continue(token)); err != nil {
+				logger.Error(err, "failed to list Services for cleanup")
+				listErr = err
+				break
+			}
 			for i := range svcList.Items {
 				svcSet[sourceKey(svcList.Items[i].Namespace, svcList.Items[i].Name)] = true
 			}
+			token = svcList.Continue
+			if token == "" {
+				break
+			}
+		}
+		if listErr == nil {
 			existingSources[securityv1alpha1.SourceKindService] = svcSet
 		}
 	}
 
 	if neededKinds[securityv1alpha1.SourceKindIngress] {
-		var ingList networkingv1.IngressList
-		if err := r.List(ctx, &ingList); err != nil {
-			logger.Error(err, "failed to list Ingresses for cleanup")
-		} else {
-			ingSet := make(map[string]bool, len(ingList.Items))
+		ingSet := make(map[string]bool)
+		var token string
+		var listErr error
+		for {
+			var ingList networkingv1.IngressList
+			if err := r.apiReader().List(ctx, &ingList, client.Limit(listPageSize), client.Continue(token)); err != nil {
+				logger.Error(err, "failed to list Ingresses for cleanup")
+				listErr = err
+				break
+			}
 			for i := range ingList.Items {
 				ingSet[sourceKey(ingList.Items[i].Namespace, ingList.Items[i].Name)] = true
 			}
+			token = ingList.Continue
+			if token == "" {
+				break
+			}
+		}
+		if listErr == nil {
 			existingSources[securityv1alpha1.SourceKindIngress] = ingSet
 		}
 	}
 
 	if neededKinds[securityv1alpha1.SourceKindRoute] && r.RouteAPIAvailable {
-		routeList := &unstructured.UnstructuredList{}
-		routeList.SetGroupVersionKind(routeGVK)
-		if err := r.List(ctx, routeList); err != nil {
-			logger.Error(err, "failed to list Routes for cleanup")
-		} else {
-			routeSet := make(map[string]bool, len(routeList.Items))
+		routeSet := make(map[string]bool)
+		var token string
+		var listErr error
+		for {
+			routeList := &unstructured.UnstructuredList{}
+			routeList.SetGroupVersionKind(routeGVK)
+			if err := r.apiReader().List(ctx, routeList, client.Limit(listPageSize), client.Continue(token)); err != nil {
+				logger.Error(err, "failed to list Routes for cleanup")
+				listErr = err
+				break
+			}
 			for i := range routeList.Items {
 				routeSet[sourceKey(routeList.Items[i].GetNamespace(), routeList.Items[i].GetName())] = true
 			}
+			token = routeList.GetContinue()
+			if token == "" {
+				break
+			}
+		}
+		if listErr == nil {
 			existingSources[securityv1alpha1.SourceKindRoute] = routeSet
 		}
 	}
 
 	if neededKinds[securityv1alpha1.SourceKindPod] {
 		podSet := make(map[string]bool)
-		var podContinue string
-		var podErr error
+		var token string
+		var listErr error
 		for {
 			var podList corev1.PodList
-			if err := r.apiReader().List(ctx, &podList, client.Limit(listPageSize), client.Continue(podContinue)); err != nil {
+			if err := r.apiReader().List(ctx, &podList, client.Limit(listPageSize), client.Continue(token)); err != nil {
 				logger.Error(err, "failed to list Pods for cleanup")
-				podErr = err
+				listErr = err
 				break
 			}
 			for i := range podList.Items {
 				podSet[sourceKey(podList.Items[i].Namespace, podList.Items[i].Name)] = true
 			}
-			podContinue = podList.Continue
-			if podContinue == "" {
+			token = podList.Continue
+			if token == "" {
 				break
 			}
 		}
-		if podErr == nil {
+		if listErr == nil {
 			existingSources[securityv1alpha1.SourceKindPod] = podSet
 		}
 	}
 
 	if neededKinds[securityv1alpha1.SourceKindTarget] {
-		var targetList securityv1alpha1.TLSComplianceTargetList
-		if err := r.List(ctx, &targetList); err != nil {
-			logger.Error(err, "failed to list TLSComplianceTargets for cleanup")
-		} else {
-			targetSet := make(map[string]bool, len(targetList.Items))
+		targetSet := make(map[string]bool)
+		var token string
+		var listErr error
+		for {
+			var targetList securityv1alpha1.TLSComplianceTargetList
+			if err := r.apiReader().List(ctx, &targetList, client.Limit(listPageSize), client.Continue(token)); err != nil {
+				logger.Error(err, "failed to list TLSComplianceTargets for cleanup")
+				listErr = err
+				break
+			}
 			for i := range targetList.Items {
 				targetSet[sourceKey("cluster-scoped", targetList.Items[i].Name)] = true
 			}
+			token = targetList.Continue
+			if token == "" {
+				break
+			}
+		}
+		if listErr == nil {
 			existingSources[securityv1alpha1.SourceKindTarget] = targetSet
 		}
 	}
@@ -1472,60 +1541,81 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 			{tlsRouteGVK, securityv1alpha1.SourceKindTLSRoute},
 			{gatewayGVK, securityv1alpha1.SourceKindGateway},
 		} {
-			gwList := &unstructured.UnstructuredList{}
-			gwList.SetGroupVersionKind(gvkInfo.gvk)
-			if err := r.List(ctx, gwList); err != nil {
-				logger.V(1).Info("failed to list Gateway API resources for cleanup", "kind", gvkInfo.gvk.Kind)
-			} else {
-				gwSet := make(map[string]bool, len(gwList.Items))
+			gwSet := make(map[string]bool)
+			var token string
+			var listErr error
+			for {
+				gwList := &unstructured.UnstructuredList{}
+				gwList.SetGroupVersionKind(gvkInfo.gvk)
+				if err := r.apiReader().List(ctx, gwList, client.Limit(listPageSize), client.Continue(token)); err != nil {
+					logger.V(1).Info("failed to list Gateway API resources for cleanup", "kind", gvkInfo.gvk.Kind)
+					listErr = err
+					break
+				}
 				for i := range gwList.Items {
 					gwSet[sourceKey(gwList.Items[i].GetNamespace(), gwList.Items[i].GetName())] = true
 				}
+				token = gwList.GetContinue()
+				if token == "" {
+					break
+				}
+			}
+			if listErr == nil {
 				existingSources[gvkInfo.kind] = gwSet
 			}
 		}
 	}
 
-	for i := range crList.Items {
-		cr := &crList.Items[i]
-
-		sourceSet, known := existingSources[cr.Spec.SourceKind]
-		if !known {
-			continue
+	// Pass 2: paginate CRs again to check for orphans and TTL expiry.
+	cutoff := time.Now().Add(-time.Duration(r.ReportRetentionDays) * 24 * time.Hour)
+	crContinue = ""
+	for {
+		var crList securityv1alpha1.TLSComplianceReportList
+		if err := r.apiReader().List(ctx, &crList, client.Limit(listPageSize), client.Continue(crContinue)); err != nil {
+			return fmt.Errorf("failed to list TLSComplianceReports for cleanup: %w", err)
 		}
 
-		key := sourceKey(cr.Spec.SourceNamespace, cr.Spec.SourceName)
-		if !sourceSet[key] {
-			logger.Info("deleting orphaned TLSComplianceReport", "name", cr.Name,
-				"sourceKind", cr.Spec.SourceKind, "sourceName", cr.Spec.SourceName)
-			if err := r.Delete(ctx, cr); err != nil && !apierrors.IsNotFound(err) {
-				logger.Error(err, "failed to delete orphaned TLSComplianceReport", "name", cr.Name)
-			} else {
-				metrics.DeleteEndpointMetrics(cr.Spec.Host, fmt.Sprintf("%d", cr.Spec.Port))
-			}
-		}
-	}
-
-	if r.ReportRetentionDays > 0 {
-		cutoff := time.Now().Add(-time.Duration(r.ReportRetentionDays) * 24 * time.Hour)
 		for i := range crList.Items {
 			cr := &crList.Items[i]
-			var lastActivity time.Time
-			if cr.Status.LastCheckAt != nil {
-				lastActivity = cr.Status.LastCheckAt.Time
-			} else {
-				lastActivity = cr.CreationTimestamp.Time
-			}
-			if lastActivity.Before(cutoff) {
-				logger.Info("deleting expired TLSComplianceReport", "name", cr.Name,
-					"lastActivity", lastActivity, "retentionDays", r.ReportRetentionDays)
-				if err := r.Delete(ctx, cr); err != nil && !apierrors.IsNotFound(err) {
-					logger.Error(err, "failed to delete expired TLSComplianceReport", "name", cr.Name)
-				} else {
-					metrics.RecordReportTTLDeleted()
-					metrics.DeleteEndpointMetrics(cr.Spec.Host, fmt.Sprintf("%d", cr.Spec.Port))
+
+			sourceSet, known := existingSources[cr.Spec.SourceKind]
+			if known {
+				key := sourceKey(cr.Spec.SourceNamespace, cr.Spec.SourceName)
+				if !sourceSet[key] {
+					logger.Info("deleting orphaned TLSComplianceReport", "name", cr.Name,
+						"sourceKind", cr.Spec.SourceKind, "sourceName", cr.Spec.SourceName)
+					if err := r.Delete(ctx, cr); err != nil && !apierrors.IsNotFound(err) {
+						logger.Error(err, "failed to delete orphaned TLSComplianceReport", "name", cr.Name)
+					} else {
+						metrics.DeleteEndpointMetrics(cr.Spec.Host, fmt.Sprintf("%d", cr.Spec.Port))
+					}
+					continue
 				}
 			}
+
+			if r.ReportRetentionDays > 0 {
+				var lastActivity time.Time
+				if cr.Status.LastCheckAt != nil {
+					lastActivity = cr.Status.LastCheckAt.Time
+				} else {
+					lastActivity = cr.CreationTimestamp.Time
+				}
+				if lastActivity.Before(cutoff) {
+					logger.Info("deleting expired TLSComplianceReport", "name", cr.Name,
+						"lastActivity", lastActivity, "retentionDays", r.ReportRetentionDays)
+					if err := r.Delete(ctx, cr); err != nil && !apierrors.IsNotFound(err) {
+						logger.Error(err, "failed to delete expired TLSComplianceReport", "name", cr.Name)
+					} else {
+						metrics.RecordReportTTLDeleted()
+						metrics.DeleteEndpointMetrics(cr.Spec.Host, fmt.Sprintf("%d", cr.Spec.Port))
+					}
+				}
+			}
+		}
+
+		crContinue = crList.Continue
+		if crContinue == "" {
+			break
 		}
 	}
 

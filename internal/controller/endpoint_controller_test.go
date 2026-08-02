@@ -41,7 +41,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	dto "github.com/prometheus/client_model/go"
+
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
+	"github.com/sebrandon1/tls-compliance-operator/internal/metrics"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/endpoint"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlscheck"
 )
@@ -4215,6 +4218,274 @@ func TestInitialScanDone(t *testing.T) {
 
 	if !r.InitialScanDone.Load() {
 		t.Error("InitialScanDone should be true after Store(true)")
+	}
+}
+
+func TestUpdateEndpointMetrics(t *testing.T) {
+	r := &EndpointReconciler{}
+
+	statusCounts := map[string]float64{
+		string(securityv1alpha1.ComplianceStatusCompliant):         3,
+		string(securityv1alpha1.ComplianceStatusNonCompliant):      1,
+		string(securityv1alpha1.ComplianceStatusWarning):           0,
+		string(securityv1alpha1.ComplianceStatusUnreachable):       0,
+		string(securityv1alpha1.ComplianceStatusTimeout):           0,
+		string(securityv1alpha1.ComplianceStatusClosed):            0,
+		string(securityv1alpha1.ComplianceStatusFiltered):          0,
+		string(securityv1alpha1.ComplianceStatusNoTLS):             2,
+		string(securityv1alpha1.ComplianceStatusPlaintextHTTP):     0,
+		string(securityv1alpha1.ComplianceStatusMutualTLSRequired): 0,
+		string(securityv1alpha1.ComplianceStatusPending):           0,
+		string(securityv1alpha1.ComplianceStatusUnknown):           0,
+	}
+
+	r.updateEndpointMetrics(statusCounts)
+
+	g, _ := metrics.EndpointsTotal.GetMetricWithLabelValues(string(securityv1alpha1.ComplianceStatusCompliant))
+	m := &dto.Metric{}
+	_ = g.Write(m)
+	if v := m.GetGauge().GetValue(); v != 3 {
+		t.Errorf("expected Compliant=3, got %v", v)
+	}
+
+	g, _ = metrics.EndpointsTotal.GetMetricWithLabelValues(string(securityv1alpha1.ComplianceStatusNoTLS))
+	m = &dto.Metric{}
+	_ = g.Write(m)
+	if v := m.GetGauge().GetValue(); v != 2 {
+		t.Errorf("expected NoTLS=2, got %v", v)
+	}
+
+	g, _ = metrics.EndpointsTotal.GetMetricWithLabelValues(string(securityv1alpha1.ComplianceStatusWarning))
+	m = &dto.Metric{}
+	_ = g.Write(m)
+	if v := m.GetGauge().GetValue(); v != 0 {
+		t.Errorf("expected Warning=0, got %v", v)
+	}
+}
+
+func TestScanAllEndpoints_SortPendingFirst(t *testing.T) {
+	scheme := newTestScheme()
+	ctx := context.Background()
+
+	now := metav1.Now()
+	crs := []client.Object{
+		&securityv1alpha1.TLSComplianceReport{
+			ObjectMeta: metav1.ObjectMeta{Name: "compliant-443-aaa11111"},
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host: "compliant.default", Port: 443,
+				SourceKind: securityv1alpha1.SourceKindService, SourceNamespace: testNamespace, SourceName: "compliant",
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				CheckCount:       5,
+				FirstSeenAt:      &now,
+			},
+		},
+		&securityv1alpha1.TLSComplianceReport{
+			ObjectMeta: metav1.ObjectMeta{Name: "pending-443-bbb22222"},
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host: "pending.default", Port: 443,
+				SourceKind: securityv1alpha1.SourceKindService, SourceNamespace: testNamespace, SourceName: "pending",
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
+				CheckCount:       0,
+				FirstSeenAt:      &now,
+			},
+		},
+		&securityv1alpha1.TLSComplianceReport{
+			ObjectMeta: metav1.ObjectMeta{Name: "nontls-443-ccc33333"},
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host: "nontls.default", Port: 443,
+				SourceKind: securityv1alpha1.SourceKindService, SourceNamespace: testNamespace, SourceName: "nontls",
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusNoTLS,
+				CheckCount:       3,
+				FirstSeenAt:      &now,
+			},
+		},
+	}
+
+	var checkOrder []string
+	var mu sync.Mutex
+	checker := &OrderTrackingChecker{
+		result: &tlscheck.TLSCheckResult{
+			SupportsTLS12: true,
+			SupportsTLS13: true,
+		},
+		order: &checkOrder,
+		mu:    &mu,
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(crs...).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:     fakeClient,
+		Scheme:     scheme,
+		TLSChecker: checker,
+		Workers:    1,
+	}
+
+	if err := r.scanAllEndpoints(ctx); err != nil {
+		t.Fatalf("scanAllEndpoints() error = %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(checkOrder) < 3 {
+		t.Fatalf("expected at least 3 checks, got %d: %v", len(checkOrder), checkOrder)
+	}
+
+	if checkOrder[0] != "pending.default" {
+		t.Errorf("expected pending item to be checked first, got %s", checkOrder[0])
+	}
+}
+
+type OrderTrackingChecker struct {
+	result *tlscheck.TLSCheckResult
+	order  *[]string
+	mu     *sync.Mutex
+}
+
+func (c *OrderTrackingChecker) CheckEndpoint(_ context.Context, host string, _ int) (*tlscheck.TLSCheckResult, error) {
+	c.mu.Lock()
+	*c.order = append(*c.order, host)
+	c.mu.Unlock()
+	return c.result, nil
+}
+
+func TestScanAllEndpoints_CRListError(t *testing.T) {
+	scheme := newTestScheme()
+	injectedErr := fmt.Errorf("injected CR list error")
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if _, ok := list.(*securityv1alpha1.TLSComplianceReportList); ok {
+					return injectedErr
+				}
+				return cl.List(ctx, list, opts...)
+			},
+		}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:     fakeClient,
+		Scheme:     scheme,
+		TLSChecker: &MockTLSChecker{},
+		Workers:    1,
+	}
+
+	err := r.scanAllEndpoints(context.Background())
+	if err == nil {
+		t.Fatal("expected error when CR listing fails")
+	}
+	if !strings.Contains(err.Error(), "failed to list TLSComplianceReports") {
+		t.Errorf("expected TLSComplianceReports error, got: %v", err)
+	}
+}
+
+func TestCleanupOrphanedCRs_IngressOrphan(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	ing := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "existing-ingress",
+			Namespace: testNamespace,
+		},
+		Spec: networkingv1.IngressSpec{
+			Rules: []networkingv1.IngressRule{
+				{Host: "existing-ingress.example.com"},
+			},
+		},
+	}
+
+	now := metav1.Now()
+	existingCR := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "existing-ingress-443-aaa11111"},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: "existing-ingress.example.com", Port: 443,
+			SourceKind: securityv1alpha1.SourceKindIngress, SourceNamespace: testNamespace, SourceName: "existing-ingress",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{
+			ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant, FirstSeenAt: &now,
+		},
+	}
+
+	orphanedCR := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "deleted-ingress-443-bbb22222"},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: "deleted-ingress.example.com", Port: 443,
+			SourceKind: securityv1alpha1.SourceKindIngress, SourceNamespace: testNamespace, SourceName: "deleted-ingress",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{
+			ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant, FirstSeenAt: &now,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(ing, existingCR, orphanedCR).
+		WithStatusSubresource(existingCR, orphanedCR).
+		Build()
+
+	r := &EndpointReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+	}
+
+	if err := r.cleanupOrphanedCRs(ctx); err != nil {
+		t.Fatalf("cleanupOrphanedCRs() error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("failed to list CRs: %v", err)
+	}
+
+	if len(crList.Items) != 1 {
+		t.Fatalf("expected 1 CR remaining, got %d", len(crList.Items))
+	}
+	if crList.Items[0].Name != "existing-ingress-443-aaa11111" {
+		t.Errorf("remaining CR = %v, want existing-ingress-443-aaa11111", crList.Items[0].Name)
+	}
+}
+
+func TestCleanupOrphanedCRs_CRListError(t *testing.T) {
+	scheme := newTestScheme()
+	injectedErr := fmt.Errorf("injected CR list error")
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if _, ok := list.(*securityv1alpha1.TLSComplianceReportList); ok {
+					return injectedErr
+				}
+				return cl.List(ctx, list, opts...)
+			},
+		}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+	}
+
+	err := r.cleanupOrphanedCRs(context.Background())
+	if err == nil {
+		t.Fatal("expected error when CR listing fails")
+	}
+	if !strings.Contains(err.Error(), "failed to list TLSComplianceReports") {
+		t.Errorf("expected TLSComplianceReports error, got: %v", err)
 	}
 }
 
