@@ -50,7 +50,7 @@
 |--------|-----------|
 | **Compliant** | Supports TLS 1.2 or 1.3 (supporting older versions alongside is fine) |
 | **NonCompliant** | Only supports TLS 1.0/1.1 with no modern TLS |
-| **Warning** | Partially compliant (reserved for future use) |
+| **Warning** | Supports modern TLS (1.2/1.3) but also allows legacy versions (SSL 3.0/TLS 1.0/1.1) |
 | **Timeout** | Connection timed out waiting for a response |
 | **Closed** | Port is not listening (connection refused) |
 | **Filtered** | No response and no explicit refusal (e.g. firewall drop) |
