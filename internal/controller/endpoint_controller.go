@@ -245,10 +245,17 @@ func (r *EndpointReconciler) handleEndpoints(ctx context.Context, endpoints []en
 }
 
 func (r *EndpointReconciler) handleService(ctx context.Context, svc *corev1.Service) (ctrl.Result, error) {
+	if endpoint.ShouldSkipResource(svc.Annotations) {
+		log.FromContext(ctx).V(1).Info("skipping service (skip annotation set)", "service", svc.Name, "namespace", svc.Namespace)
+		metrics.RecordReconcile("success")
+		return ctrl.Result{}, nil
+	}
+
 	if endpoint.IsHeadlessService(svc) {
 		return r.handleHeadlessService(ctx, svc)
 	}
 	endpoints := endpoint.ExtractFromService(svc)
+	endpoints = endpoint.AppendExtraPorts(endpoints, svc.Annotations, svc.Name, svc.Namespace, securityv1alpha1.SourceKindService)
 	if len(endpoints) == 0 {
 		metrics.RecordReconcile("success")
 		return ctrl.Result{}, nil
@@ -287,14 +294,38 @@ func (r *EndpointReconciler) handleHeadlessService(ctx context.Context, svc *cor
 }
 
 func (r *EndpointReconciler) handleIngress(ctx context.Context, ing *networkingv1.Ingress) (ctrl.Result, error) {
-	return r.handleEndpoints(ctx, endpoint.ExtractFromIngress(ing), securityv1alpha1.SourceKindIngress)
+	if endpoint.ShouldSkipResource(ing.Annotations) {
+		log.FromContext(ctx).V(1).Info("skipping ingress (skip annotation set)", "ingress", ing.Name, "namespace", ing.Namespace)
+		metrics.RecordReconcile("success")
+		return ctrl.Result{}, nil
+	}
+
+	endpoints := endpoint.ExtractFromIngress(ing)
+	endpoints = endpoint.AppendExtraPorts(endpoints, ing.Annotations, ing.Name, ing.Namespace, securityv1alpha1.SourceKindIngress)
+	return r.handleEndpoints(ctx, endpoints, securityv1alpha1.SourceKindIngress)
 }
 
 func (r *EndpointReconciler) handleRoute(ctx context.Context, route *unstructured.Unstructured) (ctrl.Result, error) {
-	return r.handleEndpoints(ctx, endpoint.ExtractFromRoute(route), securityv1alpha1.SourceKindRoute)
+	annotations := route.GetAnnotations()
+	if endpoint.ShouldSkipResource(annotations) {
+		log.FromContext(ctx).V(1).Info("skipping route (skip annotation set)", "route", route.GetName(), "namespace", route.GetNamespace())
+		metrics.RecordReconcile("success")
+		return ctrl.Result{}, nil
+	}
+
+	endpoints := endpoint.ExtractFromRoute(route)
+	endpoints = endpoint.AppendExtraPorts(endpoints, annotations, route.GetName(), route.GetNamespace(), securityv1alpha1.SourceKindRoute)
+	return r.handleEndpoints(ctx, endpoints, securityv1alpha1.SourceKindRoute)
 }
 
 func (r *EndpointReconciler) handleGatewayResource(ctx context.Context, obj *unstructured.Unstructured, gvk schema.GroupVersionKind) (ctrl.Result, error) {
+	annotations := obj.GetAnnotations()
+	if endpoint.ShouldSkipResource(annotations) {
+		log.FromContext(ctx).V(1).Info("skipping gateway resource (skip annotation set)", "kind", gvk.Kind, "name", obj.GetName(), "namespace", obj.GetNamespace())
+		metrics.RecordReconcile("success")
+		return ctrl.Result{}, nil
+	}
+
 	var endpoints []endpoint.Endpoint
 	var sourceKind securityv1alpha1.SourceKind
 	switch gvk.Kind {
@@ -308,6 +339,7 @@ func (r *EndpointReconciler) handleGatewayResource(ctx context.Context, obj *uns
 		endpoints = endpoint.ExtractFromGateway(obj)
 		sourceKind = securityv1alpha1.SourceKindGateway
 	}
+	endpoints = endpoint.AppendExtraPorts(endpoints, annotations, obj.GetName(), obj.GetNamespace(), sourceKind)
 	return r.handleEndpoints(ctx, endpoints, sourceKind)
 }
 
@@ -1203,6 +1235,10 @@ func (r *EndpointReconciler) scanPodEndpoints(ctx context.Context) error {
 			pod := &podList.Items[i]
 
 			if r.isNamespaceFiltered(pod.Namespace) {
+				continue
+			}
+
+			if endpoint.ShouldSkipResource(pod.Annotations) {
 				continue
 			}
 

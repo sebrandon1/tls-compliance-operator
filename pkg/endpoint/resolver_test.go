@@ -1448,6 +1448,69 @@ func TestExtractFromGateway_HTTPOnlySkipped(t *testing.T) {
 	}
 }
 
+func TestShouldSkipResource(t *testing.T) {
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		want        bool
+	}{
+		{"nil annotations", nil, false},
+		{"empty annotations", map[string]string{}, false},
+		{"skip true", map[string]string{AnnotationSkip: "true"}, true},
+		{"skip false", map[string]string{AnnotationSkip: "false"}, false},
+		{"skip empty", map[string]string{AnnotationSkip: ""}, false},
+		{"skip True (case sensitive)", map[string]string{AnnotationSkip: "True"}, false},
+		{"skip TRUE (case sensitive)", map[string]string{AnnotationSkip: "TRUE"}, false},
+		{"unrelated annotation", map[string]string{"other": "true"}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ShouldSkipResource(tc.annotations); got != tc.want {
+				t.Errorf("ShouldSkipResource() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseExtraPorts(t *testing.T) {
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		want        []int32
+	}{
+		{"nil annotations", nil, nil},
+		{"empty annotations", map[string]string{}, nil},
+		{"no extra-ports", map[string]string{"other": "val"}, nil},
+		{"empty value", map[string]string{AnnotationExtraPorts: ""}, nil},
+		{"single port", map[string]string{AnnotationExtraPorts: "9443"}, []int32{9443}},
+		{"multiple ports", map[string]string{AnnotationExtraPorts: "9443,8443,6443"}, []int32{9443, 8443, 6443}},
+		{"with spaces", map[string]string{AnnotationExtraPorts: " 9443 , 8443 "}, []int32{9443, 8443}},
+		{"invalid port skipped", map[string]string{AnnotationExtraPorts: "9443,abc,8443"}, []int32{9443, 8443}},
+		{"port out of range", map[string]string{AnnotationExtraPorts: "9443,99999,8443"}, []int32{9443, 8443}},
+		{"zero port skipped", map[string]string{AnnotationExtraPorts: "0,9443"}, []int32{9443}},
+		{"negative port skipped", map[string]string{AnnotationExtraPorts: "-1,9443"}, []int32{9443}},
+		{"boundary port 65535", map[string]string{AnnotationExtraPorts: "65535"}, []int32{65535}},
+		{"boundary port 65536 rejected", map[string]string{AnnotationExtraPorts: "65536"}, nil},
+		{"boundary port 1", map[string]string{AnnotationExtraPorts: "1"}, []int32{1}},
+		{"consecutive commas", map[string]string{AnnotationExtraPorts: "9443,,8443"}, []int32{9443, 8443}},
+		{"trailing comma", map[string]string{AnnotationExtraPorts: "9443,"}, []int32{9443}},
+		{"all invalid", map[string]string{AnnotationExtraPorts: "abc,xyz"}, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ParseExtraPorts(tc.annotations)
+			if len(got) != len(tc.want) {
+				t.Fatalf("ParseExtraPorts() returned %d ports, want %d: %v", len(got), len(tc.want), got)
+			}
+			for i, p := range got {
+				if p != tc.want[i] {
+					t.Errorf("port[%d] = %d, want %d", i, p, tc.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestExtractFromGateway_MultipleListeners(t *testing.T) {
 	gw := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "gateway.networking.k8s.io/v1", "kind": "Gateway",
