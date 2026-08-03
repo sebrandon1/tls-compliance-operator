@@ -17,6 +17,7 @@ If a flag is set on the command line, its environment variable is ignored.
 | `--tls-check-timeout` | `TLS_COMPLIANCE_CHECK_TIMEOUT` | duration | `5s` | Timeout for each individual TLS connection attempt. The operator probes all TLS versions (1.0, 1.1, 1.2, 1.3, SSLv3) in parallel, so worst-case time per endpoint is roughly 1x this value plus a small overhead for the ML-KEM active probe. Increase on high-latency networks. |
 | `--workers` | `TLS_COMPLIANCE_WORKERS` | int | `5` | Number of concurrent goroutines used during periodic scans. Range: 1-50. Higher values scan faster but use more CPU and network. This also controls `MaxConcurrentReconciles` for the controller work queue. |
 | `--extra-tls-ports` | `TLS_COMPLIANCE_EXTRA_TLS_PORTS` | string | `""` | Comma-separated list of additional port numbers to treat as TLS endpoints (e.g., `12345,54321`). These are checked in addition to the built-in defaults (443, 8443, 9443, 2379, 5671, 6380, 9200) and any port named `https` or `https-*`. |
+| `--scan-all-ports` | `TLS_COMPLIANCE_SCAN_ALL_PORTS` | bool | `false` | Scan all declared TCP container ports on pods, not just known TLS ports. Useful for discovering TLS on non-standard ports that the default heuristics miss. Increases scan time and may produce more `NoTLS` reports. HTTP health-probe ports are still skipped. |
 | `--enumerate-ciphers` | _(none)_ | bool | `true` | Enumerate all supported cipher suites per TLS version. When enabled, the operator performs multiple handshakes to discover every cipher suite each TLS version accepts. Disable for faster scans if you only need the first negotiated cipher. |
 | `--metrics-per-endpoint` | _(none)_ | bool | `true` | Emit per-endpoint Prometheus metrics (certificate expiry, TLS version support, PQC readiness, forward secrecy). Disable on large clusters (2000+ endpoints) to reduce metric cardinality and Prometheus memory usage. Aggregate metrics (`tls_compliance_endpoints_total`) are always emitted regardless of this setting. |
 
@@ -113,6 +114,8 @@ env:
   value: "14"
 - name: TLS_COMPLIANCE_EXTRA_TLS_PORTS
   value: "12345,54321"
+- name: TLS_COMPLIANCE_SCAN_ALL_PORTS
+  value: "true"
 - name: TLS_COMPLIANCE_LOG_FORMAT
   value: "json"
 ```
@@ -126,6 +129,7 @@ args:
 - --exclude-namespaces=kube-system,openshift-monitoring
 - --cert-expiry-warning-days=14
 - --extra-tls-ports=12345,54321
+- --scan-all-ports
 - --log-format=json
 - --leader-elect
 ```

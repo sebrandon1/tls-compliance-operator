@@ -708,6 +708,81 @@ spec:
 		})
 	})
 
+	Context("Scan All Ports", Label("scan-all-ports"), func() {
+		const agnhostImageSAP = "registry.k8s.io/e2e-test-images/agnhost:2.53"
+
+		It("should create report for a pod on non-standard port 3000 when scan-all-ports is enabled", func() {
+			By("creating the test pod before enabling scan-all-ports")
+			cmd := exec.Command("kubectl", "run", "test-scanall-pod",
+				"--image="+agnhostImageSAP, "--port=3000",
+				"--command", "--", "sleep", "3600")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "pod", "test-scanall-pod",
+					"--grace-period=0", "--force", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "pod", "test-scanall-pod",
+					"-o", "jsonpath={.status.phase}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(output)).To(Equal("Running"))
+			}).Should(Succeed())
+
+			By("enabling --scan-all-ports on the operator")
+			cmd = exec.Command("kubectl", "patch", "deployment",
+				"tls-compliance-operator-controller-manager", "-n", namespace,
+				"--type=json",
+				`-p=[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--scan-all-ports"}]`)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("waiting for rollout with scan-all-ports")
+			cmd = exec.Command("kubectl", "rollout", "status", "deployment",
+				"tls-compliance-operator-controller-manager", "-n", namespace, "--timeout=300s")
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			DeferCleanup(func() {
+				By("removing --scan-all-ports from the operator")
+				cmd := exec.Command("kubectl", "get", "deployment",
+					"tls-compliance-operator-controller-manager", "-n", namespace,
+					"-o", "jsonpath={.spec.template.spec.containers[0].args}")
+				output, err := utils.Run(cmd)
+				if err != nil {
+					return
+				}
+				args := strings.Split(strings.Trim(output, "[]\""), "\",\"")
+				for i, arg := range args {
+					if arg == "--scan-all-ports" {
+						patch := fmt.Sprintf(`[{"op":"remove","path":"/spec/template/spec/containers/0/args/%d"}]`, i)
+						cmd = exec.Command("kubectl", "patch", "deployment",
+							"tls-compliance-operator-controller-manager", "-n", namespace,
+							"--type=json", "-p="+patch)
+						_, _ = utils.Run(cmd)
+						cmd = exec.Command("kubectl", "rollout", "status", "deployment",
+							"tls-compliance-operator-controller-manager", "-n", namespace, "--timeout=300s")
+						_, _ = utils.Run(cmd)
+						break
+					}
+				}
+			})
+
+			By("waiting for the operator to scan the non-standard port pod")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					"jsonpath={range .items[*]}{.spec.sourceName}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("test-scanall-pod"))
+			}).WithTimeout(180 * time.Second).WithPolling(10 * time.Second).Should(Succeed())
+		})
+	})
+
 	Context("Negative: Compliance Status Detection", Label("compliance-detection"), Ordered, func() {
 		const testNS = "tls-e2e-validation"
 

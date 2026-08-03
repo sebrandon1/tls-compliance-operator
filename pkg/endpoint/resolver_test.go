@@ -1113,6 +1113,97 @@ func TestExtraTLSPorts_PodExtraction(t *testing.T) {
 	}
 }
 
+func TestSetScanAllPorts(t *testing.T) {
+	defer SetScanAllPorts(false)
+
+	if scanAllPortsEnabled() {
+		t.Error("expected ScanAllPortsEnabled to be false by default")
+	}
+
+	SetScanAllPorts(true)
+	if !scanAllPortsEnabled() {
+		t.Error("expected ScanAllPortsEnabled to be true after SetScanAllPorts(true)")
+	}
+
+	SetScanAllPorts(false)
+	if scanAllPortsEnabled() {
+		t.Error("expected ScanAllPortsEnabled to be false after SetScanAllPorts(false)")
+	}
+}
+
+func TestExtractFromPod_ScanAllPorts(t *testing.T) {
+	defer SetScanAllPorts(false)
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "app-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "app", Ports: []corev1.ContainerPort{
+					{ContainerPort: 8080, Protocol: corev1.ProtocolTCP},
+					{ContainerPort: 9001, Protocol: corev1.ProtocolTCP},
+				}},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.128.2.24"},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 0 {
+		t.Fatalf("expected 0 endpoints without scan-all-ports, got %d", len(endpoints))
+	}
+
+	SetScanAllPorts(true)
+	endpoints = ExtractFromPod(pod)
+	if len(endpoints) != 2 {
+		t.Fatalf("expected 2 endpoints with scan-all-ports, got %d", len(endpoints))
+	}
+	if endpoints[0].Port != 8080 {
+		t.Errorf("port = %d, want 8080", endpoints[0].Port)
+	}
+	if endpoints[1].Port != 9001 {
+		t.Errorf("port = %d, want 9001", endpoints[1].Port)
+	}
+	if endpoints[0].SourceKind != "Pod" {
+		t.Errorf("source kind = %s, want Pod", endpoints[0].SourceKind)
+	}
+}
+
+func TestExtractFromPod_ScanAllPorts_ProbeStillSkipped(t *testing.T) {
+	defer SetScanAllPorts(false)
+	SetScanAllPorts(true)
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "probe-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name: "app",
+					Ports: []corev1.ContainerPort{
+						{ContainerPort: 8080, Protocol: corev1.ProtocolTCP},
+						{ContainerPort: 9001, Protocol: corev1.ProtocolTCP},
+					},
+					LivenessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							HTTPGet: &corev1.HTTPGetAction{
+								Port: intstr.FromInt32(8080),
+							},
+						},
+					},
+				},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.128.2.24"},
+	}
+
+	endpoints := ExtractFromPod(pod)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint (probe port 8080 skipped), got %d", len(endpoints))
+	}
+	if endpoints[0].Port != 9001 {
+		t.Errorf("port = %d, want 9001", endpoints[0].Port)
+	}
+}
+
 func TestIsHeadlessService(t *testing.T) {
 	headless := &corev1.Service{Spec: corev1.ServiceSpec{ClusterIP: corev1.ClusterIPNone}}
 	if !IsHeadlessService(headless) {

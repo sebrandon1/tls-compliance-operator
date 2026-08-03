@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -411,6 +412,7 @@ func ExtractFromPod(pod *corev1.Pod) []Endpoint {
 	}
 
 	probePorts := collectProbePorts(pod)
+	scanAll := scanAllPortsEnabled()
 
 	var endpoints []Endpoint
 	seen := make(map[int32]bool)
@@ -423,7 +425,7 @@ func ExtractFromPod(pod *corev1.Pod) []Endpoint {
 			if seen[port.ContainerPort] {
 				continue
 			}
-			if isTLSContainerPort(port) {
+			if scanAll || isTLSContainerPort(port) {
 				seen[port.ContainerPort] = true
 
 				probeInfo, isProbe := probePorts[port.ContainerPort]
@@ -461,6 +463,7 @@ var defaultTLSPorts = map[int32]bool{
 var (
 	extraTLSPorts   = map[int32]bool{}
 	extraTLSPortsMu sync.RWMutex
+	scanAllPorts    atomic.Bool
 )
 
 // SetExtraTLSPorts configures additional port numbers to treat as TLS endpoints.
@@ -468,6 +471,15 @@ func SetExtraTLSPorts(ports map[int32]bool) {
 	extraTLSPortsMu.Lock()
 	defer extraTLSPortsMu.Unlock()
 	extraTLSPorts = ports
+}
+
+// SetScanAllPorts configures the scan-all-ports mode (pod scanning only).
+func SetScanAllPorts(enabled bool) {
+	scanAllPorts.Store(enabled)
+}
+
+func scanAllPortsEnabled() bool {
+	return scanAllPorts.Load()
 }
 
 // isTLSPortByNumberAndName checks if a port number and name indicate a TLS port.

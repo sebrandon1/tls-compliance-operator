@@ -39,6 +39,7 @@ bin/manager --run-once \
 | `--run-once` | `TLS_COMPLIANCE_RUN_ONCE` | Perform a single scan and exit |
 | `--output-format` | `TLS_COMPLIANCE_OUTPUT_FORMAT` | Output format: `csv`, `json`, `yaml`, `junit`, `markdown` |
 | `--output-file` | `TLS_COMPLIANCE_OUTPUT_FILE` | Path to write results (defaults to stdout) |
+| `--scan-all-ports` | `TLS_COMPLIANCE_SCAN_ALL_PORTS` | Scan all declared TCP container ports on pods, not just known TLS ports |
 
 In run-once mode, leader election, health probes, and metrics serving are
 automatically disabled since they are not needed for a one-shot scan.

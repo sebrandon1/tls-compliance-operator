@@ -40,14 +40,30 @@ jobs:
       fail-fast: false
       matrix:
         suite:
-          - name: core
-            label: "manager || service-detection || pod-detection"
-          - name: resources
-            label: "ingress-detection || target-detection || plugin"
-          - name: compliance-positive
+          - name: manager
+            label: "manager"
+          - name: service-detection
+            label: "service-detection"
+          - name: pod-detection
+            label: "pod-detection"
+          - name: ingress-detection
+            label: "ingress-detection"
+          - name: target-detection
+            label: "target-detection"
+          - name: plugin
+            label: "plugin"
+          - name: compliance-validation
             label: "compliance-validation"
-          - name: compliance-negative
-            label: "non-tls-ignored || compliance-detection || cleanup"
+          - name: compliance-positive
+            label: "compliance-positive"
+          - name: non-tls-ignored
+            label: "non-tls-ignored"
+          - name: compliance-detection
+            label: "compliance-detection"
+          - name: cleanup
+            label: "cleanup"
+          - name: scan-all-ports
+            label: "scan-all-ports"
           - name: run-once
             label: "run-once"
     steps:
