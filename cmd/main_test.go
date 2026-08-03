@@ -252,6 +252,10 @@ func TestValidateEnvValue(t *testing.T) {
 		{"valid run-once 1", "run-once", "1", false},
 		{"valid run-once 0", "run-once", "0", false},
 		{"invalid run-once", "run-once", "maybe", true},
+		{"valid scan-all-ports true", "scan-all-ports", "true", false},
+		{"valid scan-all-ports false", "scan-all-ports", "false", false},
+		{"valid scan-all-ports 1", "scan-all-ports", "1", false},
+		{"invalid scan-all-ports", "scan-all-ports", "maybe", true},
 		{"valid output-format csv", "output-format", "csv", false},
 		{"valid output-format junit", "output-format", "junit", false},
 		{"invalid output-format", "output-format", "xml", true},
@@ -321,6 +325,27 @@ func TestResolveEnvConfig_ExtraTLSPorts(t *testing.T) {
 	val := fs.Lookup("extra-tls-ports").Value.String()
 	if val != "9443,6380" {
 		t.Errorf("expected extra-tls-ports=9443,6380, got %s", val)
+	}
+}
+
+func TestResolveEnvConfig_ScanAllPorts(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.Bool("scan-all-ports", false, "")
+	_ = fs.Parse([]string{})
+
+	env := map[string]string{
+		"TLS_COMPLIANCE_SCAN_ALL_PORTS": "true",
+	}
+	lookup := func(key string) (string, bool) {
+		v, ok := env[key]
+		return v, ok
+	}
+
+	_ = resolveEnvConfig(fs, lookup)
+
+	val := fs.Lookup("scan-all-ports").Value.String()
+	if val != "true" {
+		t.Errorf("expected scan-all-ports=true, got %s", val)
 	}
 }
 

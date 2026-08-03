@@ -96,6 +96,7 @@ type operatorConfig struct {
 	retryBackoff           time.Duration
 	maxBackoff             time.Duration
 	extraTLSPortsStr       string
+	scanAllPorts           bool
 	clientCertPath         string
 	clientKeyPath          string
 	enumerateCiphers       bool
@@ -159,6 +160,8 @@ func parseFlags() *operatorConfig {
 		"Maximum backoff duration between retries (caps exponential growth)")
 	flag.StringVar(&cfg.extraTLSPortsStr, "extra-tls-ports", "",
 		"Comma-separated list of additional port numbers to treat as TLS endpoints (e.g., 9443,6380,5671)")
+	flag.BoolVar(&cfg.scanAllPorts, "scan-all-ports", false,
+		"Scan all declared TCP container ports on pods, not just known TLS ports")
 	flag.StringVar(&cfg.clientCertPath, "client-cert", "",
 		"Path to a PEM-encoded client certificate for mTLS endpoint probing")
 	flag.StringVar(&cfg.clientKeyPath, "client-key", "",
@@ -212,6 +215,11 @@ func validateConfig(cfg *operatorConfig) {
 		}
 		endpoint.SetExtraTLSPorts(ports)
 		setupLog.Info("extra TLS ports configured", "ports", cfg.extraTLSPortsStr)
+	}
+
+	endpoint.SetScanAllPorts(cfg.scanAllPorts)
+	if cfg.scanAllPorts {
+		setupLog.Info("scan-all-ports enabled: all declared TCP container ports on pods will be scanned")
 	}
 
 	if cfg.workers < 1 || cfg.workers > 50 {
@@ -598,6 +606,7 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_RETRY_BACKOFF", "retry-backoff"},
 	{"TLS_COMPLIANCE_MAX_BACKOFF", "max-backoff"},
 	{"TLS_COMPLIANCE_EXTRA_TLS_PORTS", "extra-tls-ports"},
+	{"TLS_COMPLIANCE_SCAN_ALL_PORTS", "scan-all-ports"},
 	{"TLS_COMPLIANCE_CLIENT_CERT", "client-cert"},
 	{"TLS_COMPLIANCE_CLIENT_KEY", "client-key"},
 	{"TLS_COMPLIANCE_REPORT_RETENTION_DAYS", "report-retention-days"},
@@ -679,7 +688,7 @@ func validateEnvValue(flagName, value string) error {
 		if value != "text" && value != "json" {
 			return fmt.Errorf("must be text or json, got %q", value)
 		}
-	case "run-once":
+	case "run-once", "scan-all-ports":
 		if value != "true" && value != "false" && value != "1" && value != "0" {
 			return fmt.Errorf("must be true or false, got %q", value)
 		}
