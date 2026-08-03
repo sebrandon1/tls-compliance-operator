@@ -38,6 +38,29 @@ If a flag is set on the command line, its environment variable is ignored.
 
 If neither flag is set, all namespaces are scanned.
 
+## Report Retention
+
+| Flag | Env Var | Type | Default | Description |
+|------|---------|------|---------|-------------|
+| `--report-retention-days` | `TLS_COMPLIANCE_REPORT_RETENTION_DAYS` | int | `0` | Delete TLSComplianceReport CRs with no activity for this many days. Set to `0` (default) to disable retention and keep reports indefinitely. When enabled, the cleanup loop removes stale reports each cycle and increments the `tls_compliance_reports_ttl_deleted_total` metric. |
+
+### Example
+
+To automatically clean up reports older than 90 days:
+
+```yaml
+env:
+- name: TLS_COMPLIANCE_REPORT_RETENTION_DAYS
+  value: "90"
+```
+
+Or via CLI flag:
+
+```yaml
+args:
+- --report-retention-days=90
+```
+
 ## Certificate Monitoring
 
 | Flag | Env Var | Type | Default | Description |

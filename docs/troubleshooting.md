@@ -77,12 +77,33 @@ oc rollout restart deployment/tls-compliance-operator-controller-manager \
 |--------|---------|--------|
 | **Compliant** | Supports TLS 1.2 or 1.3 | None needed |
 | **NonCompliant** | Only supports TLS 1.0/1.1 | Upgrade TLS config |
+| **Warning** | Supports modern TLS but also legacy versions | Remove legacy TLS support |
 | **Closed** | Port not listening | Check if service pods are running |
 | **Timeout** | Connection timed out | Check network connectivity / firewall rules |
 | **Filtered** | No response (firewall drop) | Check network policies |
 | **NoTLS** | Port open but doesn't speak TLS | Expected for non-TLS services |
 | **MutualTLSRequired** | Server requires client certificate | Expected for mTLS endpoints |
 | **Pending** | Not yet checked | Wait for scan cycle |
+
+## Reports Accumulating / Not Being Cleaned Up
+
+If old reports are piling up, report retention may be disabled (the default).
+Enable it with `--report-retention-days`:
+
+```yaml
+env:
+- name: TLS_COMPLIANCE_REPORT_RETENTION_DAYS
+  value: "90"
+```
+
+Reports with no status change for the configured number of days are removed
+during each cleanup cycle. Monitor deletions with:
+
+```promql
+increase(tls_compliance_reports_ttl_deleted_total[24h])
+```
+
+See [Report Retention](configuration.md#report-retention) for details.
 
 ## Viewing Operator Configuration
 
