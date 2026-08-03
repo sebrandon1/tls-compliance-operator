@@ -65,6 +65,7 @@ type TLSComplianceTargetStatus struct {
 // +kubebuilder:printcolumn:name="Host",type=string,JSONPath=`.spec.host`
 // +kubebuilder:printcolumn:name="Port",type=integer,JSONPath=`.spec.port`
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.complianceStatus`
+// +kubebuilder:printcolumn:name="Message",type=string,JSONPath=`.status.message`
 // +kubebuilder:printcolumn:name="Report",type=string,JSONPath=`.status.reportName`
 // +kubebuilder:printcolumn:name="Last Scanned",type=date,JSONPath=`.status.lastScannedAt`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
