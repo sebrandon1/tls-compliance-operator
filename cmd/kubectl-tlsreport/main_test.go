@@ -23,6 +23,11 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 )
@@ -500,6 +505,135 @@ func TestPrintReportTable_ColumnAlignment(t *testing.T) {
 	}
 	if strings.Contains(output, "\tSTATUS\t") {
 		t.Error("STATUS should be renamed to COMPLIANCE")
+	}
+}
+
+func TestNewRescanCmd_Validation(t *testing.T) {
+	t.Run("no args and no --all returns error", func(t *testing.T) {
+		cmd := newRescanCmd()
+		cmd.SetArgs([]string{})
+		err := cmd.Execute()
+		if err == nil || !strings.Contains(err.Error(), "specify a report name or use --all") {
+			t.Errorf("expected validation error, got: %v", err)
+		}
+	})
+
+	t.Run("args with --all returns error", func(t *testing.T) {
+		cmd := newRescanCmd()
+		cmd.SetArgs([]string{"my-report", "--all"})
+		err := cmd.Execute()
+		if err == nil || !strings.Contains(err.Error(), "cannot specify both") {
+			t.Errorf("expected validation error, got: %v", err)
+		}
+	})
+
+	t.Run("flags exist with defaults", func(t *testing.T) {
+		cmd := newRescanCmd()
+		allFlag := cmd.Flags().Lookup("all")
+		if allFlag == nil {
+			t.Fatal("expected --all flag")
+		}
+		if allFlag.DefValue != "false" {
+			t.Errorf("expected --all default=false, got %s", allFlag.DefValue)
+		}
+		waitFlag := cmd.Flags().Lookup("wait")
+		if waitFlag == nil {
+			t.Fatal("expected --wait flag")
+		}
+		timeoutFlag := cmd.Flags().Lookup("timeout")
+		if timeoutFlag == nil {
+			t.Fatal("expected --timeout flag")
+		}
+		if timeoutFlag.DefValue != "1m0s" {
+			t.Errorf("expected --timeout default=1m0s, got %s", timeoutFlag.DefValue)
+		}
+	})
+}
+
+func TestTriggerRescan(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("sets annotation on nil map", func(t *testing.T) {
+		report := &securityv1alpha1.TLSComplianceReport{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-report"},
+		}
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(report).Build()
+
+		if err := triggerRescan(ctx, c, report); err != nil {
+			t.Fatalf("triggerRescan() error = %v", err)
+		}
+
+		var updated securityv1alpha1.TLSComplianceReport
+		if err := c.Get(ctx, client.ObjectKey{Name: "test-report"}, &updated); err != nil {
+			t.Fatalf("Get() error = %v", err)
+		}
+		val, ok := updated.Annotations[rescanAnnotation]
+		if !ok {
+			t.Fatal("expected rescan annotation to be set")
+		}
+		if _, err := time.Parse(time.RFC3339, val); err != nil {
+			t.Errorf("expected RFC3339 timestamp, got %q: %v", val, err)
+		}
+	})
+
+	t.Run("preserves existing annotations", func(t *testing.T) {
+		report := &securityv1alpha1.TLSComplianceReport{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        "test-report",
+				Annotations: map[string]string{"existing": "value"},
+			},
+		}
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(report).Build()
+
+		if err := triggerRescan(ctx, c, report); err != nil {
+			t.Fatalf("triggerRescan() error = %v", err)
+		}
+
+		var updated securityv1alpha1.TLSComplianceReport
+		if err := c.Get(ctx, client.ObjectKey{Name: "test-report"}, &updated); err != nil {
+			t.Fatalf("Get() error = %v", err)
+		}
+		if updated.Annotations["existing"] != "value" {
+			t.Error("existing annotation was clobbered")
+		}
+		if _, ok := updated.Annotations[rescanAnnotation]; !ok {
+			t.Error("rescan annotation not set")
+		}
+	})
+}
+
+func TestWaitForRescan_AlreadyComplete(t *testing.T) {
+	ctx := context.Background()
+
+	report := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-report"},
+		Status: securityv1alpha1.TLSComplianceReportStatus{
+			ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(report).
+		WithStatusSubresource(report).Build()
+
+	err := waitForRescan(ctx, c, "test-report", 5*time.Second)
+	if err != nil {
+		t.Fatalf("waitForRescan() error = %v (expected success since annotation absent)", err)
+	}
+}
+
+func TestWaitForRescan_Timeout(t *testing.T) {
+	ctx := context.Background()
+
+	report := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "test-report",
+			Annotations: map[string]string{rescanAnnotation: "2024-01-01T00:00:00Z"},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(report).Build()
+
+	err := waitForRescan(ctx, c, "test-report", 3*time.Second)
+	if err == nil || !strings.Contains(err.Error(), "timeout") {
+		t.Errorf("expected timeout error, got: %v", err)
 	}
 }
 
