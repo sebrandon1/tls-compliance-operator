@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 )
@@ -235,6 +236,8 @@ func TestValidateEnvValue(t *testing.T) {
 		{"invalid timeout", "tls-check-timeout", "xyz", true},
 		{"valid rate-limit", "rate-limit", "15.5", false},
 		{"invalid rate-limit", "rate-limit", "abc", true},
+		{"negative rate-limit", "rate-limit", "-5", true},
+		{"zero rate-limit", "rate-limit", "0", true},
 		{"valid workers", "workers", "10", false},
 		{"workers too low", "workers", "0", true},
 		{"workers too high", "workers", "51", true},
@@ -256,6 +259,12 @@ func TestValidateEnvValue(t *testing.T) {
 		{"valid scan-all-ports false", "scan-all-ports", "false", false},
 		{"valid scan-all-ports 1", "scan-all-ports", "1", false},
 		{"invalid scan-all-ports", "scan-all-ports", "maybe", true},
+		{"valid enumerate-ciphers true", "enumerate-ciphers", "true", false},
+		{"valid enumerate-ciphers false", "enumerate-ciphers", "false", false},
+		{"invalid enumerate-ciphers", "enumerate-ciphers", "maybe", true},
+		{"valid metrics-per-endpoint true", "metrics-per-endpoint", "true", false},
+		{"valid metrics-per-endpoint false", "metrics-per-endpoint", "false", false},
+		{"invalid metrics-per-endpoint", "metrics-per-endpoint", "maybe", true},
 		{"valid output-format csv", "output-format", "csv", false},
 		{"valid output-format junit", "output-format", "junit", false},
 		{"invalid output-format", "output-format", "xml", true},
@@ -498,6 +507,195 @@ func TestResolveEnvConfig_ReportRetentionDays(t *testing.T) {
 	if !found {
 		t.Error("expected log message indicating env var was applied")
 	}
+}
+
+func TestResolveEnvConfig_EnumerateCiphers(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.Bool("enumerate-ciphers", true, "")
+	_ = fs.Parse([]string{})
+
+	lookup := func(key string) (string, bool) {
+		if key == "TLS_COMPLIANCE_ENUMERATE_CIPHERS" {
+			return "false", true
+		}
+		return "", false
+	}
+
+	resolveEnvConfig(fs, lookup)
+	if fs.Lookup("enumerate-ciphers").Value.String() != "false" {
+		t.Errorf("expected enumerate-ciphers=false, got %s", fs.Lookup("enumerate-ciphers").Value.String())
+	}
+}
+
+func TestResolveEnvConfig_MetricsPerEndpoint(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.Bool("metrics-per-endpoint", true, "")
+	_ = fs.Parse([]string{})
+
+	lookup := func(key string) (string, bool) {
+		if key == "TLS_COMPLIANCE_METRICS_PER_ENDPOINT" {
+			return "false", true
+		}
+		return "", false
+	}
+
+	resolveEnvConfig(fs, lookup)
+	if fs.Lookup("metrics-per-endpoint").Value.String() != "false" {
+		t.Errorf("expected metrics-per-endpoint=false, got %s", fs.Lookup("metrics-per-endpoint").Value.String())
+	}
+}
+
+func TestResolveEnvConfig_NamespaceRateLimits(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("namespace-rate-limits", "", "")
+	_ = fs.Parse([]string{})
+
+	lookup := func(key string) (string, bool) {
+		if key == "TLS_COMPLIANCE_NAMESPACE_RATE_LIMITS" {
+			return "production=2.0,staging=10.0", true
+		}
+		return "", false
+	}
+
+	resolveEnvConfig(fs, lookup)
+	if fs.Lookup("namespace-rate-limits").Value.String() != "production=2.0,staging=10.0" {
+		t.Errorf("expected namespace-rate-limits=production=2.0,staging=10.0, got %s", fs.Lookup("namespace-rate-limits").Value.String())
+	}
+}
+
+func TestCheckConfig(t *testing.T) {
+	validCfg := func() *operatorConfig {
+		return &operatorConfig{
+			workers:         5,
+			maxRetries:      3,
+			rateLimit:       10.0,
+			rateBurst:       20,
+			scanInterval:    1 * time.Hour,
+			cleanupInterval: 5 * time.Minute,
+			tlsCheckTimeout: 5 * time.Second,
+		}
+	}
+
+	t.Run("valid config", func(t *testing.T) {
+		warnings, err := checkConfig(validCfg())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(warnings) != 0 {
+			t.Errorf("unexpected warnings: %v", warnings)
+		}
+	})
+
+	t.Run("rate-limit zero", func(t *testing.T) {
+		cfg := validCfg()
+		cfg.rateLimit = 0
+		_, err := checkConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "rate-limit") {
+			t.Errorf("expected rate-limit error, got: %v", err)
+		}
+	})
+
+	t.Run("rate-limit negative", func(t *testing.T) {
+		cfg := validCfg()
+		cfg.rateLimit = -1
+		_, err := checkConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "rate-limit") {
+			t.Errorf("expected rate-limit error, got: %v", err)
+		}
+	})
+
+	t.Run("rate-burst too low", func(t *testing.T) {
+		cfg := validCfg()
+		cfg.rateBurst = 0
+		_, err := checkConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "rate-burst") {
+			t.Errorf("expected rate-burst error, got: %v", err)
+		}
+	})
+
+	t.Run("rate-burst too high", func(t *testing.T) {
+		cfg := validCfg()
+		cfg.rateBurst = 1001
+		_, err := checkConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "rate-burst") {
+			t.Errorf("expected rate-burst error, got: %v", err)
+		}
+	})
+
+	t.Run("client-cert without client-key", func(t *testing.T) {
+		cfg := validCfg()
+		cfg.clientCertPath = "/path/to/cert.pem"
+		_, err := checkConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "client-key") {
+			t.Errorf("expected client-key error, got: %v", err)
+		}
+	})
+
+	t.Run("client-key without client-cert", func(t *testing.T) {
+		cfg := validCfg()
+		cfg.clientKeyPath = "/path/to/key.pem"
+		_, err := checkConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "client-cert") {
+			t.Errorf("expected client-cert error, got: %v", err)
+		}
+	})
+
+	t.Run("both client-cert and client-key is valid", func(t *testing.T) {
+		cfg := validCfg()
+		cfg.clientCertPath = "/path/to/cert.pem"
+		cfg.clientKeyPath = "/path/to/key.pem"
+		_, err := checkConfig(cfg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("include and exclude namespaces warns", func(t *testing.T) {
+		cfg := validCfg()
+		cfg.includeNamespaces = "ns1"
+		cfg.excludeNamespaces = "ns2"
+		warnings, err := checkConfig(cfg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(warnings) == 0 {
+			t.Error("expected warning about include+exclude namespaces")
+		}
+	})
+
+	t.Run("workers much higher than rate-limit warns", func(t *testing.T) {
+		cfg := validCfg()
+		cfg.workers = 50
+		cfg.rateLimit = 1.0
+		warnings, err := checkConfig(cfg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		found := false
+		for _, w := range warnings {
+			if strings.Contains(w, "workers") {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("expected warning about workers vs rate-limit")
+		}
+	})
+
+	t.Run("workers proportional to rate-limit no warning", func(t *testing.T) {
+		cfg := validCfg()
+		cfg.workers = 5
+		cfg.rateLimit = 10.0
+		warnings, err := checkConfig(cfg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, w := range warnings {
+			if strings.Contains(w, "workers") {
+				t.Errorf("unexpected workers warning: %s", w)
+			}
+		}
+	})
 }
 
 func TestReadyzCheck_BeforeAndAfterScan(t *testing.T) {

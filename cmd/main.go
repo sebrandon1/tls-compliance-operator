@@ -222,34 +222,64 @@ func validateConfig(cfg *operatorConfig) {
 		setupLog.Info("scan-all-ports enabled: all declared TCP container ports on pods will be scanned")
 	}
 
-	if cfg.workers < 1 || cfg.workers > 50 {
-		setupLog.Error(nil, "invalid --workers value, must be between 1 and 50", "workers", cfg.workers)
+	warnings, err := checkConfig(cfg)
+	for _, w := range warnings {
+		setupLog.Info(w)
+	}
+	if err != nil {
+		setupLog.Error(err, "invalid configuration")
 		os.Exit(1)
+	}
+}
+
+func checkConfig(cfg *operatorConfig) (warnings []string, _ error) {
+	if cfg.workers < 1 || cfg.workers > 50 {
+		return nil, fmt.Errorf("invalid --workers value, must be between 1 and 50, got %d", cfg.workers)
 	}
 
 	if cfg.maxRetries < 0 || cfg.maxRetries > 10 {
-		setupLog.Error(nil, "invalid --max-retries value, must be between 0 and 10", "maxRetries", cfg.maxRetries)
-		os.Exit(1)
+		return nil, fmt.Errorf("invalid --max-retries value, must be between 0 and 10, got %d", cfg.maxRetries)
 	}
 
-	if cfg.reportRetentionDays < 0 {
-		setupLog.Error(nil, "invalid --report-retention-days value, must be non-negative", "reportRetentionDays", cfg.reportRetentionDays)
-		os.Exit(1)
+	if cfg.reportRetentionDays < 0 || cfg.reportRetentionDays > 3650 {
+		return nil, fmt.Errorf("invalid --report-retention-days value, must be between 0 and 3650, got %d", cfg.reportRetentionDays)
 	}
 
 	if cfg.outputFormat != "" {
 		switch cfg.outputFormat {
 		case "csv", "json", "yaml", "junit", "markdown":
 		default:
-			setupLog.Error(nil, "invalid --output-format value", "format", cfg.outputFormat,
-				"valid", "csv, json, yaml, junit, markdown")
-			os.Exit(1)
+			return nil, fmt.Errorf("invalid --output-format value %q, must be csv, json, yaml, junit, or markdown", cfg.outputFormat)
 		}
 	}
 	if cfg.outputFile != "" && cfg.outputFormat == "" {
-		setupLog.Error(nil, "--output-file requires --output-format to be set")
-		os.Exit(1)
+		return nil, fmt.Errorf("--output-file requires --output-format to be set")
 	}
+
+	if cfg.rateLimit <= 0 {
+		return nil, fmt.Errorf("invalid --rate-limit value, must be positive, got %v", cfg.rateLimit)
+	}
+
+	if cfg.rateBurst < 1 || cfg.rateBurst > 1000 {
+		return nil, fmt.Errorf("invalid --rate-burst value, must be between 1 and 1000, got %d", cfg.rateBurst)
+	}
+
+	if cfg.includeNamespaces != "" && cfg.excludeNamespaces != "" {
+		warnings = append(warnings, "WARNING: both --include-namespaces and --exclude-namespaces are set; --include-namespaces takes precedence")
+	}
+
+	if float64(cfg.workers) > cfg.rateLimit*10 {
+		warnings = append(warnings, fmt.Sprintf("WARNING: --workers (%d) is much higher than --rate-limit (%.1f); most workers will be idle", cfg.workers, cfg.rateLimit))
+	}
+
+	if cfg.clientCertPath != "" && cfg.clientKeyPath == "" {
+		return warnings, fmt.Errorf("--client-cert requires --client-key to also be set")
+	}
+	if cfg.clientKeyPath != "" && cfg.clientCertPath == "" {
+		return warnings, fmt.Errorf("--client-key requires --client-cert to also be set")
+	}
+
+	return warnings, nil
 }
 
 func buildTLSOpts(cfg *operatorConfig) []func(*tls.Config) {
@@ -372,9 +402,6 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 
 	includedNS := controller.ParseNamespaceList(cfg.includeNamespaces)
 	excludedNS := controller.ParseNamespaceList(cfg.excludeNamespaces)
-	if len(includedNS) > 0 && len(excludedNS) > 0 {
-		setupLog.Info("WARNING: both --include-namespaces and --exclude-namespaces are set; --include-namespaces takes precedence")
-	}
 
 	baseChecker := tlscheck.NewTLSChecker(cfg.tlsCheckTimeout)
 	baseChecker.EnumerateCiphers = cfg.enumerateCiphers
@@ -607,6 +634,9 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_MAX_BACKOFF", "max-backoff"},
 	{"TLS_COMPLIANCE_EXTRA_TLS_PORTS", "extra-tls-ports"},
 	{"TLS_COMPLIANCE_SCAN_ALL_PORTS", "scan-all-ports"},
+	{"TLS_COMPLIANCE_ENUMERATE_CIPHERS", "enumerate-ciphers"},
+	{"TLS_COMPLIANCE_NAMESPACE_RATE_LIMITS", "namespace-rate-limits"},
+	{"TLS_COMPLIANCE_METRICS_PER_ENDPOINT", "metrics-per-endpoint"},
 	{"TLS_COMPLIANCE_CLIENT_CERT", "client-cert"},
 	{"TLS_COMPLIANCE_CLIENT_KEY", "client-key"},
 	{"TLS_COMPLIANCE_REPORT_RETENTION_DAYS", "report-retention-days"},
@@ -670,8 +700,12 @@ func validateEnvValue(flagName, value string) error {
 			return fmt.Errorf("invalid duration: %w", err)
 		}
 	case "rate-limit":
-		if _, err := strconv.ParseFloat(value, 64); err != nil {
+		f, err := strconv.ParseFloat(value, 64)
+		if err != nil {
 			return fmt.Errorf("invalid float: %w", err)
+		}
+		if f <= 0 {
+			return fmt.Errorf("must be positive, got %v", f)
 		}
 	case "rate-burst":
 		return validateIntRange(value, 1, 1000)
@@ -688,7 +722,7 @@ func validateEnvValue(flagName, value string) error {
 		if value != "text" && value != "json" {
 			return fmt.Errorf("must be text or json, got %q", value)
 		}
-	case "run-once", "scan-all-ports":
+	case "run-once", "scan-all-ports", "enumerate-ciphers", "metrics-per-endpoint":
 		if value != "true" && value != "false" && value != "1" && value != "0" {
 			return fmt.Errorf("must be true or false, got %q", value)
 		}
