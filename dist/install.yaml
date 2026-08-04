@@ -56,6 +56,10 @@ spec:
       name: SSL3.0
       priority: 1
       type: boolean
+    - jsonPath: .status.mlkemSupported
+      name: MLKEM
+      priority: 1
+      type: boolean
     - jsonPath: .status.pqcReadiness
       name: PQC
       type: string
@@ -562,6 +566,9 @@ spec:
     - jsonPath: .status.complianceStatus
       name: Status
       type: string
+    - jsonPath: .status.message
+      name: Message
+      type: string
     - jsonPath: .status.reportName
       name: Report
       type: string
@@ -978,7 +985,7 @@ spec:
         - --metrics-secure=true
         command:
         - /manager
-        image: quay.io/bapalm/tls-compliance-operator:v1.1.4
+        image: quay.io/bapalm/tls-compliance-operator:latest
         livenessProbe:
           httpGet:
             path: /healthz
@@ -986,7 +993,13 @@ spec:
           initialDelaySeconds: 15
           periodSeconds: 20
         name: manager
-        ports: []
+        ports:
+        - containerPort: 8081
+          name: health
+          protocol: TCP
+        - containerPort: 8443
+          name: metrics
+          protocol: TCP
         readinessProbe:
           failureThreshold: 18
           httpGet:

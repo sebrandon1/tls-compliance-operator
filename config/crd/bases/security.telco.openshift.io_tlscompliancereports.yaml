@@ -48,6 +48,10 @@ spec:
       name: SSL3.0
       priority: 1
       type: boolean
+    - jsonPath: .status.mlkemSupported
+      name: MLKEM
+      priority: 1
+      type: boolean
     - jsonPath: .status.pqcReadiness
       name: PQC
       type: string

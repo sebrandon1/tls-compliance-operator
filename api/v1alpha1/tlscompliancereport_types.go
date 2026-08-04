@@ -332,6 +332,7 @@ type TLSComplianceReportStatus struct {
 // +kubebuilder:printcolumn:name="TLS1.2",type=boolean,JSONPath=`.status.tlsVersions.tls12`
 // +kubebuilder:printcolumn:name="TLS1.0",type=boolean,JSONPath=`.status.tlsVersions.tls10`
 // +kubebuilder:printcolumn:name="SSL3.0",type=boolean,JSONPath=`.status.tlsVersions.ssl30`,priority=1
+// +kubebuilder:printcolumn:name="MLKEM",type=boolean,JSONPath=`.status.mlkemSupported`,priority=1
 // +kubebuilder:printcolumn:name="PQC",type=string,JSONPath=`.status.pqcReadiness`
 // +kubebuilder:printcolumn:name="CertExpiry",type=integer,JSONPath=`.status.certificateInfo.daysUntilExpiry`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
