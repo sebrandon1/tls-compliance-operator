@@ -128,10 +128,11 @@ func IsHeadlessService(svc *corev1.Service) bool {
 
 // ExtractFromHeadlessService returns TLS endpoints for each address of a
 // headless service. Each address × TLS port yields one endpoint.
+// When scan-all-ports is enabled, all declared ports are included.
 func ExtractFromHeadlessService(svc *corev1.Service, addresses []string) []Endpoint {
 	var endpoints []Endpoint
 	for i := range svc.Spec.Ports {
-		if !isTLSPort(&svc.Spec.Ports[i]) {
+		if !scanAllPortsEnabled() && !isTLSPort(&svc.Spec.Ports[i]) {
 			continue
 		}
 		for _, addr := range addresses {
@@ -149,6 +150,7 @@ func ExtractFromHeadlessService(svc *corev1.Service, addresses []string) []Endpo
 
 // ExtractFromService returns TLS endpoints from a Service.
 // It looks for ports that are 443, 8443, or named https/https-*.
+// When scan-all-ports is enabled, all declared ports are included.
 // For ExternalName services, the host is spec.externalName and
 // port 443 is assumed when no ports are defined.
 func ExtractFromService(svc *corev1.Service) []Endpoint {
@@ -159,7 +161,7 @@ func ExtractFromService(svc *corev1.Service) []Endpoint {
 	var endpoints []Endpoint
 
 	for i := range svc.Spec.Ports {
-		if isTLSPort(&svc.Spec.Ports[i]) {
+		if scanAllPortsEnabled() || isTLSPort(&svc.Spec.Ports[i]) {
 			host := fmt.Sprintf("%s.%s", svc.Name, svc.Namespace)
 			endpoints = append(endpoints, Endpoint{
 				Host:            host,
@@ -192,7 +194,7 @@ func extractFromExternalNameService(svc *corev1.Service) []Endpoint {
 		})
 	} else {
 		for i := range svc.Spec.Ports {
-			if isTLSPort(&svc.Spec.Ports[i]) {
+			if scanAllPortsEnabled() || isTLSPort(&svc.Spec.Ports[i]) {
 				endpoints = append(endpoints, Endpoint{
 					Host:            host,
 					Port:            svc.Spec.Ports[i].Port,
@@ -546,7 +548,7 @@ func SetExtraTLSPorts(ports map[int32]bool) {
 	extraTLSPorts = ports
 }
 
-// SetScanAllPorts configures the scan-all-ports mode (pod scanning only).
+// SetScanAllPorts configures the scan-all-ports mode for pods and services.
 func SetScanAllPorts(enabled bool) {
 	scanAllPorts.Store(enabled)
 }
