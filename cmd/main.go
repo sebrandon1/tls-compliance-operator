@@ -161,7 +161,7 @@ func parseFlags() *operatorConfig {
 	flag.StringVar(&cfg.extraTLSPortsStr, "extra-tls-ports", "",
 		"Comma-separated list of additional port numbers to treat as TLS endpoints (e.g., 9443,6380,5671)")
 	flag.BoolVar(&cfg.scanAllPorts, "scan-all-ports", false,
-		"Scan all declared TCP container ports on pods, not just known TLS ports")
+		"Scan all declared TCP ports on pods and services, not just known TLS ports")
 	flag.StringVar(&cfg.clientCertPath, "client-cert", "",
 		"Path to a PEM-encoded client certificate for mTLS endpoint probing")
 	flag.StringVar(&cfg.clientKeyPath, "client-key", "",
@@ -219,7 +219,7 @@ func validateConfig(cfg *operatorConfig) {
 
 	endpoint.SetScanAllPorts(cfg.scanAllPorts)
 	if cfg.scanAllPorts {
-		setupLog.Info("scan-all-ports enabled: all declared TCP container ports on pods will be scanned")
+		setupLog.Info("scan-all-ports enabled: all declared TCP ports on pods and services will be scanned")
 	}
 
 	warnings, err := checkConfig(cfg)

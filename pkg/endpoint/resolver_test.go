@@ -1260,6 +1260,112 @@ func TestExtractFromHeadlessService_NoAddresses(t *testing.T) {
 	}
 }
 
+func TestExtractFromService_ScanAllPorts(t *testing.T) {
+	defer SetScanAllPorts(false)
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-service", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{
+				{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP},
+				{Name: "grpc", Port: 9090, Protocol: corev1.ProtocolTCP},
+			},
+		},
+	}
+
+	endpoints := ExtractFromService(svc)
+	if len(endpoints) != 0 {
+		t.Fatalf("expected 0 endpoints without scan-all-ports, got %d", len(endpoints))
+	}
+
+	SetScanAllPorts(true)
+	endpoints = ExtractFromService(svc)
+	if len(endpoints) != 2 {
+		t.Fatalf("expected 2 endpoints with scan-all-ports, got %d", len(endpoints))
+	}
+	if endpoints[0].Port != 80 {
+		t.Errorf("port = %d, want 80", endpoints[0].Port)
+	}
+	if endpoints[1].Port != 9090 {
+		t.Errorf("port = %d, want 9090", endpoints[1].Port)
+	}
+	if endpoints[0].Host != "my-service.default" {
+		t.Errorf("host = %q, want my-service.default", endpoints[0].Host)
+	}
+	if endpoints[0].SourceKind != securityv1alpha1.SourceKindService {
+		t.Errorf("sourceKind = %s, want Service", endpoints[0].SourceKind)
+	}
+}
+
+func TestExtractFromHeadlessService_ScanAllPorts(t *testing.T) {
+	defer SetScanAllPorts(false)
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-db", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			ClusterIP: corev1.ClusterIPNone,
+			Ports: []corev1.ServicePort{
+				{Name: "https", Port: 443, Protocol: corev1.ProtocolTCP},
+				{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP},
+			},
+		},
+	}
+	addresses := []string{"10.244.0.5", "10.244.0.6"}
+
+	endpoints := ExtractFromHeadlessService(svc, addresses)
+	if len(endpoints) != 2 {
+		t.Fatalf("expected 2 endpoints without scan-all-ports, got %d", len(endpoints))
+	}
+
+	SetScanAllPorts(true)
+	endpoints = ExtractFromHeadlessService(svc, addresses)
+	if len(endpoints) != 4 {
+		t.Fatalf("expected 4 endpoints with scan-all-ports, got %d", len(endpoints))
+	}
+}
+
+func TestExtractFromService_ExternalName_ScanAllPorts(t *testing.T) {
+	defer SetScanAllPorts(false)
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "external-db", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			Type:         corev1.ServiceTypeExternalName,
+			ExternalName: "db.vendor.example.com",
+			Ports: []corev1.ServicePort{
+				{Name: "https", Port: 8443},
+				{Name: "http", Port: 80},
+			},
+		},
+	}
+
+	endpoints := ExtractFromService(svc)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint without scan-all-ports, got %d", len(endpoints))
+	}
+
+	SetScanAllPorts(true)
+	endpoints = ExtractFromService(svc)
+	if len(endpoints) != 2 {
+		t.Fatalf("expected 2 endpoints with scan-all-ports, got %d", len(endpoints))
+	}
+
+	svcNoPorts := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "external-api", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			Type:         corev1.ServiceTypeExternalName,
+			ExternalName: "api.vendor.example.com",
+		},
+	}
+	endpoints = ExtractFromService(svcNoPorts)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint for zero-ports ExternalName with scan-all-ports, got %d", len(endpoints))
+	}
+	if endpoints[0].Port != 443 {
+		t.Errorf("port = %d, want 443", endpoints[0].Port)
+	}
+}
+
 func TestExtractFromHTTPRoute(t *testing.T) {
 	route := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "gateway.networking.k8s.io/v1", "kind": "HTTPRoute",
