@@ -1017,8 +1017,16 @@ spec:
 		var managerBin string
 
 		BeforeAll(func() {
+			By("undeploying the in-cluster operator to prevent interference")
+			cmd := exec.Command("make", "undeploy")
+			_, _ = utils.Run(cmd)
+
+			By("deleting all existing TLSComplianceReport CRs")
+			cmd = exec.Command("kubectl", "delete", "tlsreport", "--all", "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+
 			By("building the manager binary and installing CRDs once")
-			cmd := exec.Command("make", "install", "build")
+			cmd = exec.Command("make", "install", "build")
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "make install build failed")
 			managerBin = filepath.Join(projectRoot(), "bin", "manager")
