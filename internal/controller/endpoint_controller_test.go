@@ -4489,5 +4489,236 @@ func TestCleanupOrphanedCRs_CRListError(t *testing.T) {
 	}
 }
 
+func TestAppendExtraPortEndpoints(t *testing.T) {
+	base := []endpoint.Endpoint{{
+		Host:            "svc.default",
+		Port:            443,
+		SourceKind:      securityv1alpha1.SourceKindService,
+		SourceNamespace: "default",
+		SourceName:      "svc",
+	}}
+
+	t.Run("no annotation", func(t *testing.T) {
+		got := endpoint.AppendExtraPorts(base, nil, "svc", "default", securityv1alpha1.SourceKindService)
+		if len(got) != 1 {
+			t.Fatalf("expected 1 endpoint, got %d", len(got))
+		}
+	})
+
+	t.Run("extra ports added", func(t *testing.T) {
+		ann := map[string]string{endpoint.AnnotationExtraPorts: "9443,8443"}
+		got := endpoint.AppendExtraPorts(base, ann, "svc", "default", securityv1alpha1.SourceKindService)
+		if len(got) != 3 {
+			t.Fatalf("expected 3 endpoints, got %d", len(got))
+		}
+		if got[1].Port != 9443 || got[2].Port != 8443 {
+			t.Errorf("unexpected ports: %d, %d", got[1].Port, got[2].Port)
+		}
+		if got[1].Host != "svc.default" {
+			t.Errorf("expected host svc.default, got %s", got[1].Host)
+		}
+	})
+
+	t.Run("duplicate port skipped", func(t *testing.T) {
+		ann := map[string]string{endpoint.AnnotationExtraPorts: "443,9443"}
+		got := endpoint.AppendExtraPorts(base, ann, "svc", "default", securityv1alpha1.SourceKindService)
+		if len(got) != 2 {
+			t.Fatalf("expected 2 endpoints (443 deduped), got %d", len(got))
+		}
+	})
+
+	t.Run("empty base gets host from name", func(t *testing.T) {
+		ann := map[string]string{endpoint.AnnotationExtraPorts: "9443"}
+		got := endpoint.AppendExtraPorts(nil, ann, "svc", "default", securityv1alpha1.SourceKindService)
+		if len(got) != 1 {
+			t.Fatalf("expected 1 endpoint, got %d", len(got))
+		}
+		if got[0].Host != "svc.default" {
+			t.Errorf("expected host svc.default, got %s", got[0].Host)
+		}
+	})
+}
+
+func TestEndpointReconciler_Reconcile_ServiceWithSkipAnnotation(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-service",
+			Namespace: testNamespace,
+			Annotations: map[string]string{
+				endpoint.AnnotationSkip: "true",
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{
+				{Name: "https", Port: 443, Protocol: corev1.ProtocolTCP},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(svc).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		CertExpiryDays: 30,
+	}
+
+	req := reconcile.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      "my-service",
+			Namespace: testNamespace,
+		},
+	}
+
+	result, err := reconciler.Reconcile(ctx, req)
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.RequeueAfter != 0 {
+		t.Error("Reconcile() returned RequeueAfter != 0")
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("Failed to list TLSComplianceReports: %v", err)
+	}
+	if len(crList.Items) != 0 {
+		t.Errorf("expected 0 TLSComplianceReports for skipped service, got %d", len(crList.Items))
+	}
+}
+
+func TestEndpointReconciler_Reconcile_ServiceWithExtraPorts(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-service",
+			Namespace: testNamespace,
+			Annotations: map[string]string{
+				endpoint.AnnotationExtraPorts: "9443",
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{
+				{Name: "https", Port: 443, Protocol: corev1.ProtocolTCP},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(svc).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		CertExpiryDays: 30,
+	}
+
+	req := reconcile.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      "my-service",
+			Namespace: testNamespace,
+		},
+	}
+
+	_, err := reconciler.Reconcile(ctx, req)
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("Failed to list TLSComplianceReports: %v", err)
+	}
+	if len(crList.Items) != 2 {
+		t.Fatalf("expected 2 TLSComplianceReports (443 + 9443), got %d", len(crList.Items))
+	}
+
+	ports := map[int32]bool{}
+	for _, cr := range crList.Items {
+		ports[cr.Spec.Port] = true
+	}
+	if !ports[443] || !ports[9443] {
+		t.Errorf("expected ports 443 and 9443, got %v", ports)
+	}
+}
+
+func TestEndpointReconciler_ScanPodEndpoints_SkipAnnotation(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tls-pod",
+			Namespace: testNamespace,
+			Annotations: map[string]string{
+				endpoint.AnnotationSkip: "true",
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name: "app",
+					Ports: []corev1.ContainerPort{
+						{ContainerPort: 443, Protocol: corev1.ProtocolTCP},
+					},
+				},
+			},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			PodIP: "10.244.1.5",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(pod).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		CertExpiryDays: 30,
+	}
+
+	err := reconciler.scanPodEndpoints(ctx)
+	if err != nil {
+		t.Fatalf("scanPodEndpoints() error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("Failed to list TLSComplianceReports: %v", err)
+	}
+	if len(crList.Items) != 0 {
+		t.Errorf("expected 0 TLSComplianceReports for skipped pod, got %d", len(crList.Items))
+	}
+}
+
+func TestAppendExtraPortEndpoints_SourceKindPropagation(t *testing.T) {
+	ann := map[string]string{endpoint.AnnotationExtraPorts: "9443"}
+
+	got := endpoint.AppendExtraPorts(nil, ann, "ing", "default", securityv1alpha1.SourceKindIngress)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(got))
+	}
+	if got[0].SourceKind != securityv1alpha1.SourceKindIngress {
+		t.Errorf("SourceKind = %v, want Ingress", got[0].SourceKind)
+	}
+}
+
 // Ensure _ satisfies the client.Object interface for compile-time check
 var _ client.Object = &securityv1alpha1.TLSComplianceReport{}

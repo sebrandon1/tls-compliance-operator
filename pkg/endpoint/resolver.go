@@ -20,6 +20,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,8 +43,80 @@ type Endpoint struct {
 	IsProbePort     bool
 }
 
-// MaxCRNameLength is the maximum length for a CR name
-const MaxCRNameLength = 63
+const (
+	// MaxCRNameLength is the maximum length for a CR name
+	MaxCRNameLength = 63
+
+	// AnnotationSkip skips scanning the annotated resource entirely.
+	AnnotationSkip = "tls-compliance.telco.openshift.io/skip"
+
+	// AnnotationExtraPorts adds additional ports to scan for the annotated resource.
+	AnnotationExtraPorts = "tls-compliance.telco.openshift.io/extra-ports"
+)
+
+// ShouldSkipResource returns true if the resource is annotated to skip scanning.
+func ShouldSkipResource(annotations map[string]string) bool {
+	return annotations != nil && annotations[AnnotationSkip] == "true"
+}
+
+// ParseExtraPorts parses the extra-ports annotation value into port numbers.
+func ParseExtraPorts(annotations map[string]string) []int32 {
+	if annotations == nil {
+		return nil
+	}
+	val, ok := annotations[AnnotationExtraPorts]
+	if !ok || val == "" {
+		return nil
+	}
+
+	var ports []int32
+	for _, s := range strings.Split(val, ",") {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		p, err := strconv.ParseInt(s, 10, 32)
+		if err != nil || p < 1 || p > 65535 {
+			continue
+		}
+		ports = append(ports, int32(p))
+	}
+	return ports
+}
+
+// AppendExtraPorts adds endpoints for ports specified in the extra-ports annotation.
+// It deduplicates against ports already in the endpoint list.
+func AppendExtraPorts(endpoints []Endpoint, annotations map[string]string, name, namespace string, sourceKind securityv1alpha1.SourceKind) []Endpoint {
+	extraPorts := ParseExtraPorts(annotations)
+	if len(extraPorts) == 0 {
+		return endpoints
+	}
+
+	existing := make(map[int32]bool, len(endpoints))
+	for i := range endpoints {
+		existing[endpoints[i].Port] = true
+	}
+
+	host := fmt.Sprintf("%s.%s", name, namespace)
+	if len(endpoints) > 0 {
+		host = endpoints[0].Host
+	}
+
+	for _, port := range extraPorts {
+		if existing[port] {
+			continue
+		}
+		endpoints = append(endpoints, Endpoint{
+			Host:            host,
+			Port:            port,
+			SourceKind:      sourceKind,
+			SourceNamespace: namespace,
+			SourceName:      name,
+		})
+	}
+
+	return endpoints
+}
 
 // sanitizeRegex matches characters not allowed in Kubernetes names
 var sanitizeRegex = regexp.MustCompile(`[^a-z0-9-]`)
