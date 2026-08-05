@@ -174,21 +174,31 @@ func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, nil
 	}
 
+	start := time.Now()
+	metrics.RecordReconcileInFlightInc()
+	defer metrics.RecordReconcileInFlightDec()
+
 	var svc corev1.Service
 	if err := r.Get(ctx, req.NamespacedName, &svc); err == nil {
-		return r.handleService(ctx, &svc)
+		result, err := r.handleService(ctx, &svc)
+		metrics.RecordReconcileLatency("Service", time.Since(start).Seconds())
+		return result, err
 	}
 
 	var ing networkingv1.Ingress
 	if err := r.Get(ctx, req.NamespacedName, &ing); err == nil {
-		return r.handleIngress(ctx, &ing)
+		result, err := r.handleIngress(ctx, &ing)
+		metrics.RecordReconcileLatency("Ingress", time.Since(start).Seconds())
+		return result, err
 	}
 
 	if r.RouteAPIAvailable {
 		route := &unstructured.Unstructured{}
 		route.SetGroupVersionKind(routeGVK)
 		if err := r.Get(ctx, req.NamespacedName, route); err == nil {
-			return r.handleRoute(ctx, route)
+			result, err := r.handleRoute(ctx, route)
+			metrics.RecordReconcileLatency("Route", time.Since(start).Seconds())
+			return result, err
 		}
 	}
 
@@ -197,20 +207,26 @@ func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			gwObj := &unstructured.Unstructured{}
 			gwObj.SetGroupVersionKind(gvk)
 			if err := r.Get(ctx, req.NamespacedName, gwObj); err == nil {
-				return r.handleGatewayResource(ctx, gwObj, gvk)
+				result, err := r.handleGatewayResource(ctx, gwObj, gvk)
+				metrics.RecordReconcileLatency(gvk.Kind, time.Since(start).Seconds())
+				return result, err
 			}
 		}
 	}
 
 	var target securityv1alpha1.TLSComplianceTarget
 	if err := r.Get(ctx, client.ObjectKey{Name: req.Name}, &target); err == nil {
-		return r.handleTarget(ctx, &target)
+		result, err := r.handleTarget(ctx, &target)
+		metrics.RecordReconcileLatency("TLSComplianceTarget", time.Since(start).Seconds())
+		return result, err
 	}
 
 	var report securityv1alpha1.TLSComplianceReport
 	if err := r.Get(ctx, client.ObjectKey{Name: req.Name}, &report); err == nil {
 		if _, hasRescan := report.Annotations[RescanAnnotation]; hasRescan {
-			return r.handleRescan(ctx, &report)
+			result, err := r.handleRescan(ctx, &report)
+			metrics.RecordReconcileLatency("TLSComplianceReport", time.Since(start).Seconds())
+			return result, err
 		}
 	}
 
@@ -228,26 +244,28 @@ func (r *EndpointReconciler) handleEndpoints(ctx context.Context, endpoints []en
 				continue
 			}
 			logger.Error(err, "failed to process endpoint", "host", endpoints[i].Host, "port", endpoints[i].Port)
-			metrics.RecordReconcileError(string(sourceKind), "process")
+			metrics.RecordReconcileError(string(sourceKind), metrics.ErrorTypeProcess)
 			if firstErr == nil {
 				firstErr = err
 			}
 		}
 	}
 	if firstErr != nil {
+		metrics.RecordReconcileByResource(string(sourceKind), metrics.ResultError)
+		metrics.RecordReconcile(metrics.ResultError)
 		return ctrl.Result{}, firstErr
 	}
 	if deferred {
 		return ctrl.Result{RequeueAfter: workerBusyRequeueDelay}, nil
 	}
-	metrics.RecordReconcile("success")
+	metrics.RecordReconcileSuccess(string(sourceKind))
 	return ctrl.Result{}, nil
 }
 
 func (r *EndpointReconciler) handleService(ctx context.Context, svc *corev1.Service) (ctrl.Result, error) {
 	if endpoint.ShouldSkipResource(svc.Annotations) {
 		log.FromContext(ctx).V(1).Info("skipping service (skip annotation set)", "service", svc.Name, "namespace", svc.Namespace)
-		metrics.RecordReconcile("success")
+		metrics.RecordReconcileSuccess("Service")
 		return ctrl.Result{}, nil
 	}
 
@@ -257,7 +275,7 @@ func (r *EndpointReconciler) handleService(ctx context.Context, svc *corev1.Serv
 	endpoints := endpoint.ExtractFromService(svc)
 	endpoints = endpoint.AppendExtraPorts(endpoints, svc.Annotations, svc.Name, svc.Namespace, securityv1alpha1.SourceKindService)
 	if len(endpoints) == 0 {
-		metrics.RecordReconcile("success")
+		metrics.RecordReconcileSuccess("Service")
 		return ctrl.Result{}, nil
 	}
 	return r.handleEndpoints(ctx, endpoints, securityv1alpha1.SourceKindService)
@@ -287,7 +305,7 @@ func (r *EndpointReconciler) handleHeadlessService(ctx context.Context, svc *cor
 
 	endpoints := endpoint.ExtractFromHeadlessService(svc, addresses)
 	if len(endpoints) == 0 {
-		metrics.RecordReconcile("success")
+		metrics.RecordReconcileSuccess("Service")
 		return ctrl.Result{}, nil
 	}
 	return r.handleEndpoints(ctx, endpoints, securityv1alpha1.SourceKindService)
@@ -296,7 +314,7 @@ func (r *EndpointReconciler) handleHeadlessService(ctx context.Context, svc *cor
 func (r *EndpointReconciler) handleIngress(ctx context.Context, ing *networkingv1.Ingress) (ctrl.Result, error) {
 	if endpoint.ShouldSkipResource(ing.Annotations) {
 		log.FromContext(ctx).V(1).Info("skipping ingress (skip annotation set)", "ingress", ing.Name, "namespace", ing.Namespace)
-		metrics.RecordReconcile("success")
+		metrics.RecordReconcileSuccess("Ingress")
 		return ctrl.Result{}, nil
 	}
 
@@ -309,7 +327,7 @@ func (r *EndpointReconciler) handleRoute(ctx context.Context, route *unstructure
 	annotations := route.GetAnnotations()
 	if endpoint.ShouldSkipResource(annotations) {
 		log.FromContext(ctx).V(1).Info("skipping route (skip annotation set)", "route", route.GetName(), "namespace", route.GetNamespace())
-		metrics.RecordReconcile("success")
+		metrics.RecordReconcileSuccess("Route")
 		return ctrl.Result{}, nil
 	}
 
@@ -322,7 +340,7 @@ func (r *EndpointReconciler) handleGatewayResource(ctx context.Context, obj *uns
 	annotations := obj.GetAnnotations()
 	if endpoint.ShouldSkipResource(annotations) {
 		log.FromContext(ctx).V(1).Info("skipping gateway resource (skip annotation set)", "kind", gvk.Kind, "name", obj.GetName(), "namespace", obj.GetNamespace())
-		metrics.RecordReconcile("success")
+		metrics.RecordReconcileSuccess(gvk.Kind)
 		return ctrl.Result{}, nil
 	}
 
@@ -361,7 +379,9 @@ func (r *EndpointReconciler) handleTarget(ctx context.Context, target *securityv
 			return ctrl.Result{RequeueAfter: workerBusyRequeueDelay}, nil
 		}
 		logger.Error(err, "failed to process Target endpoint", "host", ep.Host, "port", ep.Port)
-		metrics.RecordReconcileError(string(securityv1alpha1.SourceKindTarget), "process")
+		metrics.RecordReconcileError(string(securityv1alpha1.SourceKindTarget), metrics.ErrorTypeProcess)
+		metrics.RecordReconcileByResource("TLSComplianceTarget", metrics.ResultError)
+		metrics.RecordReconcile(metrics.ResultError)
 		r.updateTargetStatus(ctx, target.Name, crName, "", err.Error())
 		return ctrl.Result{}, err
 	}
@@ -374,11 +394,11 @@ func (r *EndpointReconciler) handleTarget(ctx context.Context, target *securityv
 		r.updateTargetStatus(ctx, target.Name, crName, string(report.Status.ComplianceStatus), "")
 	}
 
-	metrics.RecordReconcile("success")
+	metrics.RecordReconcileSuccess("TLSComplianceTarget")
 	return ctrl.Result{}, nil
 }
 
-func (r *EndpointReconciler) handleRescan(ctx context.Context, report *securityv1alpha1.TLSComplianceReport) (ctrl.Result, error) {
+func (r *EndpointReconciler) handleRescan(ctx context.Context, report *securityv1alpha1.TLSComplianceReport) (ctrl.Result, error) { //nolint:unparam // ctrl.Result required by handler signature
 	logger := log.FromContext(ctx)
 	logger.Info("rescan requested", "report", report.Name)
 
@@ -508,12 +528,17 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep *endpoint.E
 			r.Recorder.Event(cr, corev1.EventTypeNormal, EventReasonEndpointDiscovered,
 				fmt.Sprintf("Discovered TLS endpoint %s from %s %s/%s", hostPort(ep.Host, ep.Port), ep.SourceKind, ep.SourceNamespace, ep.SourceName))
 		}
+		metrics.RecordEndpointDiscovered(string(ep.SourceKind), ep.SourceNamespace)
 
 		r.initCheckSemaphore()
 		select {
 		case r.checkSem <- struct{}{}:
+			metrics.RecordWorkerAcquire()
 			go func() {
-				defer func() { <-r.checkSem }()
+				defer func() {
+					<-r.checkSem
+					metrics.RecordWorkerRelease()
+				}()
 				r.performTLSCheck(r.ManagerCtx, crName, ep.Host, int(ep.Port), ep.SourceNamespace, true)
 			}()
 		default:
@@ -536,8 +561,12 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep *endpoint.E
 		r.initCheckSemaphore()
 		select {
 		case r.checkSem <- struct{}{}:
+			metrics.RecordWorkerAcquire()
 			go func() {
-				defer func() { <-r.checkSem }()
+				defer func() {
+					<-r.checkSem
+					metrics.RecordWorkerRelease()
+				}()
 				r.performTLSCheck(r.ManagerCtx, crName, ep.Host, int(ep.Port), ep.SourceNamespace, true)
 			}()
 		default:
@@ -640,12 +669,14 @@ func (r *EndpointReconciler) retryTLSCheck(ctx context.Context, crName, host str
 
 			if holdsSemaphore {
 				<-r.checkSem
+				metrics.RecordWorkerRelease()
 			}
 
 			select {
 			case <-ctx.Done():
 				if holdsSemaphore {
 					r.checkSem <- struct{}{}
+					metrics.RecordWorkerAcquire()
 				}
 				return nil, nil
 			case <-time.After(retryDelay):
@@ -653,6 +684,7 @@ func (r *EndpointReconciler) retryTLSCheck(ctx context.Context, crName, host str
 
 			if holdsSemaphore {
 				r.checkSem <- struct{}{}
+				metrics.RecordWorkerAcquire()
 			}
 		}
 	}
@@ -668,6 +700,11 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 		if result != nil {
 			failReason = result.FailureReason
 		}
+		reason := "unknown"
+		if failReason != "" {
+			reason = string(failReason)
+		}
+		metrics.RecordCheckError(reason)
 
 		if err := r.updateStatusWithRetry(ctx, crName, func(cr *securityv1alpha1.TLSComplianceReport) {
 			now := metav1.Now()

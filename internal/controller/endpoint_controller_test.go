@@ -2219,9 +2219,11 @@ func TestPerformTLSCheck_SemaphoreBalancedOnContextCancel(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		defer func() { <-reconciler.checkSem }()
+		defer func() {
+			<-reconciler.checkSem
+			close(done)
+		}()
 		reconciler.performTLSCheck(ctx, crName, "cancel.example.com", 443, "default", true)
-		close(done)
 	}()
 
 	// Wait for first check to fail and backoff to begin
