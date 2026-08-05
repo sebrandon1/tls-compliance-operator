@@ -4720,5 +4720,569 @@ func TestAppendExtraPortEndpoints_SourceKindPropagation(t *testing.T) {
 	}
 }
 
+func TestUpdateTargetStatus_SuccessCase(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = securityv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	target := &securityv1alpha1.TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "success-target",
+		},
+		Spec: securityv1alpha1.TLSComplianceTargetSpec{
+			Host: "example.com",
+			Port: 443,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(target).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceTarget{}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+	}
+
+	r.updateTargetStatus(ctx, "success-target", "report-abc", "Compliant", "")
+
+	var updated securityv1alpha1.TLSComplianceTarget
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: "success-target"}, &updated); err != nil {
+		t.Fatalf("failed to get target: %v", err)
+	}
+	if updated.Status.ReportName != "report-abc" {
+		t.Errorf("ReportName = %q, want report-abc", updated.Status.ReportName)
+	}
+	if updated.Status.ComplianceStatus != "Compliant" {
+		t.Errorf("ComplianceStatus = %q, want Compliant", updated.Status.ComplianceStatus)
+	}
+	if updated.Status.Message != "" {
+		t.Errorf("Message = %q, want empty", updated.Status.Message)
+	}
+	if updated.Status.LastScannedAt == nil {
+		t.Error("LastScannedAt should be set")
+	}
+	found := false
+	for _, c := range updated.Status.Conditions {
+		if c.Type == "Ready" {
+			found = true
+			if c.Status != metav1.ConditionTrue {
+				t.Errorf("Ready condition status = %v, want True", c.Status)
+			}
+			if c.Reason != "ScanComplete" {
+				t.Errorf("Ready condition reason = %q, want ScanComplete", c.Reason)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected Ready condition to be set")
+	}
+}
+
+func TestUpdateTargetStatus_ErrorCase(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = securityv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	target := &securityv1alpha1.TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "error-target",
+		},
+		Spec: securityv1alpha1.TLSComplianceTargetSpec{
+			Host: "example.com",
+			Port: 443,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(target).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceTarget{}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+	}
+
+	r.updateTargetStatus(ctx, "error-target", "report-abc", "", "connection refused")
+
+	var updated securityv1alpha1.TLSComplianceTarget
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: "error-target"}, &updated); err != nil {
+		t.Fatalf("failed to get target: %v", err)
+	}
+	if updated.Status.ComplianceStatus != "" {
+		t.Errorf("ComplianceStatus = %q, want empty on error", updated.Status.ComplianceStatus)
+	}
+	if updated.Status.Message != "connection refused" {
+		t.Errorf("Message = %q, want 'connection refused'", updated.Status.Message)
+	}
+	found := false
+	for _, c := range updated.Status.Conditions {
+		if c.Type == "Ready" {
+			found = true
+			if c.Status != metav1.ConditionFalse {
+				t.Errorf("Ready condition status = %v, want False", c.Status)
+			}
+			if c.Reason != "ScanFailed" {
+				t.Errorf("Ready condition reason = %q, want ScanFailed", c.Reason)
+			}
+			if c.Message != "connection refused" {
+				t.Errorf("Ready condition message = %q, want 'connection refused'", c.Message)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected Ready condition to be set")
+	}
+}
+
+func TestUpdateTargetStatus_TargetNotFound(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = securityv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceTarget{}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+	}
+
+	// Should not panic when target does not exist
+	r.updateTargetStatus(ctx, "nonexistent", "report-abc", "Compliant", "")
+}
+
+func TestHandleRoute_CreatesReport(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		CertExpiryDays: 30,
+	}
+
+	route := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "route.openshift.io/v1",
+		"kind":       "Route",
+		"metadata":   map[string]interface{}{"name": "my-route", "namespace": "openshift-console"},
+		"spec": map[string]interface{}{
+			"host": "console.apps.example.com",
+			"tls":  map[string]interface{}{"termination": "edge"},
+		},
+	}}
+
+	_, err := reconciler.handleRoute(ctx, route)
+	if err != nil {
+		t.Fatalf("handleRoute() error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("failed to list reports: %v", err)
+	}
+	if len(crList.Items) != 1 {
+		t.Fatalf("expected 1 report, got %d", len(crList.Items))
+	}
+	cr := crList.Items[0]
+	if cr.Spec.Host != "console.apps.example.com" {
+		t.Errorf("host = %q, want console.apps.example.com", cr.Spec.Host)
+	}
+	if cr.Spec.Port != 443 {
+		t.Errorf("port = %d, want 443", cr.Spec.Port)
+	}
+	if cr.Spec.SourceKind != securityv1alpha1.SourceKindRoute {
+		t.Errorf("sourceKind = %q, want Route", cr.Spec.SourceKind)
+	}
+	if cr.Spec.SourceName != "my-route" {
+		t.Errorf("sourceName = %q, want my-route", cr.Spec.SourceName)
+	}
+	if cr.Spec.SourceNamespace != "openshift-console" {
+		t.Errorf("sourceNamespace = %q, want openshift-console", cr.Spec.SourceNamespace)
+	}
+}
+
+func TestHandleRoute_SkipAnnotation(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		CertExpiryDays: 30,
+	}
+
+	route := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "route.openshift.io/v1",
+		"kind":       "Route",
+		"metadata": map[string]interface{}{
+			"name":      "skip-route",
+			"namespace": "default",
+			"annotations": map[string]interface{}{
+				endpoint.AnnotationSkip: "true",
+			},
+		},
+		"spec": map[string]interface{}{
+			"host": "skip.example.com",
+			"tls":  map[string]interface{}{"termination": "reencrypt"},
+		},
+	}}
+
+	_, err := reconciler.handleRoute(ctx, route)
+	if err != nil {
+		t.Fatalf("handleRoute() error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("failed to list reports: %v", err)
+	}
+	if len(crList.Items) != 0 {
+		t.Errorf("expected 0 reports for skipped route, got %d", len(crList.Items))
+	}
+}
+
+func TestHandleRoute_NoTLS(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		CertExpiryDays: 30,
+	}
+
+	route := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "route.openshift.io/v1",
+		"kind":       "Route",
+		"metadata":   map[string]interface{}{"name": "plain-route", "namespace": "default"},
+		"spec": map[string]interface{}{
+			"host": "plain.example.com",
+		},
+	}}
+
+	_, err := reconciler.handleRoute(ctx, route)
+	if err != nil {
+		t.Fatalf("handleRoute() error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("failed to list reports: %v", err)
+	}
+	if len(crList.Items) != 0 {
+		t.Errorf("expected 0 reports for route without TLS, got %d", len(crList.Items))
+	}
+}
+
+func TestHandleRescan_RemovesAnnotationAndRescans(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	report := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-report",
+			Annotations: map[string]string{
+				RescanAnnotation: "true",
+			},
+		},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host:            "test.example.com",
+			Port:            443,
+			SourceKind:      securityv1alpha1.SourceKindService,
+			SourceNamespace: "default",
+			SourceName:      "test-svc",
+		},
+	}
+
+	checker := &MockTLSChecker{
+		Result: &tlscheck.TLSCheckResult{
+			SupportsTLS12: true,
+			SupportsTLS13: true,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(report).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		TLSChecker:     checker,
+		Workers:        1,
+		CertExpiryDays: 30,
+		Recorder:       record.NewFakeRecorder(10),
+	}
+
+	_, err := reconciler.handleRescan(ctx, report)
+	if err != nil {
+		t.Fatalf("handleRescan() error = %v", err)
+	}
+
+	var updated securityv1alpha1.TLSComplianceReport
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: "test-report"}, &updated); err != nil {
+		t.Fatalf("failed to get report: %v", err)
+	}
+	if _, hasAnnotation := updated.Annotations[RescanAnnotation]; hasAnnotation {
+		t.Error("rescan annotation should have been removed")
+	}
+	if checker.CheckCount() == 0 {
+		t.Error("expected TLS checker to be called at least once")
+	}
+}
+
+func TestHandleRescan_AnnotationRemovalError(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	report := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "error-report",
+			Annotations: map[string]string{
+				RescanAnnotation: "true",
+			},
+		},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: "test.example.com",
+			Port: 443,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(report).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+				if _, ok := obj.(*securityv1alpha1.TLSComplianceReport); ok {
+					return fmt.Errorf("injected update error")
+				}
+				return c.Update(ctx, obj, opts...)
+			},
+		}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		CertExpiryDays: 30,
+	}
+
+	_, err := reconciler.handleRescan(ctx, report)
+	if err == nil {
+		t.Fatal("expected error when annotation removal fails")
+	}
+	if !strings.Contains(err.Error(), "removing rescan annotation") {
+		t.Errorf("error = %q, want it to contain 'removing rescan annotation'", err.Error())
+	}
+}
+
+func TestHandleHeadlessService_HappyPath(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = securityv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = discoveryv1.AddToScheme(scheme)
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "headless-svc", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			ClusterIP: "None",
+			Ports:     []corev1.ServicePort{{Port: 443, Name: "https"}},
+		},
+	}
+
+	ready := true
+	notReady := false
+	epSlice := &discoveryv1.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "headless-svc-abc",
+			Namespace: "default",
+			Labels:    map[string]string{"kubernetes.io/service-name": "headless-svc"},
+		},
+		Endpoints: []discoveryv1.Endpoint{
+			{Addresses: []string{"10.0.0.1"}, Conditions: discoveryv1.EndpointConditions{Ready: &ready}},
+			{Addresses: []string{"10.0.0.2"}, Conditions: discoveryv1.EndpointConditions{Ready: &notReady}},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(svc, epSlice).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		CertExpiryDays: 30,
+	}
+
+	_, err := r.handleHeadlessService(context.Background(), svc)
+	if err != nil {
+		t.Fatalf("handleHeadlessService() error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(context.Background(), &crList); err != nil {
+		t.Fatalf("failed to list reports: %v", err)
+	}
+	if len(crList.Items) != 1 {
+		t.Fatalf("expected 1 report (only ready endpoint), got %d", len(crList.Items))
+	}
+	if crList.Items[0].Spec.Host != "10.0.0.1" {
+		t.Errorf("host = %q, want 10.0.0.1", crList.Items[0].Spec.Host)
+	}
+}
+
+func TestHandleHeadlessService_NoReadyEndpoints(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = securityv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = discoveryv1.AddToScheme(scheme)
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "headless-svc", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			ClusterIP: "None",
+			Ports:     []corev1.ServicePort{{Port: 443, Name: "https"}},
+		},
+	}
+
+	notReady := false
+	epSlice := &discoveryv1.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "headless-svc-abc",
+			Namespace: "default",
+			Labels:    map[string]string{"kubernetes.io/service-name": "headless-svc"},
+		},
+		Endpoints: []discoveryv1.Endpoint{
+			{Addresses: []string{"10.0.0.1"}, Conditions: discoveryv1.EndpointConditions{Ready: &notReady}},
+			{Addresses: []string{"10.0.0.2"}, Conditions: discoveryv1.EndpointConditions{Ready: &notReady}},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(svc, epSlice).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		CertExpiryDays: 30,
+	}
+
+	_, err := r.handleHeadlessService(context.Background(), svc)
+	if err != nil {
+		t.Fatalf("handleHeadlessService() error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(context.Background(), &crList); err != nil {
+		t.Fatalf("failed to list reports: %v", err)
+	}
+	if len(crList.Items) != 0 {
+		t.Errorf("expected 0 reports when no endpoints are ready, got %d", len(crList.Items))
+	}
+}
+
+func TestHandleHeadlessService_MultipleSlices(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = securityv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = discoveryv1.AddToScheme(scheme)
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "headless-multi", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			ClusterIP: "None",
+			Ports:     []corev1.ServicePort{{Port: 443, Name: "https"}},
+		},
+	}
+
+	ready := true
+	slice1 := &discoveryv1.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "headless-multi-slice1",
+			Namespace: "default",
+			Labels:    map[string]string{"kubernetes.io/service-name": "headless-multi"},
+		},
+		Endpoints: []discoveryv1.Endpoint{
+			{Addresses: []string{"10.0.0.1"}, Conditions: discoveryv1.EndpointConditions{Ready: &ready}},
+		},
+	}
+	slice2 := &discoveryv1.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "headless-multi-slice2",
+			Namespace: "default",
+			Labels:    map[string]string{"kubernetes.io/service-name": "headless-multi"},
+		},
+		Endpoints: []discoveryv1.Endpoint{
+			{Addresses: []string{"10.0.0.2"}, Conditions: discoveryv1.EndpointConditions{Ready: &ready}},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(svc, slice1, slice2).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		CertExpiryDays: 30,
+	}
+
+	_, err := r.handleHeadlessService(context.Background(), svc)
+	if err != nil {
+		t.Fatalf("handleHeadlessService() error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(context.Background(), &crList); err != nil {
+		t.Fatalf("failed to list reports: %v", err)
+	}
+	if len(crList.Items) != 2 {
+		t.Fatalf("expected 2 reports from 2 slices, got %d", len(crList.Items))
+	}
+
+	hosts := map[string]bool{}
+	for _, cr := range crList.Items {
+		hosts[cr.Spec.Host] = true
+	}
+	if !hosts["10.0.0.1"] || !hosts["10.0.0.2"] {
+		t.Errorf("expected reports for 10.0.0.1 and 10.0.0.2, got hosts %v", hosts)
+	}
+}
+
 // Ensure _ satisfies the client.Object interface for compile-time check
 var _ client.Object = &securityv1alpha1.TLSComplianceReport{}

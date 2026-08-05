@@ -16,7 +16,17 @@ limitations under the License.
 
 package tlsprofile
 
-import "testing"
+import (
+	"context"
+	"fmt"
+	"testing"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+)
 
 func TestSetProfile_RoundTrip(t *testing.T) {
 	f := NewFetcher(nil)
@@ -95,5 +105,266 @@ func TestSetAdherence_RoundTrip(t *testing.T) {
 	f.setAdherence(AdherenceStrict)
 	if got := f.GetAdherence(); got != AdherenceStrict {
 		t.Errorf("expected %q, got %q", AdherenceStrict, got)
+	}
+}
+
+func newInterceptedFetcherClient(getFunc func(ctx context.Context, key client.ObjectKey, obj *unstructured.Unstructured) error,
+	listFunc func(ctx context.Context, list *unstructured.UnstructuredList) error) client.Client {
+	scheme := runtime.NewScheme()
+	return fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if u, ok := obj.(*unstructured.Unstructured); ok && getFunc != nil {
+					return getFunc(ctx, key, u)
+				}
+				return c.Get(ctx, key, obj, opts...)
+			},
+			List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if u, ok := list.(*unstructured.UnstructuredList); ok && listFunc != nil {
+					return listFunc(ctx, u)
+				}
+				return c.List(ctx, list, opts...)
+			},
+		}).
+		Build()
+}
+
+func TestFetchAPIServerProfile_ModernProfile(t *testing.T) {
+	cl := newInterceptedFetcherClient(
+		func(_ context.Context, key client.ObjectKey, obj *unstructured.Unstructured) error {
+			if obj.GetKind() == "APIServer" && key.Name == "cluster" {
+				obj.Object["spec"] = map[string]any{
+					"tlsSecurityProfile": map[string]any{"type": "Modern"},
+				}
+				return nil
+			}
+			return fmt.Errorf("not found")
+		}, nil)
+
+	f := NewFetcher(cl)
+	profile, _, err := f.fetchAPIServerProfile(context.Background())
+	if err != nil {
+		t.Fatalf("fetchAPIServerProfile() error = %v", err)
+	}
+	if profile.Type != ProfileTypeModern {
+		t.Errorf("Type = %v, want Modern", profile.Type)
+	}
+	if profile.MinTLSVersion != VersionTLS13 {
+		t.Errorf("MinTLSVersion = %v, want VersionTLS13", profile.MinTLSVersion)
+	}
+}
+
+func TestFetchAPIServerProfile_CustomProfile(t *testing.T) {
+	cl := newInterceptedFetcherClient(
+		func(_ context.Context, key client.ObjectKey, obj *unstructured.Unstructured) error {
+			if obj.GetKind() == "APIServer" && key.Name == "cluster" {
+				obj.Object["spec"] = map[string]any{
+					"tlsSecurityProfile": map[string]any{
+						"type": "Custom",
+						"custom": map[string]any{
+							"minTLSVersion": "VersionTLS12",
+							"ciphers":       []any{"TLS_AES_128_GCM_SHA256"},
+							"groups":        []any{"X25519"},
+						},
+					},
+				}
+				return nil
+			}
+			return fmt.Errorf("not found")
+		}, nil)
+
+	f := NewFetcher(cl)
+	profile, _, err := f.fetchAPIServerProfile(context.Background())
+	if err != nil {
+		t.Fatalf("fetchAPIServerProfile() error = %v", err)
+	}
+	if profile.Type != ProfileTypeCustom {
+		t.Errorf("Type = %v, want Custom", profile.Type)
+	}
+	if profile.MinTLSVersion != "VersionTLS12" {
+		t.Errorf("MinTLSVersion = %v, want VersionTLS12", profile.MinTLSVersion)
+	}
+	if len(profile.Ciphers) != 1 || profile.Ciphers[0] != "TLS_AES_128_GCM_SHA256" {
+		t.Errorf("Ciphers = %v, want [TLS_AES_128_GCM_SHA256]", profile.Ciphers)
+	}
+	if len(profile.Groups) != 1 || profile.Groups[0] != "X25519" {
+		t.Errorf("Groups = %v, want [X25519]", profile.Groups)
+	}
+}
+
+func TestFetchAPIServerProfile_Adherence(t *testing.T) {
+	cl := newInterceptedFetcherClient(
+		func(_ context.Context, key client.ObjectKey, obj *unstructured.Unstructured) error {
+			if obj.GetKind() == "APIServer" && key.Name == "cluster" {
+				obj.Object["spec"] = map[string]any{
+					"tlsSecurityProfile": map[string]any{"type": "Modern"},
+					"tlsAdherence":       "StrictAllComponents",
+				}
+				return nil
+			}
+			return fmt.Errorf("not found")
+		}, nil)
+
+	f := NewFetcher(cl)
+	_, adherence, err := f.fetchAPIServerProfile(context.Background())
+	if err != nil {
+		t.Fatalf("fetchAPIServerProfile() error = %v", err)
+	}
+	if adherence != AdherenceStrict {
+		t.Errorf("adherence = %q, want %q", adherence, AdherenceStrict)
+	}
+}
+
+func TestFetchIngressControllerProfile_Intermediate(t *testing.T) {
+	cl := newInterceptedFetcherClient(
+		func(_ context.Context, key client.ObjectKey, obj *unstructured.Unstructured) error {
+			if obj.GetKind() == "IngressController" && key.Name == "default" && key.Namespace == "openshift-ingress-operator" {
+				obj.Object["spec"] = map[string]any{
+					"tlsSecurityProfile": map[string]any{"type": "Intermediate"},
+				}
+				return nil
+			}
+			return fmt.Errorf("not found")
+		}, nil)
+
+	f := NewFetcher(cl)
+	profile, err := f.fetchIngressControllerProfile(context.Background())
+	if err != nil {
+		t.Fatalf("fetchIngressControllerProfile() error = %v", err)
+	}
+	if profile.Type != ProfileTypeIntermediate {
+		t.Errorf("Type = %v, want Intermediate", profile.Type)
+	}
+}
+
+func TestFetchKubeletConfigProfile_WithTLSProfile(t *testing.T) {
+	cl := newInterceptedFetcherClient(nil,
+		func(_ context.Context, list *unstructured.UnstructuredList) error {
+			if list.GetKind() == "KubeletConfigList" {
+				list.Items = []unstructured.Unstructured{
+					{Object: map[string]any{
+						"apiVersion": "machineconfiguration.openshift.io/v1",
+						"kind":       "KubeletConfig",
+						"metadata":   map[string]any{"name": "kc-with-tls"},
+						"spec": map[string]any{
+							"tlsSecurityProfile": map[string]any{"type": "Old"},
+						},
+					}},
+				}
+				return nil
+			}
+			return fmt.Errorf("not found")
+		})
+
+	f := NewFetcher(cl)
+	profile, err := f.fetchKubeletConfigProfile(context.Background())
+	if err != nil {
+		t.Fatalf("fetchKubeletConfigProfile() error = %v", err)
+	}
+	if profile.Type != ProfileTypeOld {
+		t.Errorf("Type = %v, want Old", profile.Type)
+	}
+}
+
+func TestFetchKubeletConfigProfile_NoneHaveTLS(t *testing.T) {
+	cl := newInterceptedFetcherClient(nil,
+		func(_ context.Context, list *unstructured.UnstructuredList) error {
+			if list.GetKind() == "KubeletConfigList" {
+				list.Items = []unstructured.Unstructured{
+					{Object: map[string]any{
+						"apiVersion": "machineconfiguration.openshift.io/v1",
+						"kind":       "KubeletConfig",
+						"metadata":   map[string]any{"name": "kc1"},
+						"spec":       map[string]any{},
+					}},
+				}
+				return nil
+			}
+			return fmt.Errorf("not found")
+		})
+
+	f := NewFetcher(cl)
+	profile, err := f.fetchKubeletConfigProfile(context.Background())
+	if err != nil {
+		t.Fatalf("fetchKubeletConfigProfile() error = %v", err)
+	}
+	if profile.Type != ProfileTypeIntermediate {
+		t.Errorf("Type = %v, want Intermediate (default)", profile.Type)
+	}
+}
+
+func TestRefreshAll_SetsAllThreeProfiles(t *testing.T) {
+	cl := newInterceptedFetcherClient(
+		func(_ context.Context, key client.ObjectKey, obj *unstructured.Unstructured) error {
+			switch obj.GetKind() {
+			case "APIServer":
+				obj.Object["spec"] = map[string]any{
+					"tlsSecurityProfile": map[string]any{"type": "Modern"},
+					"tlsAdherence":       "StrictAllComponents",
+				}
+				return nil
+			case "IngressController":
+				obj.Object["spec"] = map[string]any{
+					"tlsSecurityProfile": map[string]any{"type": "Old"},
+				}
+				return nil
+			}
+			return fmt.Errorf("not found")
+		},
+		func(_ context.Context, list *unstructured.UnstructuredList) error {
+			if list.GetKind() == "KubeletConfigList" {
+				list.Items = []unstructured.Unstructured{
+					{Object: map[string]any{
+						"apiVersion": "machineconfiguration.openshift.io/v1",
+						"kind":       "KubeletConfig",
+						"metadata":   map[string]any{"name": "kc1"},
+						"spec": map[string]any{
+							"tlsSecurityProfile": map[string]any{"type": "Intermediate"},
+						},
+					}},
+				}
+				return nil
+			}
+			return fmt.Errorf("not found")
+		})
+
+	f := NewFetcher(cl)
+	f.RefreshAll(context.Background())
+
+	if got := f.GetProfile(ComponentAPIServer); got.Type != ProfileTypeModern {
+		t.Errorf("APIServer profile = %v, want Modern", got.Type)
+	}
+	if got := f.GetProfile(ComponentIngressController); got.Type != ProfileTypeOld {
+		t.Errorf("IngressController profile = %v, want Old", got.Type)
+	}
+	if got := f.GetProfile(ComponentKubeletConfig); got.Type != ProfileTypeIntermediate {
+		t.Errorf("KubeletConfig profile = %v, want Intermediate", got.Type)
+	}
+	if got := f.GetAdherence(); got != AdherenceStrict {
+		t.Errorf("adherence = %q, want %q", got, AdherenceStrict)
+	}
+}
+
+func TestRefreshAll_FallsBackToDefaultOnError(t *testing.T) {
+	cl := newInterceptedFetcherClient(
+		func(_ context.Context, _ client.ObjectKey, _ *unstructured.Unstructured) error {
+			return fmt.Errorf("not found on non-OpenShift cluster")
+		},
+		func(_ context.Context, _ *unstructured.UnstructuredList) error {
+			return fmt.Errorf("not found on non-OpenShift cluster")
+		})
+
+	f := NewFetcher(cl)
+	f.RefreshAll(context.Background())
+
+	for _, component := range []Component{ComponentAPIServer, ComponentIngressController, ComponentKubeletConfig} {
+		got := f.GetProfile(component)
+		if got.Type != ProfileTypeIntermediate {
+			t.Errorf("%s profile = %v, want Intermediate (default)", component, got.Type)
+		}
+	}
+	if got := f.GetAdherence(); got != "" {
+		t.Errorf("adherence = %q, want empty on error fallback", got)
 	}
 }

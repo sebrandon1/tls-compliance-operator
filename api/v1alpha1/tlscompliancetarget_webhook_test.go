@@ -17,7 +17,13 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"context"
+	"strings"
 	"testing"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestValidateTargetSpec_SSRF(t *testing.T) {
@@ -103,5 +109,171 @@ func TestValidateTargetSpec_InvalidDNS(t *testing.T) {
 	errs := validateTargetSpec(target)
 	if len(errs) == 0 {
 		t.Error("expected validation error for invalid DNS name")
+	}
+}
+
+func setTargetClient(t *testing.T, scheme *runtime.Scheme, objects ...runtime.Object) {
+	t.Helper()
+	builder := fake.NewClientBuilder().WithScheme(scheme)
+	for _, obj := range objects {
+		builder = builder.WithRuntimeObjects(obj)
+	}
+	cl := builder.Build()
+
+	targetClientMu.Lock()
+	targetClient = cl
+	targetClientMu.Unlock()
+
+	t.Cleanup(func() {
+		targetClientMu.Lock()
+		targetClient = nil
+		targetClientMu.Unlock()
+	})
+}
+
+func newWebhookTestScheme() *runtime.Scheme {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+	return scheme
+}
+
+func TestValidateNoDuplicate_BlocksDuplicateHostPort(t *testing.T) {
+	scheme := newWebhookTestScheme()
+	existing := &TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "existing-target"},
+		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: 443},
+	}
+	setTargetClient(t, scheme, existing)
+
+	newTarget := &TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "new-target"},
+		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: 443},
+	}
+
+	err := validateNoDuplicate(context.Background(), newTarget, "")
+	if err == nil {
+		t.Fatal("expected error for duplicate host:port")
+	}
+	if !strings.Contains(err.Error(), "duplicate host:port") {
+		t.Errorf("error = %q, want it to contain 'duplicate host:port'", err.Error())
+	}
+}
+
+func TestValidateNoDuplicate_AllowsSameHostDifferentPort(t *testing.T) {
+	scheme := newWebhookTestScheme()
+	existing := &TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "existing-target"},
+		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: 443},
+	}
+	setTargetClient(t, scheme, existing)
+
+	newTarget := &TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "new-target"},
+		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: 8443},
+	}
+
+	err := validateNoDuplicate(context.Background(), newTarget, "")
+	if err != nil {
+		t.Errorf("unexpected error for same host different port: %v", err)
+	}
+}
+
+func TestValidateNoDuplicate_AllowsSelfOnUpdate(t *testing.T) {
+	scheme := newWebhookTestScheme()
+	existing := &TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-target"},
+		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: 443},
+	}
+	setTargetClient(t, scheme, existing)
+
+	sameTarget := &TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-target"},
+		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: 443},
+	}
+
+	err := validateNoDuplicate(context.Background(), sameTarget, "my-target")
+	if err != nil {
+		t.Errorf("unexpected error for self on update: %v", err)
+	}
+}
+
+func TestValidateNoDuplicate_NilClientAllows(t *testing.T) {
+	targetClientMu.Lock()
+	targetClient = nil
+	targetClientMu.Unlock()
+
+	target := &TLSComplianceTarget{
+		Spec: TLSComplianceTargetSpec{Host: "example.com", Port: 443},
+	}
+
+	err := validateNoDuplicate(context.Background(), target, "")
+	if err != nil {
+		t.Errorf("unexpected error when targetClient is nil: %v", err)
+	}
+}
+
+func TestValidateCreate_ValidTarget(t *testing.T) {
+	scheme := newWebhookTestScheme()
+	setTargetClient(t, scheme)
+
+	target := &TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "valid-target"},
+		Spec:       TLSComplianceTargetSpec{Host: "new.example.com", Port: 443},
+	}
+
+	validator := &TLSComplianceTargetValidator{}
+	_, err := validator.ValidateCreate(context.Background(), target)
+	if err != nil {
+		t.Errorf("unexpected error for valid target: %v", err)
+	}
+}
+
+func TestValidateCreate_DuplicateTarget(t *testing.T) {
+	scheme := newWebhookTestScheme()
+	existing := &TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "existing-target"},
+		Spec:       TLSComplianceTargetSpec{Host: "dup.example.com", Port: 443},
+	}
+	setTargetClient(t, scheme, existing)
+
+	target := &TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "new-target"},
+		Spec:       TLSComplianceTargetSpec{Host: "dup.example.com", Port: 443},
+	}
+
+	validator := &TLSComplianceTargetValidator{}
+	_, err := validator.ValidateCreate(context.Background(), target)
+	if err == nil {
+		t.Fatal("expected error for duplicate target on create")
+	}
+	if !strings.Contains(err.Error(), "duplicate host:port") {
+		t.Errorf("error = %q, want it to contain 'duplicate host:port'", err.Error())
+	}
+}
+
+func TestValidateUpdate_BlocksDuplicateOnHostChange(t *testing.T) {
+	scheme := newWebhookTestScheme()
+	existing := &TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "target-a"},
+		Spec:       TLSComplianceTargetSpec{Host: "a.example.com", Port: 443},
+	}
+	setTargetClient(t, scheme, existing)
+
+	oldTarget := &TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "target-b"},
+		Spec:       TLSComplianceTargetSpec{Host: "b.example.com", Port: 443},
+	}
+	newTarget := &TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "target-b"},
+		Spec:       TLSComplianceTargetSpec{Host: "a.example.com", Port: 443},
+	}
+
+	validator := &TLSComplianceTargetValidator{}
+	_, err := validator.ValidateUpdate(context.Background(), oldTarget, newTarget)
+	if err == nil {
+		t.Fatal("expected error when updating to duplicate host:port")
+	}
+	if !strings.Contains(err.Error(), "duplicate host:port") {
+		t.Errorf("error = %q, want it to contain 'duplicate host:port'", err.Error())
 	}
 }
