@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
+	"github.com/sebrandon1/tls-compliance-operator/pkg/hostvalidation"
 )
 
 // Endpoint represents a TLS endpoint to check
@@ -179,6 +180,10 @@ func ExtractFromService(svc *corev1.Service) []Endpoint {
 func extractFromExternalNameService(svc *corev1.Service) []Endpoint {
 	host := svc.Spec.ExternalName
 	if host == "" {
+		return nil
+	}
+
+	if !hostvalidation.IsSafeHost(host) {
 		return nil
 	}
 
