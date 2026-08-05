@@ -1,0 +1,27 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  labels:
+    app.kubernetes.io/name: tls-compliance-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: selfsigned-issuer
+  namespace: system
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  labels:
+    app.kubernetes.io/name: tls-compliance-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: metrics-serving-cert
+  namespace: system
+spec:
+  dnsNames:
+    - controller-manager-metrics-service.$(SERVICE_NAMESPACE).svc
+    - controller-manager-metrics-service.$(SERVICE_NAMESPACE).svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: selfsigned-issuer
+  secretName: metrics-server-cert

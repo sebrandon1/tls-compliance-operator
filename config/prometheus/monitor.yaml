@@ -14,6 +14,13 @@ spec:
     scheme: https
     bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
     tlsConfig:
+      # When using cert-manager, replace insecureSkipVerify with:
+      #   ca:
+      #     secret:
+      #       name: metrics-server-cert
+      #       key: ca.crt
+      #   serverName: <metrics-service-fqdn>
+      # See config/overlays/cert-manager/ for a ready-to-use overlay.
       insecureSkipVerify: true
   selector:
     matchLabels:

@@ -1,0 +1,11 @@
+resources:
+  - ../../default
+  - ../../certmanager
+
+patches:
+  - path: metrics_cert_patch.yaml
+    target:
+      kind: Deployment
+  - path: monitor_tls_patch.yaml
+    target:
+      kind: ServiceMonitor
