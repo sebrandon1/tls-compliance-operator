@@ -80,3 +80,63 @@ spec:
             summary: "TLS endpoint is unreachable"
             description: "{{ $value }} endpoint(s) have been unreachable for more than 24 hours. Verify the endpoints are running and network policies allow access."
             runbook_url: "https://github.com/sebrandon1/tls-compliance-operator/blob/main/docs/troubleshooting.md#common-compliance-statuses"
+
+        - alert: TLSComplianceReconcileErrorRate
+          expr: sum(rate(tls_compliance_reconcile_errors_total[10m])) > 0.5
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "TLS compliance reconcile error rate is high"
+            description: "Reconcile errors are occurring at {{ $value | humanize }}/s over the last 10 minutes, exceeding the 0.5/s threshold."
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator/blob/main/docs/troubleshooting.md#viewing-operator-configuration"
+
+        - alert: TLSEndpointPQCReadinessRegression
+          expr: delta(sum(tls_compliance_pqc_readiness{readiness="PQCReady"})[1h:5m]) < -1
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "PQC-ready endpoint count is declining"
+            description: "The number of PQC-ready endpoints has dropped by more than 1 over the last hour. Post-quantum readiness may be regressing."
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator/blob/main/docs/troubleshooting.md#common-compliance-statuses"
+
+        - alert: TLSEndpointForwardSecrecyLost
+          expr: tls_compliance_forward_secrecy == 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "TLS endpoint has lost forward secrecy"
+            description: "Endpoint {{ $labels.host }}:{{ $labels.port }} no longer uses forward secrecy for all cipher suites."
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator/blob/main/docs/troubleshooting.md#common-compliance-statuses"
+
+        - alert: TLSEndpointFIPSModeChanged
+          expr: changes(tls_compliance_fips_mode_enabled[1h]) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "FIPS mode has changed unexpectedly"
+            description: "The cluster FIPS mode indicator has toggled within the last hour. Verify cluster FIPS configuration is correct."
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator/blob/main/docs/troubleshooting.md#viewing-operator-configuration"
+
+        - alert: TLSEndpointWarningStatus
+          expr: tls_compliance_endpoints_total{status="Warning"} > 0
+          for: 4h
+          labels:
+            severity: warning
+          annotations:
+            summary: "TLS endpoints in Warning status"
+            description: "{{ $value }} endpoint(s) have been in Warning status for more than 4 hours. These endpoints support both modern and legacy TLS versions."
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator/blob/main/docs/troubleshooting.md#common-compliance-statuses"
+
+        - alert: TLSComplianceRetriesExhausted
+          expr: rate(tls_compliance_check_retries_exhausted_total[15m]) > 0.1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "TLS check retries being exhausted frequently"
+            description: "TLS check retries are being exhausted at {{ $value | humanize }}/s. Multiple endpoints may be persistently unreachable."
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator/blob/main/docs/troubleshooting.md#common-compliance-statuses"
