@@ -45,7 +45,19 @@ func gaugeVecValue(gv *prometheus.GaugeVec, labels ...string) float64 {
 	return gaugeValue(g)
 }
 
+func counterVecValue(cv *prometheus.CounterVec, labels ...string) float64 {
+	c, _ := cv.GetMetricWithLabelValues(labels...)
+	return counterValue(c)
+}
+
 func histogramCount(h prometheus.Histogram) uint64 {
+	m := &dto.Metric{}
+	_ = h.(prometheus.Metric).Write(m)
+	return m.GetHistogram().GetSampleCount()
+}
+
+func histogramVecCount(hv *prometheus.HistogramVec, labels ...string) uint64 {
+	h, _ := hv.GetMetricWithLabelValues(labels...)
 	m := &dto.Metric{}
 	_ = h.(prometheus.Metric).Write(m)
 	return m.GetHistogram().GetSampleCount()
@@ -96,9 +108,23 @@ func TestRecordFIPSMode(t *testing.T) {
 }
 
 func TestRecordReconcile(t *testing.T) {
-	assertCounterInc(t, ReconcileTotal.WithLabelValues("success"), func() {
-		RecordReconcile("success")
+	assertCounterInc(t, ReconcileTotal.WithLabelValues(ResultSuccess), func() {
+		RecordReconcile(ResultSuccess)
 	})
+}
+
+func TestRecordReconcileSuccess(t *testing.T) {
+	beforeTotal := counterVecValue(ReconcileTotal, ResultSuccess)
+	beforeByResource := counterVecValue(ReconcileByResourceTotal, "Service", ResultSuccess)
+	RecordReconcileSuccess("Service")
+	afterTotal := counterVecValue(ReconcileTotal, ResultSuccess)
+	afterByResource := counterVecValue(ReconcileByResourceTotal, "Service", ResultSuccess)
+	if afterTotal != beforeTotal+1 {
+		t.Errorf("expected ReconcileTotal to increment by 1, got %v -> %v", beforeTotal, afterTotal)
+	}
+	if afterByResource != beforeByResource+1 {
+		t.Errorf("expected ReconcileByResourceTotal to increment by 1, got %v -> %v", beforeByResource, afterByResource)
+	}
 }
 
 func TestRecordCheckDuration(t *testing.T) {
@@ -177,8 +203,8 @@ func TestRecordRetriesExhausted(t *testing.T) {
 }
 
 func TestRecordReconcileError(t *testing.T) {
-	assertCounterInc(t, ReconcileErrorsTotal.WithLabelValues("Service", "process"), func() {
-		RecordReconcileError("Service", "process")
+	assertCounterInc(t, ReconcileErrorsTotal.WithLabelValues("Service", ErrorTypeProcess), func() {
+		RecordReconcileError("Service", ErrorTypeProcess)
 	})
 }
 
@@ -209,4 +235,72 @@ func TestRecordReportTTLDeleted(t *testing.T) {
 	assertCounterInc(t, ReportsTTLDeletedTotal, func() {
 		RecordReportTTLDeleted()
 	})
+}
+
+func TestRecordWorkerAcquireRelease(t *testing.T) {
+	WorkerPoolInUse.Set(0)
+	RecordWorkerAcquire()
+	if v := gaugeValue(WorkerPoolInUse); v != 1 {
+		t.Errorf("expected 1 after acquire, got %v", v)
+	}
+	RecordWorkerAcquire()
+	if v := gaugeValue(WorkerPoolInUse); v != 2 {
+		t.Errorf("expected 2 after second acquire, got %v", v)
+	}
+	RecordWorkerRelease()
+	if v := gaugeValue(WorkerPoolInUse); v != 1 {
+		t.Errorf("expected 1 after release, got %v", v)
+	}
+	RecordWorkerRelease()
+	if v := gaugeValue(WorkerPoolInUse); v != 0 {
+		t.Errorf("expected 0 after second release, got %v", v)
+	}
+}
+
+func TestRecordEndpointDiscovered(t *testing.T) {
+	before := counterVecValue(EndpointsDiscoveredTotal, "Service", "default")
+	RecordEndpointDiscovered("Service", "default")
+	after := counterVecValue(EndpointsDiscoveredTotal, "Service", "default")
+	if after != before+1 {
+		t.Errorf("expected counter to increment by 1, got %v -> %v", before, after)
+	}
+}
+
+func TestRecordReconcileLatency(t *testing.T) {
+	before := histogramVecCount(ReconcileLatencySeconds, "Service")
+	RecordReconcileLatency("Service", 0.5)
+	after := histogramVecCount(ReconcileLatencySeconds, "Service")
+	if after != before+1 {
+		t.Errorf("expected histogram sample count to increment by 1, got %v -> %v", before, after)
+	}
+}
+
+func TestRecordReconcileInFlight(t *testing.T) {
+	ReconcileInFlight.Set(0)
+	RecordReconcileInFlightInc()
+	if v := gaugeValue(ReconcileInFlight); v != 1 {
+		t.Errorf("expected 1, got %v", v)
+	}
+	RecordReconcileInFlightDec()
+	if v := gaugeValue(ReconcileInFlight); v != 0 {
+		t.Errorf("expected 0, got %v", v)
+	}
+}
+
+func TestRecordReconcileByResource(t *testing.T) {
+	before := counterVecValue(ReconcileByResourceTotal, "Ingress", "success")
+	RecordReconcileByResource("Ingress", "success")
+	after := counterVecValue(ReconcileByResourceTotal, "Ingress", "success")
+	if after != before+1 {
+		t.Errorf("expected counter to increment by 1, got %v -> %v", before, after)
+	}
+}
+
+func TestRecordCheckError(t *testing.T) {
+	before := counterVecValue(CheckErrorsTotal, "Timeout")
+	RecordCheckError("Timeout")
+	after := counterVecValue(CheckErrorsTotal, "Timeout")
+	if after != before+1 {
+		t.Errorf("expected counter to increment by 1, got %v -> %v", before, after)
+	}
 }

@@ -26,6 +26,10 @@ import (
 const (
 	// MetricsNamespace is the namespace for all tls_compliance metrics
 	MetricsNamespace = "tls_compliance"
+
+	ResultSuccess    = "success"
+	ResultError      = "error"
+	ErrorTypeProcess = "process"
 )
 
 var (
@@ -181,6 +185,65 @@ var (
 			Help:      "Whether the cluster is running in FIPS mode (1=yes, 0=no)",
 		},
 	)
+
+	// WorkerPoolInUse tracks the number of worker pool slots currently in use
+	WorkerPoolInUse = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: MetricsNamespace,
+			Name:      "worker_pool_in_use",
+			Help:      "Number of worker pool slots currently in use",
+		},
+	)
+
+	// EndpointsDiscoveredTotal tracks the total number of endpoints discovered
+	EndpointsDiscoveredTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: MetricsNamespace,
+			Name:      "endpoints_discovered_total",
+			Help:      "Total number of endpoints discovered",
+		},
+		[]string{"source_kind", "namespace"},
+	)
+
+	// ReconcileLatencySeconds tracks reconciliation latency by resource type
+	ReconcileLatencySeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: MetricsNamespace,
+			Name:      "reconcile_latency_seconds",
+			Help:      "End-to-end reconciliation latency from event receipt to completion, in seconds",
+			Buckets:   []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0},
+		},
+		[]string{"source_kind"},
+	)
+
+	// ReconcileInFlight tracks the number of reconciliations currently in progress
+	ReconcileInFlight = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: MetricsNamespace,
+			Name:      "reconcile_in_flight",
+			Help:      "Number of reconciliations currently in progress",
+		},
+	)
+
+	// ReconcileByResourceTotal tracks reconciliation attempts by resource type and result
+	ReconcileByResourceTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: MetricsNamespace,
+			Name:      "reconcile_by_resource_total",
+			Help:      "Total reconciliation attempts by resource type and result",
+		},
+		[]string{"source_kind", "result"},
+	)
+
+	// CheckErrorsTotal tracks TLS check errors by failure reason
+	CheckErrorsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: MetricsNamespace,
+			Name:      "check_errors_total",
+			Help:      "Total number of TLS check errors by failure reason",
+		},
+		[]string{"reason"},
+	)
 )
 
 func init() {
@@ -201,6 +264,12 @@ func init() {
 		CleanupCycleLastCompletedTimestamp,
 		ReportsTTLDeletedTotal,
 		FIPSModeEnabled,
+		WorkerPoolInUse,
+		EndpointsDiscoveredTotal,
+		ReconcileLatencySeconds,
+		ReconcileInFlight,
+		ReconcileByResourceTotal,
+		CheckErrorsTotal,
 	)
 }
 
@@ -307,10 +376,58 @@ func RecordReportTTLDeleted() {
 	ReportsTTLDeletedTotal.Inc()
 }
 
+// RecordFIPSMode records whether the cluster is running in FIPS mode
 func RecordFIPSMode(enabled bool) {
 	val := float64(0)
 	if enabled {
 		val = 1
 	}
 	FIPSModeEnabled.Set(val)
+}
+
+// RecordWorkerAcquire increments the worker pool in-use gauge
+func RecordWorkerAcquire() {
+	WorkerPoolInUse.Inc()
+}
+
+// RecordWorkerRelease decrements the worker pool in-use gauge
+func RecordWorkerRelease() {
+	WorkerPoolInUse.Dec()
+}
+
+// RecordEndpointDiscovered increments the endpoint discovery counter
+func RecordEndpointDiscovered(sourceKind, namespace string) {
+	EndpointsDiscoveredTotal.WithLabelValues(sourceKind, namespace).Inc()
+}
+
+// RecordReconcileLatency records reconciliation latency for a resource type
+func RecordReconcileLatency(sourceKind string, durationSeconds float64) {
+	ReconcileLatencySeconds.WithLabelValues(sourceKind).Observe(durationSeconds)
+}
+
+// RecordReconcileInFlightInc increments the in-flight reconciliation gauge
+func RecordReconcileInFlightInc() {
+	ReconcileInFlight.Inc()
+}
+
+// RecordReconcileInFlightDec decrements the in-flight reconciliation gauge
+func RecordReconcileInFlightDec() {
+	ReconcileInFlight.Dec()
+}
+
+// RecordReconcileByResource records a reconciliation attempt by resource type and result
+func RecordReconcileByResource(sourceKind, result string) {
+	ReconcileByResourceTotal.WithLabelValues(sourceKind, result).Inc()
+}
+
+// RecordReconcileSuccess records a successful reconciliation for both the aggregate
+// and per-resource counters.
+func RecordReconcileSuccess(sourceKind string) {
+	ReconcileTotal.WithLabelValues(ResultSuccess).Inc()
+	ReconcileByResourceTotal.WithLabelValues(sourceKind, ResultSuccess).Inc()
+}
+
+// RecordCheckError records a TLS check error by failure reason
+func RecordCheckError(reason string) {
+	CheckErrorsTotal.WithLabelValues(reason).Inc()
 }
