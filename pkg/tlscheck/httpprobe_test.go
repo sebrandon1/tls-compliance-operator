@@ -19,6 +19,7 @@ package tlscheck
 import (
 	"context"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -173,5 +174,70 @@ func TestProbeHTTP_ContextCancelled(t *testing.T) {
 	got := checker.probeHTTP(ctx, "127.0.0.1:80", "127.0.0.1")
 	if got {
 		t.Error("expected probeHTTP to return false with cancelled context")
+	}
+}
+
+func TestProbeHTTP_CRLFInjection(t *testing.T) {
+	tests := []struct {
+		name         string
+		host         string
+		wantContains string
+		wantAbsent   string
+	}{
+		{
+			name:         "CRLF pair",
+			host:         "evil.com\r\nX-Injected: true\r\n",
+			wantContains: "Host: evil.com",
+			wantAbsent:   "\r\nX-Injected:",
+		},
+		{
+			name:         "bare LF",
+			host:         "evil.com\nX-Injected: true",
+			wantContains: "Host: evil.com",
+			wantAbsent:   "\nX-Injected:",
+		},
+		{
+			name:         "bare CR",
+			host:         "evil.com\rX-Injected: true",
+			wantContains: "Host: evil.com",
+			wantAbsent:   "\rX-Injected:",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			received := make(chan string, 1)
+
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = listener.Close() }()
+
+			go func() {
+				conn, err := listener.Accept()
+				if err != nil {
+					received <- ""
+					return
+				}
+				buf := make([]byte, 1024)
+				n, _ := conn.Read(buf)
+				received <- string(buf[:n])
+				_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"))
+				_ = conn.Close()
+			}()
+
+			addr := listener.Addr().(*net.TCPAddr)
+			checker := NewTLSChecker(2 * time.Second)
+			checker.probeHTTP(context.Background(), addr.String(), tt.host)
+
+			receivedRequest := <-received
+			if strings.Contains(receivedRequest, tt.wantAbsent) {
+				t.Errorf("injection detected: found %q in request", tt.wantAbsent)
+			}
+			if !strings.Contains(receivedRequest, tt.wantContains) {
+				t.Errorf("expected %q in request, got: %q", tt.wantContains, receivedRequest)
+			}
+		})
 	}
 }

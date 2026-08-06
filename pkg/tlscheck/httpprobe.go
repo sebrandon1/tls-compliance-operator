@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 )
 
@@ -41,7 +42,8 @@ func (c *TLSChecker) probeHTTP(ctx context.Context, addr, host string) bool {
 	}
 	_ = conn.SetDeadline(deadline)
 
-	request := fmt.Appendf(nil, "HEAD / HTTP/1.0\r\nHost: %s\r\n\r\n", host)
+	sanitizedHost := strings.NewReplacer("\r", "", "\n", "").Replace(host)
+	request := fmt.Appendf(nil, "HEAD / HTTP/1.0\r\nHost: %s\r\n\r\n", sanitizedHost)
 	if _, err := conn.Write(request); err != nil {
 		return false
 	}
