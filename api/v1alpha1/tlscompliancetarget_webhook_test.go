@@ -251,6 +251,25 @@ func TestValidateCreate_DuplicateTarget(t *testing.T) {
 	}
 }
 
+func TestValidateCreate_SSRFBlocked(t *testing.T) {
+	scheme := newWebhookTestScheme()
+	setTargetClient(t, scheme)
+
+	target := &TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "ssrf-target"},
+		Spec:       TLSComplianceTargetSpec{Host: "169.254.169.254", Port: 80},
+	}
+
+	validator := &TLSComplianceTargetValidator{}
+	_, err := validator.ValidateCreate(context.Background(), target)
+	if err == nil {
+		t.Fatal("expected error for SSRF target on create")
+	}
+	if !strings.Contains(err.Error(), "reserved") {
+		t.Errorf("error = %q, want it to contain 'reserved'", err.Error())
+	}
+}
+
 func TestValidateUpdate_BlocksDuplicateOnHostChange(t *testing.T) {
 	scheme := newWebhookTestScheme()
 	existing := &TLSComplianceTarget{

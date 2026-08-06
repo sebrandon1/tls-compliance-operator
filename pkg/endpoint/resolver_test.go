@@ -227,6 +227,67 @@ func TestExtractFromService_ExternalNameEmpty(t *testing.T) {
 	}
 }
 
+func TestExtractFromService_ExternalNameSSRF(t *testing.T) {
+	tests := []struct {
+		name         string
+		externalName string
+		wantBlocked  bool
+	}{
+		{"cloud metadata IP", "169.254.169.254", true},
+		{"loopback IP", "127.0.0.1", true},
+		{"private 10.x", "10.0.0.1", true},
+		{"private 172.16.x", "172.16.0.1", true},
+		{"private 192.168.x", "192.168.1.1", true},
+		{"localhost name", "localhost", true},
+		{"google metadata", "metadata.google.internal", true},
+		{"cluster-local allowed", "redis.default.svc.cluster.local", false},
+		{"safe external", "api.vendor.example.com", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "ext-svc",
+					Namespace: "default",
+				},
+				Spec: corev1.ServiceSpec{
+					Type:         corev1.ServiceTypeExternalName,
+					ExternalName: tt.externalName,
+				},
+			}
+			endpoints := ExtractFromService(svc)
+			if tt.wantBlocked && len(endpoints) != 0 {
+				t.Errorf("expected SSRF-unsafe host %q to be blocked, got %d endpoints", tt.externalName, len(endpoints))
+			}
+			if !tt.wantBlocked && len(endpoints) == 0 {
+				t.Errorf("expected safe host %q to produce endpoints", tt.externalName)
+			}
+		})
+	}
+}
+
+func TestExtractFromService_ExternalNameAllNonTLSPorts(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ext-http-only",
+			Namespace: "default",
+		},
+		Spec: corev1.ServiceSpec{
+			Type:         corev1.ServiceTypeExternalName,
+			ExternalName: "api.vendor.example.com",
+			Ports: []corev1.ServicePort{
+				{Name: "http", Port: 80},
+				{Name: "grpc", Port: 9090},
+			},
+		},
+	}
+	endpoints := ExtractFromService(svc)
+	if len(endpoints) != 0 {
+		t.Errorf("expected 0 endpoints when all ports are non-TLS, got %d", len(endpoints))
+	}
+}
+
 func TestExtractFromIngress(t *testing.T) {
 	ing := &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{

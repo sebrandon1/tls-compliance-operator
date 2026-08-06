@@ -31,6 +31,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+
+	"github.com/sebrandon1/tls-compliance-operator/pkg/hostvalidation"
 )
 
 var (
@@ -83,40 +85,6 @@ func (v *TLSComplianceTargetValidator) ValidateDelete(_ context.Context, _ *TLSC
 	return nil, nil
 }
 
-// reservedCIDRs lists IP ranges that must not be used as scan targets.
-var reservedCIDRs = func() []*net.IPNet {
-	cidrs := []string{
-		"127.0.0.0/8",    // IPv4 loopback
-		"::1/128",        // IPv6 loopback
-		"169.254.0.0/16", // IPv4 link-local (includes cloud metadata 169.254.169.254)
-		"fe80::/10",      // IPv6 link-local
-		"10.0.0.0/8",     // RFC 1918
-		"172.16.0.0/12",  // RFC 1918
-		"192.168.0.0/16", // RFC 1918
-		"fc00::/7",       // IPv6 unique local
-		"0.0.0.0/8",      // unspecified
-	}
-	nets := make([]*net.IPNet, 0, len(cidrs))
-	for _, c := range cidrs {
-		_, n, _ := net.ParseCIDR(c)
-		nets = append(nets, n)
-	}
-	return nets
-}()
-
-// internalHostSuffixes lists DNS suffixes that resolve to cluster-internal or
-// infrastructure-internal endpoints.
-var internalHostSuffixes = []string{
-	".localhost",
-	".svc.cluster.local",
-}
-
-// internalHostExact lists hostnames that must be blocked exactly.
-var internalHostExact = []string{
-	"localhost",
-	"metadata.google.internal",
-}
-
 func validateTargetSpec(target *TLSComplianceTarget) field.ErrorList {
 	var allErrs field.ErrorList
 	specPath := field.NewPath("spec")
@@ -125,44 +93,22 @@ func validateTargetSpec(target *TLSComplianceTarget) field.ErrorList {
 		allErrs = append(allErrs, field.Invalid(specPath.Child("host"), host, "wildcards are not allowed"))
 	}
 	if ip := net.ParseIP(host); ip != nil {
-		if err := validateIPNotReserved(specPath.Child("host"), ip, host); err != nil {
-			allErrs = append(allErrs, err)
+		if hostvalidation.IsReservedIP(ip) {
+			allErrs = append(allErrs, field.Invalid(specPath.Child("host"), host,
+				"internal or reserved address is not allowed"))
 		}
 	} else {
 		if errs := validation.IsDNS1123Subdomain(host); len(errs) > 0 {
 			allErrs = append(allErrs, field.Invalid(specPath.Child("host"), host,
 				fmt.Sprintf("must be a valid IP address or DNS name: %s", strings.Join(errs, "; "))))
 		}
-		if err := validateHostnameNotInternal(specPath.Child("host"), host); err != nil {
-			allErrs = append(allErrs, err)
+		if hostvalidation.IsInternalHostname(host) ||
+			strings.HasSuffix(strings.ToLower(host), ".svc.cluster.local") {
+			allErrs = append(allErrs, field.Invalid(specPath.Child("host"), host,
+				"internal hostname is not allowed"))
 		}
 	}
 	return allErrs
-}
-
-func validateIPNotReserved(fld *field.Path, ip net.IP, raw string) *field.Error {
-	for _, cidr := range reservedCIDRs {
-		if cidr.Contains(ip) {
-			return field.Invalid(fld, raw,
-				fmt.Sprintf("internal or reserved address (%s) is not allowed", cidr))
-		}
-	}
-	return nil
-}
-
-func validateHostnameNotInternal(fld *field.Path, host string) *field.Error {
-	lower := strings.ToLower(host)
-	for _, exact := range internalHostExact {
-		if lower == exact {
-			return field.Invalid(fld, host, fmt.Sprintf("%q is not allowed", exact))
-		}
-	}
-	for _, suffix := range internalHostSuffixes {
-		if strings.HasSuffix(lower, suffix) {
-			return field.Invalid(fld, host, fmt.Sprintf("internal hostname (suffix %q) is not allowed", suffix))
-		}
-	}
-	return nil
 }
 
 func validateNoDuplicate(ctx context.Context, target *TLSComplianceTarget, selfName string) *field.Error {
