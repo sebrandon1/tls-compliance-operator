@@ -176,7 +176,32 @@ Endpoints without certificates sort to the end when sorting by `expiry`.
 
 ## CI/CD Integration
 
-Use JUnit export to fail a pipeline when non-compliant endpoints exist:
+### Pipeline gating with --fail-on-non-compliant
+
+Use `--fail-on-non-compliant` to exit with code 1 when any non-compliant
+endpoints are found (NonCompliant, NoTLS, or PlaintextHTTP). Infrastructure
+statuses like Timeout and Unreachable do not trigger a failure.
+
+```bash
+# Gate on all endpoints
+kubectl tlsreport summary --fail-on-non-compliant
+
+# Export JUnit and gate in one step
+kubectl tlsreport junit --fail-on-non-compliant > tls-results.xml
+
+# Gate on a specific namespace
+kubectl tlsreport get -n production --fail-on-non-compliant
+
+# Gate on a specific source kind
+kubectl tlsreport summary --source Service --fail-on-non-compliant
+
+# Combine: non-compliant services in production
+kubectl tlsreport json -n production --source Service --fail-on-non-compliant
+```
+
+The flag works with all subcommands and respects all filter flags.
+
+### JUnit XML for test result ingestion
 
 ```bash
 kubectl tlsreport junit > tls-results.xml
@@ -184,6 +209,9 @@ kubectl tlsreport junit > tls-results.xml
 
 Most CI systems (Jenkins, GitLab CI, GitHub Actions) can ingest JUnit XML and
 display test results natively.
+
+See [CI/CD Integration](ci-integration.md) for full pipeline examples
+(GitHub Actions, Jenkins, Prow, Tekton, run-once scan mode).
 
 ---
 
