@@ -51,6 +51,11 @@ spec:
         - containerPort: 8443
           name: metrics
           protocol: TCP
+        env:
+        - name: GOMAXPROCS
+          value: "1"
+        - name: GOMEMLIMIT
+          value: "460MiB"
         securityContext:
           readOnlyRootFilesystem: true
           allowPrivilegeEscalation: false
