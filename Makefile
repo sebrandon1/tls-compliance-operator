@@ -50,7 +50,7 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 benchmark: ## Run Go benchmark tests.
 	go test -bench=. -benchmem ./pkg/tlscheck/ ./pkg/endpoint/
 
-COVERAGE_THRESHOLD ?= 55
+COVERAGE_THRESHOLD ?= 70
 
 .PHONY: check-coverage
 check-coverage: ## Check that test coverage meets the minimum threshold.

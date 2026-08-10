@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -658,5 +659,415 @@ func TestPrintReportTableWide_ColumnAlignment(t *testing.T) {
 		if !strings.Contains(output, col) {
 			t.Errorf("expected column %q in wide header", col)
 		}
+	}
+}
+
+func TestFormatAge(t *testing.T) {
+	tests := []struct {
+		name string
+		d    time.Duration
+		want string
+	}{
+		{"seconds", 30 * time.Second, "30s"},
+		{"minutes", 5 * time.Minute, "5m"},
+		{"hours", 3 * time.Hour, "3h"},
+		{"days", 48 * time.Hour, "2d"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatAge(tt.d)
+			if got != tt.want {
+				t.Errorf("formatAge(%v) = %q, want %q", tt.d, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOutputReports(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:       "example.com",
+				Port:       443,
+				SourceKind: securityv1alpha1.SourceKindService,
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+			},
+		},
+	}
+
+	tests := []struct {
+		name   string
+		format string
+	}{
+		{"json", "json"},
+		{"yaml", "yaml"},
+		{"wide", "wide"},
+		{"table default", ""},
+		{"table explicit", "table"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			outputFormat = tt.format
+			defer func() { outputFormat = "" }()
+
+			captureStdout(t, func() {
+				if err := outputReports(reports); err != nil {
+					t.Errorf("outputReports() error = %v", err)
+				}
+			})
+		})
+	}
+}
+
+func TestOutputReports_UnknownFormat(t *testing.T) {
+	outputFormat = "bogus"
+	defer func() { outputFormat = "" }()
+
+	err := outputReports(nil)
+	if err == nil {
+		t.Fatal("expected error for unknown output format")
+	}
+	if !strings.Contains(err.Error(), "unknown output format") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestNewTargetDeleteCmd_NoArgsNoAll(t *testing.T) {
+	cmd := newTargetCmd()
+	for _, sub := range cmd.Commands() {
+		if sub.Name() == "delete" {
+			sub.SetArgs([]string{})
+			err := sub.Execute()
+			if err == nil {
+				t.Skip("command succeeded (kubeconfig available)")
+			}
+			break
+		}
+	}
+}
+
+func TestNewTargetCmd_Structure(t *testing.T) {
+	cmd := newTargetCmd()
+	if cmd.Use != "target" {
+		t.Errorf("unexpected Use: %s", cmd.Use)
+	}
+	subNames := make(map[string]bool)
+	for _, sub := range cmd.Commands() {
+		subNames[sub.Name()] = true
+	}
+	for _, want := range []string{"list", "create", "delete"} {
+		if !subNames[want] {
+			t.Errorf("expected %q subcommand", want)
+		}
+	}
+}
+
+func TestPrintReportDetail_FullReport(t *testing.T) {
+	now := metav1.Now()
+	hostnameMatch := true
+	report := securityv1alpha1.TLSComplianceReport{}
+	report.Name = "full-report"
+	report.Spec.Host = "example.com"
+	report.Spec.Port = 443
+	report.Spec.SourceKind = securityv1alpha1.SourceKindService
+	report.Spec.SourceNamespace = "default"
+	report.Spec.SourceName = "web"
+	report.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusCompliant
+	report.Status.PQCReadiness = securityv1alpha1.PQCReadinessTLS13Capable
+	report.Status.OverallCipherGrade = "A"
+	report.Status.ForwardSecrecy = true
+	report.Status.CertificateInfo = &securityv1alpha1.CertificateInfo{
+		Issuer:             "CN=Test CA",
+		Subject:            "CN=example.com",
+		NotBefore:          &now,
+		NotAfter:           &now,
+		DaysUntilExpiry:    90,
+		IsExpired:          false,
+		HostnameMatch:      &hostnameMatch,
+		PublicKeyAlgorithm: "RSA",
+		PublicKeyBits:      2048,
+		SignatureAlgorithm: "SHA256-RSA",
+		ChainLength:        3,
+		DNSNames:           []string{"example.com", "www.example.com"},
+	}
+	report.Status.CipherSuites = map[string][]string{
+		"TLS 1.3": {"TLS_AES_128_GCM_SHA256"},
+	}
+	report.Status.CipherStrengthGrades = map[string]string{
+		"TLS_AES_128_GCM_SHA256": "A",
+	}
+	report.Status.KeyExchangeTypes = map[string]string{
+		"X25519": "ECDH 256-bit",
+	}
+	report.Status.ALPNProtocols = map[string]string{
+		"TLS 1.3": "h2",
+	}
+	report.Status.NegotiatedCurves = map[string]string{
+		"X25519": "256-bit",
+	}
+	report.Status.TLSAdherence = "StrictAllComponents"
+	report.Status.IngressProfileCompliance = &securityv1alpha1.TLSProfileComplianceResult{
+		ProfileType: "Intermediate",
+		Compliant:   true,
+	}
+	report.Status.Conditions = []metav1.Condition{
+		{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Scanned", Message: "Scan complete"},
+	}
+	report.Status.FirstSeenAt = &now
+	report.Status.LastSeenAt = &now
+	report.Status.LastCheckAt = &now
+	report.Status.ScanDuration = "1.23s"
+	report.Status.LastError = "transient timeout"
+	report.Status.RetryCount = 2
+	report.Status.NextRetryAt = &now
+
+	output := captureStdout(t, func() {
+		if err := printReportDetail(&report); err != nil {
+			t.Fatalf("printReportDetail() error = %v", err)
+		}
+	})
+
+	for _, want := range []string{
+		"CN=Test CA",
+		"CN=example.com",
+		"Hostname Match:",
+		"Public Key:",
+		"Signature Alg:",
+		"Chain Length:",
+		"DNS Names:",
+		"Cipher Suites:",
+		"TLS_AES_128_GCM_SHA256",
+		"Key Exchange Types:",
+		"ALPN Protocols:",
+		"Negotiated Curves:",
+		"TLS Security Profile:",
+		"StrictAllComponents",
+		"Ingress TLS Profile Compliance:",
+		"Conditions:",
+		"Ready",
+		"First Seen:",
+		"Last Seen:",
+		"Last Check:",
+		"Scan Duration:",
+		"Last Error:",
+		"Retry Count:",
+		"Next Retry:",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q", want)
+		}
+	}
+}
+
+func TestPrintProfileCompliance_WithViolations(t *testing.T) {
+	result := &securityv1alpha1.TLSProfileComplianceResult{
+		ProfileType:       "Intermediate",
+		Compliant:         false,
+		DisallowedCiphers: []string{"TLS_RSA_WITH_AES_128_CBC_SHA"},
+		DisallowedGroups:  []string{"ffdhe2048"},
+	}
+
+	output := captureStdout(t, func() {
+		printProfileCompliance(os.Stdout, "Test", result)
+	})
+
+	for _, want := range []string{
+		"Test TLS Profile Compliance:",
+		"Intermediate",
+		"Disallowed Ciphers:",
+		"TLS_RSA_WITH_AES_128_CBC_SHA",
+		"Disallowed Groups:",
+		"ffdhe2048",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q", want)
+		}
+	}
+}
+
+func TestPrintReportTableWide_WithCertInfo(t *testing.T) {
+	expiry := metav1.Now()
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:            "example.com",
+				Port:            443,
+				SourceKind:      securityv1alpha1.SourceKindService,
+				SourceNamespace: "default",
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				CertificateInfo: &securityv1alpha1.CertificateInfo{
+					Issuer:   "CN=Test CA",
+					NotAfter: &expiry,
+				},
+			},
+		},
+	}
+
+	output := captureStdout(t, func() {
+		if err := printReportTableWide(reports); err != nil {
+			t.Fatalf("printReportTableWide() error = %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "CN=Test CA") {
+		t.Error("expected issuer in wide output")
+	}
+	if strings.Contains(output, "CN=Test CA") && strings.Count(output, "-") < 5 {
+		t.Error("expected cert expiry date in wide output")
+	}
+}
+
+func TestFetchReportsWithClient(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("happy path", func(t *testing.T) {
+		report := &securityv1alpha1.TLSComplianceReport{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-report"},
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:       "example.com",
+				Port:       443,
+				SourceKind: securityv1alpha1.SourceKindService,
+			},
+		}
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(report).Build()
+
+		labelSelector = ""
+		defer func() { labelSelector = "" }()
+
+		reports, err := fetchReportsWithClient(ctx, c)
+		if err != nil {
+			t.Fatalf("fetchReportsWithClient() error = %v", err)
+		}
+		if len(reports) != 1 {
+			t.Fatalf("expected 1 report, got %d", len(reports))
+		}
+		if reports[0].Name != "test-report" {
+			t.Errorf("expected report name 'test-report', got %q", reports[0].Name)
+		}
+	})
+
+	t.Run("with valid label selector", func(t *testing.T) {
+		report := &securityv1alpha1.TLSComplianceReport{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "labeled-report",
+				Labels: map[string]string{"app": "web"},
+			},
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:       "labeled.example.com",
+				Port:       443,
+				SourceKind: securityv1alpha1.SourceKindService,
+			},
+		}
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(report).Build()
+		labelSelector = "app=web"
+		defer func() { labelSelector = "" }()
+
+		reports, err := fetchReportsWithClient(ctx, c)
+		if err != nil {
+			t.Fatalf("fetchReportsWithClient() error = %v", err)
+		}
+		if len(reports) != 1 {
+			t.Fatalf("expected 1 report, got %d", len(reports))
+		}
+	})
+
+	t.Run("invalid label selector", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(scheme).Build()
+		labelSelector = "!!invalid"
+		defer func() { labelSelector = "" }()
+
+		_, err := fetchReportsWithClient(ctx, c)
+		if err == nil {
+			t.Fatal("expected error for invalid label selector")
+		}
+		if !strings.Contains(err.Error(), "parsing label selector") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestRegisterFlagCompletions_Invoke(t *testing.T) {
+	cmd := newRootCmd()
+
+	for _, flag := range []string{"status", "source", "pqc-status", "sort-by"} {
+		t.Run(flag, func(t *testing.T) {
+			fn, ok := cmd.GetFlagCompletionFunc(flag)
+			if !ok {
+				t.Fatalf("flag %q: completion not registered", flag)
+			}
+			values, directive := fn(cmd, nil, "")
+			if len(values) == 0 {
+				t.Errorf("flag %q: expected non-empty completions", flag)
+			}
+			if directive != cobra.ShellCompDirectiveNoFileComp {
+				t.Errorf("flag %q: expected NoFileComp directive", flag)
+			}
+		})
+	}
+
+	for _, sub := range cmd.Commands() {
+		if sub.Name() == "get" {
+			fn, ok := sub.GetFlagCompletionFunc("output")
+			if !ok {
+				t.Fatal("output flag: completion not registered")
+			}
+			values, directive := fn(sub, nil, "")
+			if len(values) == 0 {
+				t.Error("output flag: expected non-empty completions")
+			}
+			if directive != cobra.ShellCompDirectiveNoFileComp {
+				t.Error("output flag: expected NoFileComp directive")
+			}
+			break
+		}
+	}
+}
+
+func TestNewDescribeCmd_Structure(t *testing.T) {
+	cmd := newDescribeCmd()
+	if cmd.Use != "describe <name>" {
+		t.Errorf("unexpected Use: %s", cmd.Use)
+	}
+	if cmd.RunE == nil {
+		t.Error("expected RunE to be set")
+	}
+}
+
+func TestNewGetCmd_OutputFlag(t *testing.T) {
+	cmd := newGetCmd()
+	f := cmd.Flags().Lookup("output")
+	if f == nil {
+		t.Fatal("expected --output flag")
+	}
+	if f.DefValue != "table" {
+		t.Errorf("expected default 'table', got %s", f.DefValue)
+	}
+	if f.Shorthand != "o" {
+		t.Errorf("expected shorthand 'o', got %s", f.Shorthand)
+	}
+}
+
+func TestBoolDash(t *testing.T) {
+	if got := boolDash(true); got != "true" {
+		t.Errorf("boolDash(true) = %q, want 'true'", got)
+	}
+	if got := boolDash(false); got != "-" {
+		t.Errorf("boolDash(false) = %q, want '-'", got)
+	}
+}
+
+func TestNewVersionCmd_Execute(t *testing.T) {
+	output := captureStdout(t, func() {
+		cmd := newVersionCmd()
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("version command error = %v", err)
+		}
+	})
+	if !strings.Contains(output, "kubectl-tlsreport") {
+		t.Errorf("expected version output to contain 'kubectl-tlsreport', got %q", output)
 	}
 }

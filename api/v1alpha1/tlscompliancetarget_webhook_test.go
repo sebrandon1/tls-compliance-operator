@@ -270,6 +270,73 @@ func TestValidateCreate_SSRFBlocked(t *testing.T) {
 	}
 }
 
+func TestValidateDelete_Allowed(t *testing.T) {
+	target := &TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "delete-target"},
+		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: 443},
+	}
+
+	validator := &TLSComplianceTargetValidator{}
+	warnings, err := validator.ValidateDelete(context.Background(), target)
+	if err != nil {
+		t.Errorf("ValidateDelete() error = %v, want nil", err)
+	}
+	if warnings != nil {
+		t.Errorf("ValidateDelete() warnings = %v, want nil", warnings)
+	}
+}
+
+func TestValidateUpdate_HappyPath(t *testing.T) {
+	scheme := newWebhookTestScheme()
+	existing := &TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "target-a"},
+		Spec:       TLSComplianceTargetSpec{Host: "a.example.com", Port: 443},
+	}
+	setTargetClient(t, scheme, existing)
+
+	oldTarget := &TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "target-b"},
+		Spec:       TLSComplianceTargetSpec{Host: "b.example.com", Port: 443},
+	}
+	newTarget := &TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "target-b"},
+		Spec:       TLSComplianceTargetSpec{Host: "c.example.com", Port: 443},
+	}
+
+	validator := &TLSComplianceTargetValidator{}
+	_, err := validator.ValidateUpdate(context.Background(), oldTarget, newTarget)
+	if err != nil {
+		t.Errorf("ValidateUpdate() error = %v, want nil for valid non-duplicate update", err)
+	}
+}
+
+func TestValidateNoDuplicate_ListError(t *testing.T) {
+	scheme := runtime.NewScheme()
+
+	builder := fake.NewClientBuilder().WithScheme(scheme)
+	cl := builder.Build()
+
+	targetClientMu.Lock()
+	targetClient = cl
+	targetClientMu.Unlock()
+
+	t.Cleanup(func() {
+		targetClientMu.Lock()
+		targetClient = nil
+		targetClientMu.Unlock()
+	})
+
+	target := &TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-target"},
+		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: 443},
+	}
+
+	err := validateNoDuplicate(context.Background(), target, "")
+	if err != nil {
+		t.Errorf("validateNoDuplicate() = %v, want nil when List fails", err)
+	}
+}
+
 func TestValidateUpdate_BlocksDuplicateOnHostChange(t *testing.T) {
 	scheme := newWebhookTestScheme()
 	existing := &TLSComplianceTarget{

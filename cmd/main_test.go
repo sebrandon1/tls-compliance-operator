@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"net/http"
@@ -696,6 +697,287 @@ func TestCheckConfig(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestCheckConfig_ReportRetentionDays(t *testing.T) {
+	validCfg := func() *operatorConfig {
+		return &operatorConfig{
+			workers:         5,
+			maxRetries:      3,
+			rateLimit:       10.0,
+			rateBurst:       20,
+			scanInterval:    1 * time.Hour,
+			cleanupInterval: 5 * time.Minute,
+			tlsCheckTimeout: 5 * time.Second,
+		}
+	}
+
+	t.Run("negative retention days", func(t *testing.T) {
+		cfg := validCfg()
+		cfg.reportRetentionDays = -1
+		_, err := checkConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "report-retention-days") {
+			t.Errorf("expected report-retention-days error, got: %v", err)
+		}
+	})
+
+	t.Run("retention days too high", func(t *testing.T) {
+		cfg := validCfg()
+		cfg.reportRetentionDays = 3651
+		_, err := checkConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "report-retention-days") {
+			t.Errorf("expected report-retention-days error, got: %v", err)
+		}
+	})
+}
+
+func TestCheckConfig_MaxRetries(t *testing.T) {
+	validCfg := func() *operatorConfig {
+		return &operatorConfig{
+			workers:         5,
+			maxRetries:      3,
+			rateLimit:       10.0,
+			rateBurst:       20,
+			scanInterval:    1 * time.Hour,
+			cleanupInterval: 5 * time.Minute,
+			tlsCheckTimeout: 5 * time.Second,
+		}
+	}
+
+	t.Run("negative retries", func(t *testing.T) {
+		cfg := validCfg()
+		cfg.maxRetries = -1
+		_, err := checkConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "max-retries") {
+			t.Errorf("expected max-retries error, got: %v", err)
+		}
+	})
+
+	t.Run("retries too high", func(t *testing.T) {
+		cfg := validCfg()
+		cfg.maxRetries = 11
+		_, err := checkConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "max-retries") {
+			t.Errorf("expected max-retries error, got: %v", err)
+		}
+	})
+
+	t.Run("workers too low", func(t *testing.T) {
+		cfg := validCfg()
+		cfg.workers = 0
+		_, err := checkConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "workers") {
+			t.Errorf("expected workers error, got: %v", err)
+		}
+	})
+}
+
+func TestCheckConfig_OutputFormat(t *testing.T) {
+	validCfg := func() *operatorConfig {
+		return &operatorConfig{
+			workers:         5,
+			maxRetries:      3,
+			rateLimit:       10.0,
+			rateBurst:       20,
+			scanInterval:    1 * time.Hour,
+			cleanupInterval: 5 * time.Minute,
+			tlsCheckTimeout: 5 * time.Second,
+		}
+	}
+
+	t.Run("invalid format", func(t *testing.T) {
+		cfg := validCfg()
+		cfg.outputFormat = "xml"
+		_, err := checkConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "output-format") {
+			t.Errorf("expected output-format error, got: %v", err)
+		}
+	})
+
+	t.Run("output-file without output-format", func(t *testing.T) {
+		cfg := validCfg()
+		cfg.outputFile = "/tmp/out.csv"
+		_, err := checkConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "output-file requires") {
+			t.Errorf("expected output-file error, got: %v", err)
+		}
+	})
+}
+
+func TestBuildTLSOpts(t *testing.T) {
+	t.Run("http2 disabled", func(t *testing.T) {
+		cfg := &operatorConfig{enableHTTP2: false}
+		opts := buildTLSOpts(cfg)
+		if len(opts) != 1 {
+			t.Fatalf("expected 1 TLS option, got %d", len(opts))
+		}
+		tc := &tls.Config{}
+		opts[0](tc)
+		if len(tc.NextProtos) != 1 || tc.NextProtos[0] != "http/1.1" {
+			t.Errorf("expected NextProtos=[http/1.1], got %v", tc.NextProtos)
+		}
+	})
+
+	t.Run("http2 enabled", func(t *testing.T) {
+		cfg := &operatorConfig{enableHTTP2: true}
+		opts := buildTLSOpts(cfg)
+		if len(opts) != 0 {
+			t.Fatalf("expected 0 TLS options, got %d", len(opts))
+		}
+	})
+}
+
+func TestWriteRunOnceOutput_Markdown(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:       "md.example",
+				Port:       443,
+				SourceKind: securityv1alpha1.SourceKindService,
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+			},
+		},
+	}
+
+	tmpFile := filepath.Join(t.TempDir(), "results.md")
+	cfg := &operatorConfig{outputFormat: "markdown", outputFile: tmpFile}
+
+	if err := writeRunOnceOutput(reports, cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(tmpFile)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
+	if !strings.Contains(string(data), "md.example") {
+		t.Error("expected output file to contain host")
+	}
+}
+
+func TestWriteRunOnceOutput_YAML(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:       "yaml.example",
+				Port:       443,
+				SourceKind: securityv1alpha1.SourceKindService,
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+			},
+		},
+	}
+
+	tmpFile := filepath.Join(t.TempDir(), "results.yaml")
+	cfg := &operatorConfig{outputFormat: "yaml", outputFile: tmpFile}
+
+	if err := writeRunOnceOutput(reports, cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(tmpFile)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
+	if !strings.Contains(string(data), "yaml.example") {
+		t.Error("expected output file to contain host")
+	}
+}
+
+func TestValidateEnvValue_AdditionalCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		flag    string
+		value   string
+		wantErr bool
+	}{
+		{"valid rate-burst", "rate-burst", "50", false},
+		{"rate-burst too low", "rate-burst", "0", true},
+		{"rate-burst too high", "rate-burst", "1001", true},
+		{"valid cert-expiry-warning-days", "cert-expiry-warning-days", "30", false},
+		{"cert-expiry-warning-days too low", "cert-expiry-warning-days", "0", true},
+		{"cert-expiry-warning-days too high", "cert-expiry-warning-days", "366", true},
+		{"valid max-retries", "max-retries", "5", false},
+		{"max-retries too high", "max-retries", "11", true},
+		{"valid cleanup-interval", "cleanup-interval", "10m", false},
+		{"valid profile-refresh-interval", "profile-refresh-interval", "15m", false},
+		{"valid retry-backoff", "retry-backoff", "5s", false},
+		{"valid max-backoff", "max-backoff", "1m", false},
+		{"valid output-format csv", "output-format", "csv", false},
+		{"valid output-format yaml", "output-format", "yaml", false},
+		{"invalid output-format xml", "output-format", "xml", true},
+		{"rate-burst invalid", "rate-burst", "abc", true},
+		{"cert-expiry-warning-days invalid", "cert-expiry-warning-days", "abc", true},
+		{"max-retries invalid", "max-retries", "abc", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateEnvValue(tc.flag, tc.value)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("validateEnvValue(%s, %s) error = %v, wantErr = %v", tc.flag, tc.value, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestResolveEnvConfig_MissingFlag(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	_ = fs.Parse([]string{})
+
+	env := map[string]string{
+		"TLS_COMPLIANCE_SCAN_INTERVAL": "30m",
+	}
+	lookup := func(key string) (string, bool) {
+		v, ok := env[key]
+		return v, ok
+	}
+
+	msgs := resolveEnvConfig(fs, lookup)
+	if len(msgs) == 0 {
+		t.Error("expected at least one log message")
+	}
+}
+
+func TestResolveEnvConfig_SetFailure(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.Int("workers", 5, "")
+	_ = fs.Parse([]string{})
+
+	env := map[string]string{
+		"TLS_COMPLIANCE_WORKERS": "8",
+	}
+	lookup := func(key string) (string, bool) {
+		v, ok := env[key]
+		return v, ok
+	}
+
+	f := fs.Lookup("workers")
+	orig := f.Value
+	f.Value = &failSetter{val: orig}
+
+	msgs := resolveEnvConfig(fs, lookup)
+	found := false
+	for _, msg := range msgs {
+		if strings.Contains(msg, "ignoring invalid") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected log message about ignoring invalid value when Set fails")
+	}
+}
+
+type failSetter struct {
+	val flag.Value
+}
+
+func (f *failSetter) String() string { return f.val.String() }
+func (f *failSetter) Set(string) error {
+	return fmt.Errorf("forced set failure")
 }
 
 func TestReadyzCheck_BeforeAndAfterScan(t *testing.T) {
