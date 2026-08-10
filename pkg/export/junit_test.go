@@ -315,6 +315,134 @@ func TestWriteJUnit_AllStatusTypes(t *testing.T) {
 	}
 }
 
+func TestWriteJUnit_TimeAttributes(t *testing.T) {
+	tests := []struct {
+		name             string
+		reports          []securityv1alpha1.TLSComplianceReport
+		expectCaseTime   string
+		expectSuiteTime  string
+		expectNoSuiteTime bool
+	}{
+		{
+			name: "scan duration populates test case time",
+			reports: []securityv1alpha1.TLSComplianceReport{
+				{
+					Spec: securityv1alpha1.TLSComplianceReportSpec{
+						Host:       "timed.example",
+						Port:       443,
+						SourceKind: securityv1alpha1.SourceKindService,
+					},
+					Status: securityv1alpha1.TLSComplianceReportStatus{
+						ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+						ScanDuration:     "1.5s",
+					},
+				},
+			},
+			expectCaseTime:  "1.500",
+			expectSuiteTime: "1.500",
+		},
+		{
+			name: "no scan duration omits time attribute",
+			reports: []securityv1alpha1.TLSComplianceReport{
+				{
+					Spec: securityv1alpha1.TLSComplianceReportSpec{
+						Host:       "notimed.example",
+						Port:       443,
+						SourceKind: securityv1alpha1.SourceKindService,
+					},
+					Status: securityv1alpha1.TLSComplianceReportStatus{
+						ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+					},
+				},
+			},
+			expectCaseTime:    "",
+			expectNoSuiteTime: true,
+		},
+		{
+			name: "invalid scan duration is ignored",
+			reports: []securityv1alpha1.TLSComplianceReport{
+				{
+					Spec: securityv1alpha1.TLSComplianceReportSpec{
+						Host:       "bad.example",
+						Port:       443,
+						SourceKind: securityv1alpha1.SourceKindService,
+					},
+					Status: securityv1alpha1.TLSComplianceReportStatus{
+						ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+						ScanDuration:     "not-a-duration",
+					},
+				},
+			},
+			expectCaseTime:    "",
+			expectNoSuiteTime: true,
+		},
+		{
+			name: "suite time aggregates multiple reports",
+			reports: []securityv1alpha1.TLSComplianceReport{
+				{
+					Spec: securityv1alpha1.TLSComplianceReportSpec{
+						Host:       "a.example",
+						Port:       443,
+						SourceKind: securityv1alpha1.SourceKindService,
+					},
+					Status: securityv1alpha1.TLSComplianceReportStatus{
+						ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+						ScanDuration:     "2s",
+					},
+				},
+				{
+					Spec: securityv1alpha1.TLSComplianceReportSpec{
+						Host:       "b.example",
+						Port:       443,
+						SourceKind: securityv1alpha1.SourceKindService,
+					},
+					Status: securityv1alpha1.TLSComplianceReportStatus{
+						ComplianceStatus: securityv1alpha1.ComplianceStatusNonCompliant,
+						ScanDuration:     "500ms",
+					},
+				},
+			},
+			expectSuiteTime: "2.500",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := WriteJUnit(&buf, tt.reports); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			var suites JUnitTestSuites
+			if err := xml.Unmarshal(buf.Bytes(), &suites); err != nil {
+				t.Fatalf("invalid XML: %v", err)
+			}
+
+			suite := suites.TestSuites[0]
+
+			if tt.expectNoSuiteTime {
+				if suite.Time != "" {
+					t.Errorf("expected no suite time, got %q", suite.Time)
+				}
+			} else if tt.expectSuiteTime != "" {
+				if suite.Time != tt.expectSuiteTime {
+					t.Errorf("expected suite time %q, got %q", tt.expectSuiteTime, suite.Time)
+				}
+			}
+
+			if tt.expectCaseTime != "" {
+				if suite.TestCases[0].Time != tt.expectCaseTime {
+					t.Errorf("expected case time %q, got %q", tt.expectCaseTime, suite.TestCases[0].Time)
+				}
+			} else if len(suite.TestCases) > 0 && len(tt.reports) == 1 {
+				if suite.TestCases[0].Time != "" {
+					t.Errorf("expected no case time, got %q", suite.TestCases[0].Time)
+				}
+			}
+		})
+	}
+}
+
 func TestWriteJUnit_ValidXML(t *testing.T) {
 	reports := []securityv1alpha1.TLSComplianceReport{
 		{
