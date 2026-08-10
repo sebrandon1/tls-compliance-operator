@@ -17,6 +17,7 @@ limitations under the License.
 package export
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -519,6 +520,33 @@ func TestFilterReports_ByGrade(t *testing.T) {
 			}
 			if len(got) != tt.wantCount {
 				t.Errorf("expected %d reports, got %d", tt.wantCount, len(got))
+			}
+		})
+	}
+}
+
+func TestFilterReports_InvalidGrade(t *testing.T) {
+	reports := testReports()
+
+	tests := []struct {
+		name     string
+		grade    string
+		minGrade string
+		wantErr  string
+	}{
+		{"invalid grade", "Z", "", `invalid grade "Z"`},
+		{"invalid min-grade", "", "excellent", `invalid min-grade "excellent"`},
+		{"invalid grade number", "1", "", `invalid grade "1"`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := FilterReports(reports, &FilterOptions{Grade: tt.grade, MinGrade: tt.minGrade})
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("expected error containing %q, got %q", tt.wantErr, err.Error())
 			}
 		})
 	}

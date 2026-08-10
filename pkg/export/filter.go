@@ -71,6 +71,17 @@ func FilterReports(reports []securityv1alpha1.TLSComplianceReport, opts *FilterO
 		return reports, nil
 	}
 
+	if opts.Grade != "" {
+		if _, ok := gradeRank[strings.ToUpper(opts.Grade)]; !ok {
+			return nil, fmt.Errorf("invalid grade %q: must be one of A, B, C, D, F", opts.Grade)
+		}
+	}
+	if opts.MinGrade != "" {
+		if _, ok := gradeRank[strings.ToUpper(opts.MinGrade)]; !ok {
+			return nil, fmt.Errorf("invalid min-grade %q: must be one of A, B, C, D, F", opts.MinGrade)
+		}
+	}
+
 	var expiresWithin time.Duration
 	if opts.ExpiresWithin != "" {
 		var err error

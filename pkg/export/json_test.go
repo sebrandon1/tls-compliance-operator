@@ -48,6 +48,7 @@ func TestWriteJSON_SingleReport(t *testing.T) {
 	expiry := metav1.NewTime(time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC))
 	reports := []securityv1alpha1.TLSComplianceReport{
 		{
+			ObjectMeta: metav1.ObjectMeta{Name: "my-service-443-ab12cd34"},
 			Spec: securityv1alpha1.TLSComplianceReportSpec{
 				Host:            "my-service.default",
 				Port:            443,
@@ -101,6 +102,9 @@ func TestWriteJSON_SingleReport(t *testing.T) {
 	}
 	if r.Name != "my-service" {
 		t.Errorf("expected name my-service, got %s", r.Name)
+	}
+	if r.CRName != "my-service-443-ab12cd34" {
+		t.Errorf("expected crName my-service-443-ab12cd34, got %s", r.CRName)
 	}
 	if r.Compliance != "Compliant" {
 		t.Errorf("expected compliance Compliant, got %s", r.Compliance)

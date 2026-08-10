@@ -84,6 +84,7 @@ func main() {
 		if errors.As(err, &ece) {
 			os.Exit(ece.code)
 		}
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
