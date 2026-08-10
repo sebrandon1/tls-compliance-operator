@@ -5,6 +5,25 @@ in your cluster. Once installed, kubectl discovers it as `kubectl tlsreport`.
 
 ## Install
 
+### Download a pre-built binary
+
+Pre-built binaries are available in `dist/plugins/` for multiple platforms:
+
+```bash
+# Linux (amd64)
+sudo cp dist/plugins/kubectl-tlsreport-linux-amd64 /usr/local/bin/kubectl-tlsreport
+sudo chmod +x /usr/local/bin/kubectl-tlsreport
+
+# macOS (Apple Silicon)
+sudo cp dist/plugins/kubectl-tlsreport-darwin-arm64 /usr/local/bin/kubectl-tlsreport
+sudo chmod +x /usr/local/bin/kubectl-tlsreport
+```
+
+Available platforms: `linux-amd64`, `linux-arm64`, `linux-ppc64le`, `linux-s390x`,
+`darwin-amd64`, `darwin-arm64`.
+
+### Build from source
+
 ```bash
 make build-plugin
 sudo mv bin/kubectl-tlsreport /usr/local/bin/

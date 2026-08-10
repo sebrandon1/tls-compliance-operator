@@ -78,12 +78,38 @@ update:
   Wildcards (`*`) are not allowed.
 - **No duplicates** — two `TLSComplianceTarget` resources cannot specify the
   same host:port combination.
+- **SSRF protection** — the webhook blocks hosts that point to internal or
+  reserved network ranges to prevent server-side request forgery.
+
+### Blocked Host Categories
+
+The following host categories are rejected:
+
+| Category | Examples | Reason |
+|----------|----------|--------|
+| IPv4 loopback | `127.0.0.1`, `127.0.0.2` | Loopback addresses |
+| IPv6 loopback | `::1` | Loopback address |
+| RFC 1918 private | `10.0.0.1`, `172.16.0.1`, `192.168.1.1` | Private network ranges |
+| Link-local / cloud metadata | `169.254.169.254`, `169.254.1.1` | Cloud metadata endpoints |
+| IPv6 link-local | `fe80::1` | Link-local addresses |
+| IPv6 ULA | `fd00::1` | Unique local addresses |
+| Unspecified | `0.0.0.0` | Unspecified address |
+| `localhost` | `localhost`, `app.localhost` | Loopback hostnames |
+| Cluster-internal DNS | `myapp.default.svc.cluster.local` | In-cluster service DNS |
+| Cloud metadata hostnames | `metadata.google.internal` | Cloud provider metadata |
 
 Example error for an invalid host:
 
 ```
 The TLSComplianceTarget "bad-target" is invalid:
   spec.host: Invalid value: "*.example.com": wildcards are not allowed
+```
+
+Example error for a blocked internal address:
+
+```
+The TLSComplianceTarget "ssrf-target" is invalid:
+  spec.host: Invalid value: "169.254.169.254": internal or reserved address is not allowed
 ```
 
 Example error for a duplicate host:port:

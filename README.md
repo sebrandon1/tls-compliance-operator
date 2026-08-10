@@ -62,6 +62,8 @@ kubectl delete -f https://github.com/sebrandon1/tls-compliance-operator/releases
 | [Prometheus Metrics](docs/metrics.md) | Metrics reference and example PromQL queries |
 | [Custom Targets](docs/custom-targets.md) | Scan arbitrary external hosts with TLSComplianceTarget |
 | [Exporting Reports](docs/exporting-reports.md) | CSV, JSON, YAML, JUnit, Markdown export with filtering |
+| [kubectl-tlsreport Reference](docs/kubectl-tlsreport.md) | Complete CLI reference for all subcommands and flags |
+| [CI/CD Integration](docs/ci-integration.md) | Pipeline gating with GitHub Actions, Jenkins, Prow, Tekton |
 | [Comparison](docs/comparison.md) | Feature comparison with openshift/tls-scanner |
 | [Troubleshooting](docs/troubleshooting.md) | Common issues and fixes |
 
