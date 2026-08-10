@@ -28,6 +28,7 @@ import (
 // JSONReport is the structured representation of a single TLS compliance report,
 // used by both JSON and YAML export (yaml.v3 falls back to json tags).
 type JSONReport struct {
+	CRName             string            `json:"crName"`
 	Host               string            `json:"host"`
 	Port               string            `json:"port"`
 	Source             string            `json:"source"`
@@ -78,6 +79,7 @@ func reportToJSON(r *securityv1alpha1.TLSComplianceReport) JSONReport {
 	certExpiry, certIssuer := extractCertInfo(r)
 
 	jr := JSONReport{
+		CRName:           r.Name,
 		Host:             r.Spec.Host,
 		Port:             strconv.Itoa(int(r.Spec.Port)),
 		Source:           string(r.Spec.SourceKind),
