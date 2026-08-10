@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"time"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 )
@@ -37,6 +38,7 @@ type JUnitTestSuite struct {
 	Name      string          `xml:"name,attr"`
 	Tests     int             `xml:"tests,attr"`
 	Failures  int             `xml:"failures,attr"`
+	Time      string          `xml:"time,attr,omitempty"`
 	TestCases []JUnitTestCase `xml:"testcase"`
 }
 
@@ -45,6 +47,7 @@ type JUnitTestCase struct {
 	XMLName   xml.Name      `xml:"testcase"`
 	Name      string        `xml:"name,attr"`
 	ClassName string        `xml:"classname,attr"`
+	Time      string        `xml:"time,attr,omitempty"`
 	Failure   *JUnitFailure `xml:"failure,omitempty"`
 }
 
@@ -57,6 +60,7 @@ type JUnitFailure struct {
 // WriteJUnit writes TLSComplianceReport items as JUnit XML to the given writer.
 func WriteJUnit(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) error {
 	var failures int
+	var totalDuration time.Duration
 	cases := make([]JUnitTestCase, 0, len(reports))
 
 	for i := range reports {
@@ -64,18 +68,26 @@ func WriteJUnit(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) err
 		if tc.Failure != nil {
 			failures++
 		}
+		if tc.Time != "" {
+			if d, err := time.ParseDuration(reports[i].Status.ScanDuration); err == nil {
+				totalDuration += d
+			}
+		}
 		cases = append(cases, tc)
 	}
 
+	suite := JUnitTestSuite{
+		Name:      "TLS Compliance",
+		Tests:     len(cases),
+		Failures:  failures,
+		TestCases: cases,
+	}
+	if totalDuration > 0 {
+		suite.Time = formatJUnitTime(totalDuration)
+	}
+
 	suites := JUnitTestSuites{
-		TestSuites: []JUnitTestSuite{
-			{
-				Name:      "TLS Compliance",
-				Tests:     len(cases),
-				Failures:  failures,
-				TestCases: cases,
-			},
-		},
+		TestSuites: []JUnitTestSuite{suite},
 	}
 
 	if _, err := fmt.Fprint(w, xml.Header); err != nil {
@@ -96,6 +108,12 @@ func reportToTestCase(r *securityv1alpha1.TLSComplianceReport) JUnitTestCase {
 	tc := JUnitTestCase{
 		Name:      name,
 		ClassName: string(r.Spec.SourceKind),
+	}
+
+	if r.Status.ScanDuration != "" {
+		if d, err := time.ParseDuration(r.Status.ScanDuration); err == nil {
+			tc.Time = formatJUnitTime(d)
+		}
 	}
 
 	switch r.Status.ComplianceStatus {
@@ -138,6 +156,12 @@ func reportToTestCase(r *securityv1alpha1.TLSComplianceReport) JUnitTestCase {
 	}
 
 	return tc
+}
+
+// formatJUnitTime formats a duration as seconds with three decimal places,
+// matching the JUnit XML convention (e.g. "1.234").
+func formatJUnitTime(d time.Duration) string {
+	return strconv.FormatFloat(d.Seconds(), 'f', 3, 64)
 }
 
 func failureDetail(r *securityv1alpha1.TLSComplianceReport) string {
