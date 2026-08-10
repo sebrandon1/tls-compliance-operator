@@ -757,7 +757,7 @@ func TestNewTargetCmd_Structure(t *testing.T) {
 	for _, sub := range cmd.Commands() {
 		subNames[sub.Name()] = true
 	}
-	for _, want := range []string{"list", "create", "delete"} {
+	for _, want := range []string{"list", "get", "describe", "create", "delete"} {
 		if !subNames[want] {
 			t.Errorf("expected %q subcommand", want)
 		}
@@ -1221,5 +1221,98 @@ func TestNewVersionCmd_Execute(t *testing.T) {
 	})
 	if !strings.Contains(output, "kubectl-tlsreport") {
 		t.Errorf("expected version output to contain 'kubectl-tlsreport', got %q", output)
+	}
+}
+
+func TestNewTargetGetCmd_Structure(t *testing.T) {
+	cmd := newTargetGetCmd()
+	if cmd.Use != "get <name>" {
+		t.Errorf("unexpected Use: %s", cmd.Use)
+	}
+	f := cmd.Flags().Lookup("output")
+	if f == nil {
+		t.Fatal("expected -o/--output flag")
+	}
+	if f.DefValue != "table" {
+		t.Errorf("expected default 'table', got %q", f.DefValue)
+	}
+	if f.Shorthand != "o" {
+		t.Errorf("expected shorthand 'o', got %q", f.Shorthand)
+	}
+}
+
+func TestNewTargetDescribeCmd_Structure(t *testing.T) {
+	cmd := newTargetDescribeCmd()
+	if cmd.Use != "describe <name>" {
+		t.Errorf("unexpected Use: %s", cmd.Use)
+	}
+}
+
+func TestPrintTargetDetail(t *testing.T) {
+	now := metav1.Now()
+	target := securityv1alpha1.TLSComplianceTarget{}
+	target.Name = "my-target"
+	target.Spec.Host = "example.com"
+	target.Spec.Port = 443
+	target.CreationTimestamp = now
+	target.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusCompliant
+	target.Status.ReportName = "example-com-443-abc12345"
+	target.Status.Message = "Report generated"
+	target.Status.LastScannedAt = &now
+	target.Status.Conditions = []metav1.Condition{
+		{
+			Type:   "Ready",
+			Status: metav1.ConditionTrue,
+			Reason: "ScanComplete",
+		},
+	}
+
+	output := captureStdout(t, func() {
+		if err := printTargetDetail(&target); err != nil {
+			t.Fatalf("printTargetDetail error: %v", err)
+		}
+	})
+
+	for _, want := range []string{
+		"Name:         my-target",
+		"Host:         example.com",
+		"Port:         443",
+		"Compliance:    Compliant",
+		"Report:        example-com-443-abc12345",
+		"Message:       Report generated",
+		"Last Scanned:",
+		"Conditions:",
+		"Ready",
+		"ScanComplete",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("expected output to contain %q", want)
+		}
+	}
+}
+
+func TestPrintTargetDetail_Pending(t *testing.T) {
+	target := securityv1alpha1.TLSComplianceTarget{}
+	target.Name = "pending-target"
+	target.Spec.Host = "pending.example"
+	target.Spec.Port = 8443
+
+	output := captureStdout(t, func() {
+		if err := printTargetDetail(&target); err != nil {
+			t.Fatalf("printTargetDetail error: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "(pending)") {
+		t.Error("expected (pending) for empty compliance status")
+	}
+	if strings.Contains(output, "Report:") {
+		t.Error("expected no Report line when report name is empty")
+	}
+	if strings.Contains(output, "Message:") {
+		t.Error("expected no Message line when message is empty")
+	}
+	if strings.Contains(output, "Conditions:") {
+		t.Error("expected no Conditions section when empty")
 	}
 }
