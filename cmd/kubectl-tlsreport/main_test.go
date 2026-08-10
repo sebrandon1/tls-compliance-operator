@@ -1060,6 +1060,158 @@ func TestBoolDash(t *testing.T) {
 	}
 }
 
+func TestOutputTargets(t *testing.T) {
+	targets := []securityv1alpha1.TLSComplianceTarget{
+		{
+			Spec: securityv1alpha1.TLSComplianceTargetSpec{
+				Host: "example.com",
+				Port: 443,
+			},
+			Status: securityv1alpha1.TLSComplianceTargetStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				ReportName:       "example-com-443-abc12345",
+				Message:          "Report example-com-443-abc12345 generated",
+			},
+		},
+	}
+	targets[0].Name = "example-com-443"
+
+	tests := []struct {
+		name   string
+		format string
+	}{
+		{"json", "json"},
+		{"yaml", "yaml"},
+		{"wide", "wide"},
+		{"table default", ""},
+		{"table explicit", "table"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			targetOutputFormat = tt.format
+			defer func() { targetOutputFormat = "" }()
+
+			output := captureStdout(t, func() {
+				if err := outputTargets(targets); err != nil {
+					t.Errorf("outputTargets() error = %v", err)
+				}
+			})
+			if output == "" {
+				t.Error("expected non-empty output")
+			}
+		})
+	}
+}
+
+func TestOutputTargets_UnknownFormat(t *testing.T) {
+	targetOutputFormat = "bogus"
+	defer func() { targetOutputFormat = "" }()
+
+	err := outputTargets(nil)
+	if err == nil {
+		t.Fatal("expected error for unknown output format")
+	}
+	if !strings.Contains(err.Error(), "unknown output format") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestOutputTargets_JSONContent(t *testing.T) {
+	targets := []securityv1alpha1.TLSComplianceTarget{
+		{
+			Spec: securityv1alpha1.TLSComplianceTargetSpec{
+				Host: "test.example",
+				Port: 8443,
+			},
+		},
+	}
+	targets[0].Name = "test-target"
+
+	targetOutputFormat = "json"
+	defer func() { targetOutputFormat = "" }()
+
+	output := captureStdout(t, func() {
+		if err := outputTargets(targets); err != nil {
+			t.Fatalf("outputTargets() error = %v", err)
+		}
+	})
+	if !strings.Contains(output, `"host": "test.example"`) {
+		t.Errorf("expected JSON to contain host, got: %s", output)
+	}
+	if !strings.Contains(output, `"port": 8443`) {
+		t.Errorf("expected JSON to contain port, got: %s", output)
+	}
+}
+
+func TestOutputTargets_YAMLContent(t *testing.T) {
+	targets := []securityv1alpha1.TLSComplianceTarget{
+		{
+			Spec: securityv1alpha1.TLSComplianceTargetSpec{
+				Host: "yaml.example",
+				Port: 443,
+			},
+		},
+	}
+	targets[0].Name = "yaml-target"
+
+	targetOutputFormat = "yaml"
+	defer func() { targetOutputFormat = "" }()
+
+	output := captureStdout(t, func() {
+		if err := outputTargets(targets); err != nil {
+			t.Fatalf("outputTargets() error = %v", err)
+		}
+	})
+	if !strings.Contains(output, "host: yaml.example") {
+		t.Errorf("expected YAML to contain host, got: %s", output)
+	}
+	if !strings.Contains(output, "port: 443") {
+		t.Errorf("expected YAML to contain port, got: %s", output)
+	}
+}
+
+func TestPrintTargetTableWide_MessageColumn(t *testing.T) {
+	targets := []securityv1alpha1.TLSComplianceTarget{
+		{
+			Spec: securityv1alpha1.TLSComplianceTargetSpec{
+				Host: "wide.example",
+				Port: 443,
+			},
+			Status: securityv1alpha1.TLSComplianceTargetStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				Message:          "Report wide-example generated",
+			},
+		},
+	}
+	targets[0].Name = "wide-target"
+
+	output := captureStdout(t, func() {
+		if err := printTargetTableWide(targets); err != nil {
+			t.Fatalf("printTargetTableWide() error = %v", err)
+		}
+	})
+	if !strings.Contains(output, "MESSAGE") {
+		t.Error("expected MESSAGE column header in wide output")
+	}
+	if !strings.Contains(output, "Report wide-example generated") {
+		t.Errorf("expected message in output, got: %s", output)
+	}
+}
+
+func TestNewTargetListCmd_OutputFlag(t *testing.T) {
+	cmd := newTargetListCmd()
+	f := cmd.Flags().Lookup("output")
+	if f == nil {
+		t.Fatal("expected -o/--output flag on target list command")
+	}
+	if f.DefValue != "table" {
+		t.Errorf("expected default 'table', got %q", f.DefValue)
+	}
+	if f.Shorthand != "o" {
+		t.Errorf("expected shorthand 'o', got %q", f.Shorthand)
+	}
+}
+
 func TestNewVersionCmd_Execute(t *testing.T) {
 	output := captureStdout(t, func() {
 		cmd := newVersionCmd()

@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -36,6 +37,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	sigsyaml "sigs.k8s.io/yaml"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/export"
@@ -57,6 +59,7 @@ var (
 	kubecontext        string
 	labelSelector      string
 	outputFormat       string
+	targetOutputFormat string
 	failOnNonCompliant bool
 )
 
@@ -649,11 +652,27 @@ func newTargetCmd() *cobra.Command {
 }
 
 func newTargetListCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List all TLSComplianceTargets",
-		RunE:  runTargetList,
+		Example: `  # List targets in table format
+  kubectl tlsreport target list
+
+  # List targets with additional details
+  kubectl tlsreport target list -o wide
+
+  # Output as JSON for scripting
+  kubectl tlsreport target list -o json
+
+  # Output as YAML
+  kubectl tlsreport target list -o yaml`,
+		RunE: runTargetList,
 	}
+	cmd.Flags().StringVarP(&targetOutputFormat, "output", "o", "table", "Output format: table, wide, json, yaml")
+	_ = cmd.RegisterFlagCompletionFunc("output", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		return []string{"table", "wide", "json", "yaml"}, cobra.ShellCompDirectiveNoFileComp
+	})
+	return cmd
 }
 
 func newTargetCreateCmd() *cobra.Command {
@@ -688,8 +707,52 @@ func runTargetList(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintln(os.Stderr, "No targets found.")
 		return nil
 	}
+	return outputTargets(targets)
+}
+
+func outputTargets(targets []securityv1alpha1.TLSComplianceTarget) error {
+	switch targetOutputFormat {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(targets)
+	case "yaml":
+		for i := range targets {
+			ydata, err := sigsyaml.Marshal(targets[i])
+			if err != nil {
+				return fmt.Errorf("marshalling target %s to YAML: %w", targets[i].Name, err)
+			}
+			if i > 0 {
+				fmt.Fprintln(os.Stdout, "---")
+			}
+			fmt.Fprint(os.Stdout, string(ydata))
+		}
+		return nil
+	case "wide":
+		return printTargetTableWide(targets)
+	case "table", "":
+		return printTargetTable(targets)
+	default:
+		return fmt.Errorf("unknown output format: %s (supported: table, wide, json, yaml)", targetOutputFormat)
+	}
+}
+
+func printTargetTable(targets []securityv1alpha1.TLSComplianceTarget) error {
+	return printTargetTableImpl(targets, false)
+}
+
+func printTargetTableWide(targets []securityv1alpha1.TLSComplianceTarget) error {
+	return printTargetTableImpl(targets, true)
+}
+
+func printTargetTableImpl(targets []securityv1alpha1.TLSComplianceTarget, wide bool) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "NAME\tHOST\tPORT\tSTATUS\tREPORT\tLAST SCANNED\tAGE")
+	header := "NAME\tHOST\tPORT\tSTATUS\tREPORT"
+	if wide {
+		header += "\tMESSAGE"
+	}
+	header += "\tLAST SCANNED\tAGE"
+	_, _ = fmt.Fprintln(w, header)
 	for i := range targets {
 		lastScanned := "-"
 		if targets[i].Status.LastScannedAt != nil {
@@ -700,10 +763,18 @@ func runTargetList(cmd *cobra.Command, _ []string) error {
 			report = "-"
 		}
 		age := formatAge(time.Since(targets[i].CreationTimestamp.Time))
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\n",
+		row := fmt.Sprintf("%s\t%s\t%d\t%s\t%s",
 			targets[i].Name, targets[i].Spec.Host, targets[i].Spec.Port,
-			string(targets[i].Status.ComplianceStatus),
-			report, lastScanned, age)
+			string(targets[i].Status.ComplianceStatus), report)
+		if wide {
+			message := targets[i].Status.Message
+			if message == "" {
+				message = "-"
+			}
+			row += "\t" + message
+		}
+		row += fmt.Sprintf("\t%s\t%s", lastScanned, age)
+		_, _ = fmt.Fprintln(w, row)
 	}
 	return w.Flush()
 }
