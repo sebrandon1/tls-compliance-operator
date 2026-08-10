@@ -157,6 +157,51 @@ args:
 - --leader-elect
 ```
 
+## Per-Resource Annotations
+
+These annotations can be added to any Service, Ingress, Route, or Pod to
+control scanning behavior on a per-resource basis.
+
+### Skip scanning
+
+Add the `tls-compliance.telco.openshift.io/skip` annotation to exclude a
+resource from TLS scanning entirely:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-internal-service
+  annotations:
+    tls-compliance.telco.openshift.io/skip: "true"
+spec:
+  ports:
+  - port: 8443
+```
+
+The operator ignores any resource with this annotation set to `"true"`.
+
+### Extra ports
+
+Add the `tls-compliance.telco.openshift.io/extra-ports` annotation to scan
+additional ports beyond what the operator auto-discovers:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: multi-port-service
+  annotations:
+    tls-compliance.telco.openshift.io/extra-ports: "9443,6443"
+spec:
+  ports:
+  - port: 443
+```
+
+The annotation accepts a comma-separated list of port numbers (1-65535).
+These ports are scanned in addition to the ports the operator discovers
+from the resource spec.
+
 ## Resource Sizing
 
 The default resource limits are configured for small-to-medium clusters

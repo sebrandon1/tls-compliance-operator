@@ -81,9 +81,12 @@ oc rollout restart deployment/tls-compliance-operator-controller-manager \
 | **Closed** | Port not listening | Check if service pods are running |
 | **Timeout** | Connection timed out | Check network connectivity / firewall rules |
 | **Filtered** | No response (firewall drop) | Check network policies |
+| **Unreachable** | Could not connect (generic failure) | Check DNS resolution, verify the endpoint exists |
 | **NoTLS** | Port open but doesn't speak TLS | Expected for non-TLS services |
-| **MutualTLSRequired** | Server requires client certificate | Expected for mTLS endpoints |
+| **PlaintextHTTP** | Endpoint responds with HTTP but no TLS | Add TLS termination via ingress controller or sidecar proxy |
+| **MutualTLSRequired** | Server requires client certificate | Expected for mTLS endpoints; use `--client-cert`/`--client-key` to probe |
 | **Pending** | Not yet checked | Wait for scan cycle |
+| **Unknown** | Status could not be determined | Investigate endpoint health, check operator logs |
 
 ## Reports Accumulating / Not Being Cleaned Up
 
