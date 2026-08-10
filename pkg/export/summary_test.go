@@ -805,3 +805,104 @@ func TestComputeSummary_TLSCapableMix(t *testing.T) {
 		t.Errorf("expected 50%% forward secrecy, got %f", s.ForwardSecrecyPercent)
 	}
 }
+
+func TestComputeSummary_GradeDistribution(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant, OverallCipherGrade: "A"},
+		},
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant, OverallCipherGrade: "A"},
+		},
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusWarning, OverallCipherGrade: "B"},
+		},
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusNonCompliant, OverallCipherGrade: "F"},
+		},
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusNoTLS},
+		},
+	}
+
+	s := ComputeSummary(reports, time.Now())
+
+	if s.ByGrade["A"] != 2 {
+		t.Errorf("expected 2 grade A, got %d", s.ByGrade["A"])
+	}
+	if s.ByGrade["B"] != 1 {
+		t.Errorf("expected 1 grade B, got %d", s.ByGrade["B"])
+	}
+	if s.ByGrade["F"] != 1 {
+		t.Errorf("expected 1 grade F, got %d", s.ByGrade["F"])
+	}
+	if s.ByGrade["C"] != 0 {
+		t.Errorf("expected 0 grade C, got %d", s.ByGrade["C"])
+	}
+	if s.ByGrade["D"] != 0 {
+		t.Errorf("expected 0 grade D, got %d", s.ByGrade["D"])
+	}
+}
+
+func TestComputeSummary_GradeDistribution_NoGrades(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusNoTLS},
+		},
+	}
+
+	s := ComputeSummary(reports, time.Now())
+	if len(s.ByGrade) != 0 {
+		t.Errorf("expected empty grade map, got %v", s.ByGrade)
+	}
+}
+
+func TestWriteSummary_GradeDistribution(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant, OverallCipherGrade: "A"},
+		},
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusNonCompliant, OverallCipherGrade: "D"},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteSummary(&buf, reports); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Cipher Grade Distribution") {
+		t.Error("expected Cipher Grade Distribution section header")
+	}
+	if !strings.Contains(output, "A:") || !strings.Contains(output, "D:") {
+		t.Error("expected grade lines for A and D")
+	}
+}
+
+func TestWriteSummary_NoGradeSection(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusNoTLS},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteSummary(&buf, reports); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if strings.Contains(buf.String(), "Cipher Grade Distribution") {
+		t.Error("expected no grade section when no grades are present")
+	}
+}

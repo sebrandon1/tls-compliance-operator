@@ -51,9 +51,16 @@ type FilterOptions struct {
 	MinGrade string
 }
 
-var gradeRank = map[string]int{
-	"A": 0, "B": 1, "C": 2, "D": 3, "F": 4,
-}
+// knownGrades defines the canonical set and order of cipher grades.
+var knownGrades = []string{"A", "B", "C", "D", "F"}
+
+var gradeRank = func() map[string]int {
+	m := make(map[string]int, len(knownGrades))
+	for i, g := range knownGrades {
+		m[g] = i
+	}
+	return m
+}()
 
 // IsEmpty returns true if no filters are set.
 func (o *FilterOptions) IsEmpty() bool {
