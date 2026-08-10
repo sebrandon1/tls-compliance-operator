@@ -77,6 +77,7 @@ type Summary struct {
 	ByStatus              map[securityv1alpha1.ComplianceStatus]int
 	BySourceKind          map[securityv1alpha1.SourceKind]int
 	ByPQCReadiness        map[securityv1alpha1.PQCReadiness]int
+	ByGrade               map[string]int
 	FIPSDetected          bool
 	TLSAdherence          string
 	ForwardSecrecyCount   int
@@ -98,6 +99,7 @@ func ComputeSummary(reports []securityv1alpha1.TLSComplianceReport, now time.Tim
 		ByStatus:       make(map[securityv1alpha1.ComplianceStatus]int),
 		BySourceKind:   make(map[securityv1alpha1.SourceKind]int),
 		ByPQCReadiness: make(map[securityv1alpha1.PQCReadiness]int),
+		ByGrade:        make(map[string]int),
 	}
 
 	for i := range reports {
@@ -121,6 +123,9 @@ func ComputeSummary(reports []securityv1alpha1.TLSComplianceReport, now time.Tim
 		}
 		if r.Status.PQCReadiness != "" {
 			s.ByPQCReadiness[r.Status.PQCReadiness]++
+		}
+		if r.Status.OverallCipherGrade != "" {
+			s.ByGrade[r.Status.OverallCipherGrade]++
 		}
 
 		if r.Status.CertificateInfo != nil && r.Status.CertificateInfo.NotAfter != nil {
@@ -196,6 +201,17 @@ func WriteSummary(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) e
 		count := s.BySourceKind[kind]
 		if count > 0 {
 			ew.printf("  %s:\t%d\n", kind, count)
+		}
+	}
+
+	if len(s.ByGrade) > 0 {
+		ew.printf("\nCipher Grade Distribution\n")
+		ew.printf("-------------------------\n")
+		for _, grade := range knownGrades {
+			count := s.ByGrade[grade]
+			if count > 0 {
+				ew.printf("  %s:\t%d\n", grade, count)
+			}
 		}
 	}
 
