@@ -1316,3 +1316,72 @@ func TestPrintTargetDetail_Pending(t *testing.T) {
 		t.Error("expected no Conditions section when empty")
 	}
 }
+
+func TestNewTargetCreateCmd_WaitFlag(t *testing.T) {
+	cmd := newTargetCreateCmd()
+	f := cmd.Flags().Lookup("wait")
+	if f == nil {
+		t.Fatal("expected --wait flag")
+	}
+	if f.DefValue != "false" {
+		t.Errorf("expected default 'false', got %q", f.DefValue)
+	}
+	tf := cmd.Flags().Lookup("timeout")
+	if tf == nil {
+		t.Fatal("expected --timeout flag")
+	}
+	if tf.DefValue != "1m0s" {
+		t.Errorf("expected default '1m0s', got %q", tf.DefValue)
+	}
+}
+
+func TestWaitForTargetScan_AlreadyScanned(t *testing.T) {
+	ctx := context.Background()
+	now := metav1.Now()
+
+	target := &securityv1alpha1.TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "scanned-target"},
+		Spec: securityv1alpha1.TLSComplianceTargetSpec{
+			Host: "example.com",
+			Port: 443,
+		},
+		Status: securityv1alpha1.TLSComplianceTargetStatus{
+			ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+			ReportName:       "example-com-443-abc12345",
+			LastScannedAt:    &now,
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(target).
+		WithStatusSubresource(target).Build()
+
+	output := captureStdout(t, func() {
+		if err := waitForTargetScan(ctx, c, "scanned-target", 5*time.Second); err != nil {
+			t.Fatalf("waitForTargetScan() error = %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "Status: Compliant") {
+		t.Errorf("expected 'Status: Compliant' in output, got: %s", output)
+	}
+	if !strings.Contains(output, "Report: example-com-443-abc12345") {
+		t.Errorf("expected report name in output, got: %s", output)
+	}
+}
+
+func TestWaitForTargetScan_Timeout(t *testing.T) {
+	ctx := context.Background()
+
+	target := &securityv1alpha1.TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-target"},
+		Spec: securityv1alpha1.TLSComplianceTargetSpec{
+			Host: "slow.example",
+			Port: 443,
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(target).Build()
+
+	err := waitForTargetScan(ctx, c, "pending-target", 3*time.Second)
+	if err == nil || !strings.Contains(err.Error(), "timeout") {
+		t.Errorf("expected timeout error, got: %v", err)
+	}
+}
