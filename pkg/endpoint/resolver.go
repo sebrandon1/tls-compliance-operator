@@ -154,6 +154,8 @@ func ExtractFromHeadlessService(svc *corev1.Service, addresses []string) []Endpo
 // When scan-all-ports is enabled, all declared ports are included.
 // For ExternalName services, the host is spec.externalName and
 // port 443 is assumed when no ports are defined.
+// For LoadBalancer services, additional endpoints are extracted from
+// status.loadBalancer.ingress entries (IP or hostname).
 func ExtractFromService(svc *corev1.Service) []Endpoint {
 	if svc.Spec.Type == corev1.ServiceTypeExternalName {
 		return extractFromExternalNameService(svc)
@@ -174,6 +176,53 @@ func ExtractFromService(svc *corev1.Service) []Endpoint {
 		}
 	}
 
+	if svc.Spec.Type == corev1.ServiceTypeLoadBalancer {
+		for _, ingress := range svc.Status.LoadBalancer.Ingress {
+			host := ingress.IP
+			if host == "" {
+				host = ingress.Hostname
+			}
+			if host == "" {
+				continue
+			}
+			for i := range svc.Spec.Ports {
+				if scanAllPortsEnabled() || isTLSPort(&svc.Spec.Ports[i]) {
+					endpoints = append(endpoints, Endpoint{
+						Host:            host,
+						Port:            svc.Spec.Ports[i].Port,
+						SourceKind:      securityv1alpha1.SourceKindService,
+						SourceNamespace: svc.Namespace,
+						SourceName:      svc.Name,
+					})
+				}
+			}
+		}
+	}
+
+	return endpoints
+}
+
+// ExtractFromNodePortService returns TLS endpoints for each node address
+// at the allocated NodePort. Each node address x TLS port yields one endpoint.
+func ExtractFromNodePortService(svc *corev1.Service, nodeAddresses []string) []Endpoint {
+	var endpoints []Endpoint
+	for i := range svc.Spec.Ports {
+		if svc.Spec.Ports[i].NodePort == 0 {
+			continue
+		}
+		if !scanAllPortsEnabled() && !isTLSPort(&svc.Spec.Ports[i]) {
+			continue
+		}
+		for _, addr := range nodeAddresses {
+			endpoints = append(endpoints, Endpoint{
+				Host:            addr,
+				Port:            svc.Spec.Ports[i].NodePort,
+				SourceKind:      securityv1alpha1.SourceKindService,
+				SourceNamespace: svc.Namespace,
+				SourceName:      svc.Name,
+			})
+		}
+	}
 	return endpoints
 }
 

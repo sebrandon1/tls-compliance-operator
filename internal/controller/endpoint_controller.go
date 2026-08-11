@@ -147,6 +147,7 @@ func (r *EndpointReconciler) updateWithRetry(ctx context.Context, name string, m
 }
 
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
@@ -268,12 +269,40 @@ func (r *EndpointReconciler) handleService(ctx context.Context, svc *corev1.Serv
 		return r.handleHeadlessService(ctx, svc)
 	}
 	endpoints := endpoint.ExtractFromService(svc)
+
+	if svc.Spec.Type == corev1.ServiceTypeNodePort || svc.Spec.Type == corev1.ServiceTypeLoadBalancer {
+		nodeAddrs, err := r.getNodeAddresses(ctx)
+		if err != nil {
+			log.FromContext(ctx).Error(err, "failed to list node addresses for NodePort scan", "service", svc.Name)
+		} else if len(nodeAddrs) > 0 {
+			endpoints = append(endpoints, endpoint.ExtractFromNodePortService(svc, nodeAddrs)...)
+		}
+	}
+
 	endpoints = endpoint.AppendExtraPorts(endpoints, svc.Annotations, svc.Name, svc.Namespace, securityv1alpha1.SourceKindService)
 	if len(endpoints) == 0 {
 		metrics.RecordReconcileSuccess("Service")
 		return ctrl.Result{}, nil
 	}
 	return r.handleEndpoints(ctx, endpoints, securityv1alpha1.SourceKindService)
+}
+
+func (r *EndpointReconciler) getNodeAddresses(ctx context.Context) ([]string, error) {
+	var nodeList corev1.NodeList
+	if err := r.List(ctx, &nodeList); err != nil {
+		return nil, fmt.Errorf("listing nodes: %w", err)
+	}
+	var addrs []string
+	seen := make(map[string]bool)
+	for i := range nodeList.Items {
+		for _, addr := range nodeList.Items[i].Status.Addresses {
+			if (addr.Type == corev1.NodeExternalIP || addr.Type == corev1.NodeInternalIP) && !seen[addr.Address] {
+				seen[addr.Address] = true
+				addrs = append(addrs, addr.Address)
+			}
+		}
+	}
+	return addrs, nil
 }
 
 func (r *EndpointReconciler) handleHeadlessService(ctx context.Context, svc *corev1.Service) (ctrl.Result, error) {

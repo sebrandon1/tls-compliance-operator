@@ -1699,3 +1699,305 @@ func TestExtractFromGateway_MultipleListeners(t *testing.T) {
 		t.Fatalf("expected 3 TLS endpoints (HTTPS+TLS+HTTPS), got %d", len(eps))
 	}
 }
+
+func TestExtractFromService_LoadBalancerWithIngress(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "lb-svc", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeLoadBalancer,
+			Ports: []corev1.ServicePort{
+				{Name: "https", Port: 443},
+			},
+		},
+		Status: corev1.ServiceStatus{
+			LoadBalancer: corev1.LoadBalancerStatus{
+				Ingress: []corev1.LoadBalancerIngress{
+					{IP: "203.0.113.10"},
+				},
+			},
+		},
+	}
+	endpoints := ExtractFromService(svc)
+	if len(endpoints) != 2 {
+		t.Fatalf("expected 2 endpoints (internal + LB), got %d", len(endpoints))
+	}
+	if endpoints[0].Host != "lb-svc.default" {
+		t.Errorf("first endpoint host = %q, want lb-svc.default", endpoints[0].Host)
+	}
+	if endpoints[0].Port != 443 {
+		t.Errorf("first endpoint port = %d, want 443", endpoints[0].Port)
+	}
+	if endpoints[1].Host != "203.0.113.10" {
+		t.Errorf("second endpoint host = %q, want 203.0.113.10", endpoints[1].Host)
+	}
+	if endpoints[1].Port != 443 {
+		t.Errorf("second endpoint port = %d, want 443", endpoints[1].Port)
+	}
+}
+
+func TestExtractFromService_LoadBalancerWithHostname(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "lb-svc", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeLoadBalancer,
+			Ports: []corev1.ServicePort{
+				{Name: "https", Port: 443},
+			},
+		},
+		Status: corev1.ServiceStatus{
+			LoadBalancer: corev1.LoadBalancerStatus{
+				Ingress: []corev1.LoadBalancerIngress{
+					{Hostname: "lb.example.com"},
+				},
+			},
+		},
+	}
+	endpoints := ExtractFromService(svc)
+	if len(endpoints) != 2 {
+		t.Fatalf("expected 2 endpoints, got %d", len(endpoints))
+	}
+	if endpoints[1].Host != "lb.example.com" {
+		t.Errorf("LB endpoint host = %q, want lb.example.com", endpoints[1].Host)
+	}
+}
+
+func TestExtractFromService_LoadBalancerIPOverHostname(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "lb-svc", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeLoadBalancer,
+			Ports: []corev1.ServicePort{
+				{Name: "https", Port: 443},
+			},
+		},
+		Status: corev1.ServiceStatus{
+			LoadBalancer: corev1.LoadBalancerStatus{
+				Ingress: []corev1.LoadBalancerIngress{
+					{IP: "203.0.113.10", Hostname: "lb.example.com"},
+				},
+			},
+		},
+	}
+	endpoints := ExtractFromService(svc)
+	if len(endpoints) != 2 {
+		t.Fatalf("expected 2 endpoints, got %d", len(endpoints))
+	}
+	if endpoints[1].Host != "203.0.113.10" {
+		t.Errorf("LB endpoint host = %q, want 203.0.113.10 (IP preferred over hostname)", endpoints[1].Host)
+	}
+}
+
+func TestExtractFromService_LoadBalancerNoIngress(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "lb-svc", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeLoadBalancer,
+			Ports: []corev1.ServicePort{
+				{Name: "https", Port: 443},
+			},
+		},
+	}
+	endpoints := ExtractFromService(svc)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint (internal only), got %d", len(endpoints))
+	}
+	if endpoints[0].Host != "lb-svc.default" {
+		t.Errorf("host = %q, want lb-svc.default", endpoints[0].Host)
+	}
+}
+
+func TestExtractFromService_LoadBalancerMultipleIngressAndPorts(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "lb-svc", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeLoadBalancer,
+			Ports: []corev1.ServicePort{
+				{Name: "https", Port: 443},
+				{Name: "https-admin", Port: 8443},
+			},
+		},
+		Status: corev1.ServiceStatus{
+			LoadBalancer: corev1.LoadBalancerStatus{
+				Ingress: []corev1.LoadBalancerIngress{
+					{IP: "203.0.113.10"},
+					{IP: "203.0.113.11"},
+				},
+			},
+		},
+	}
+	endpoints := ExtractFromService(svc)
+	// 2 internal (443, 8443) + 2 ingress x 2 ports = 6
+	if len(endpoints) != 6 {
+		t.Fatalf("expected 6 endpoints, got %d", len(endpoints))
+	}
+}
+
+func TestExtractFromService_LoadBalancerSkipsNonTLSPorts(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "lb-svc", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeLoadBalancer,
+			Ports: []corev1.ServicePort{
+				{Name: "http", Port: 80},
+			},
+		},
+		Status: corev1.ServiceStatus{
+			LoadBalancer: corev1.LoadBalancerStatus{
+				Ingress: []corev1.LoadBalancerIngress{
+					{IP: "203.0.113.10"},
+				},
+			},
+		},
+	}
+	endpoints := ExtractFromService(svc)
+	if len(endpoints) != 0 {
+		t.Fatalf("expected 0 endpoints for non-TLS LB, got %d", len(endpoints))
+	}
+}
+
+func TestExtractFromNodePortService(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "np-svc", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeNodePort,
+			Ports: []corev1.ServicePort{
+				{Name: "https", Port: 443, NodePort: 30443},
+			},
+		},
+	}
+	nodeAddrs := []string{"192.168.1.10", "192.168.1.11"}
+	endpoints := ExtractFromNodePortService(svc, nodeAddrs)
+	if len(endpoints) != 2 {
+		t.Fatalf("expected 2 endpoints, got %d", len(endpoints))
+	}
+	for i, ep := range endpoints {
+		if ep.Host != nodeAddrs[i] {
+			t.Errorf("endpoint[%d].Host = %q, want %q", i, ep.Host, nodeAddrs[i])
+		}
+		if ep.Port != 30443 {
+			t.Errorf("endpoint[%d].Port = %d, want 30443", i, ep.Port)
+		}
+		if ep.SourceKind != securityv1alpha1.SourceKindService {
+			t.Errorf("endpoint[%d].SourceKind = %q, want Service", i, ep.SourceKind)
+		}
+		if ep.SourceName != "np-svc" {
+			t.Errorf("endpoint[%d].SourceName = %q, want np-svc", i, ep.SourceName)
+		}
+	}
+}
+
+func TestExtractFromNodePortService_NoAddresses(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "np-svc", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeNodePort,
+			Ports: []corev1.ServicePort{
+				{Name: "https", Port: 443, NodePort: 30443},
+			},
+		},
+	}
+	endpoints := ExtractFromNodePortService(svc, nil)
+	if len(endpoints) != 0 {
+		t.Fatalf("expected 0 endpoints with no addresses, got %d", len(endpoints))
+	}
+}
+
+func TestExtractFromNodePortService_NonTLSPort(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "np-svc", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeNodePort,
+			Ports: []corev1.ServicePort{
+				{Name: "http", Port: 80, NodePort: 30080},
+			},
+		},
+	}
+	endpoints := ExtractFromNodePortService(svc, []string{"192.168.1.10"})
+	if len(endpoints) != 0 {
+		t.Fatalf("expected 0 endpoints for non-TLS port, got %d", len(endpoints))
+	}
+}
+
+func TestExtractFromNodePortService_ZeroNodePort(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "np-svc", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeNodePort,
+			Ports: []corev1.ServicePort{
+				{Name: "https", Port: 443, NodePort: 0},
+			},
+		},
+	}
+	endpoints := ExtractFromNodePortService(svc, []string{"192.168.1.10"})
+	if len(endpoints) != 0 {
+		t.Fatalf("expected 0 endpoints for zero NodePort, got %d", len(endpoints))
+	}
+}
+
+func TestExtractFromNodePortService_ScanAllPorts(t *testing.T) {
+	defer SetScanAllPorts(false)
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "np-svc", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeNodePort,
+			Ports: []corev1.ServicePort{
+				{Name: "https", Port: 443, NodePort: 30443},
+				{Name: "http", Port: 80, NodePort: 30080},
+			},
+		},
+	}
+	nodeAddrs := []string{"192.168.1.10"}
+
+	endpoints := ExtractFromNodePortService(svc, nodeAddrs)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint without scan-all-ports, got %d", len(endpoints))
+	}
+
+	SetScanAllPorts(true)
+	endpoints = ExtractFromNodePortService(svc, nodeAddrs)
+	if len(endpoints) != 2 {
+		t.Fatalf("expected 2 endpoints with scan-all-ports, got %d", len(endpoints))
+	}
+}
+
+func TestExtractFromNodePortService_MultiplePorts(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "np-svc", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeNodePort,
+			Ports: []corev1.ServicePort{
+				{Name: "https", Port: 443, NodePort: 30443},
+				{Name: "https-admin", Port: 8443, NodePort: 30844},
+			},
+		},
+	}
+	nodeAddrs := []string{"192.168.1.10", "192.168.1.11"}
+	endpoints := ExtractFromNodePortService(svc, nodeAddrs)
+	// 2 TLS ports x 2 nodes = 4
+	if len(endpoints) != 4 {
+		t.Fatalf("expected 4 endpoints, got %d", len(endpoints))
+	}
+}
+
+func TestExtractFromService_NodePortStillGetsInternalEndpoint(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "np-svc", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeNodePort,
+			Ports: []corev1.ServicePort{
+				{Name: "https", Port: 443, NodePort: 30443},
+			},
+		},
+	}
+	endpoints := ExtractFromService(svc)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 internal endpoint from ExtractFromService, got %d", len(endpoints))
+	}
+	if endpoints[0].Host != "np-svc.default" {
+		t.Errorf("host = %q, want np-svc.default", endpoints[0].Host)
+	}
+	if endpoints[0].Port != 443 {
+		t.Errorf("port = %d, want 443 (service port, not node port)", endpoints[0].Port)
+	}
+}
