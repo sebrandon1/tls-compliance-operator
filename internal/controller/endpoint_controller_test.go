@@ -5286,5 +5286,85 @@ func TestHandleHeadlessService_MultipleSlices(t *testing.T) {
 	}
 }
 
+func TestGetNodeAddresses(t *testing.T) {
+	scheme := newTestScheme()
+	nodes := []client.Object{
+		&corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
+			Status: corev1.NodeStatus{
+				Addresses: []corev1.NodeAddress{
+					{Type: corev1.NodeExternalIP, Address: "203.0.113.1"},
+					{Type: corev1.NodeInternalIP, Address: "10.0.0.1"},
+				},
+			},
+		},
+		&corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: "node-2"},
+			Status: corev1.NodeStatus{
+				Addresses: []corev1.NodeAddress{
+					{Type: corev1.NodeInternalIP, Address: "10.0.0.2"},
+					{Type: corev1.NodeHostName, Address: "node-2.local"},
+				},
+			},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(nodes...).Build()
+	r := &EndpointReconciler{Client: fakeClient, Scheme: scheme}
+	addrs, err := r.getNodeAddresses(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(addrs) != 3 {
+		t.Fatalf("expected 3 addresses (1 external + 2 internal), got %d: %v", len(addrs), addrs)
+	}
+	addrSet := map[string]bool{}
+	for _, a := range addrs {
+		addrSet[a] = true
+	}
+	if !addrSet["203.0.113.1"] || !addrSet["10.0.0.1"] || !addrSet["10.0.0.2"] {
+		t.Errorf("expected 203.0.113.1, 10.0.0.1, 10.0.0.2 in results, got %v", addrs)
+	}
+	if addrSet["node-2.local"] {
+		t.Errorf("hostname should not be included in addresses")
+	}
+}
+
+func TestGetNodeAddresses_Deduplicate(t *testing.T) {
+	scheme := newTestScheme()
+	nodes := []client.Object{
+		&corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
+			Status: corev1.NodeStatus{
+				Addresses: []corev1.NodeAddress{
+					{Type: corev1.NodeExternalIP, Address: "10.0.0.1"},
+					{Type: corev1.NodeInternalIP, Address: "10.0.0.1"},
+				},
+			},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(nodes...).Build()
+	r := &EndpointReconciler{Client: fakeClient, Scheme: scheme}
+	addrs, err := r.getNodeAddresses(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(addrs) != 1 {
+		t.Fatalf("expected 1 deduplicated address, got %d: %v", len(addrs), addrs)
+	}
+}
+
+func TestGetNodeAddresses_NoNodes(t *testing.T) {
+	scheme := newTestScheme()
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	r := &EndpointReconciler{Client: fakeClient, Scheme: scheme}
+	addrs, err := r.getNodeAddresses(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(addrs) != 0 {
+		t.Fatalf("expected 0 addresses, got %d", len(addrs))
+	}
+}
+
 // Ensure _ satisfies the client.Object interface for compile-time check
 var _ client.Object = &securityv1alpha1.TLSComplianceReport{}
