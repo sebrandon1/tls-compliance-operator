@@ -495,15 +495,7 @@ func printReportDetail(r *securityv1alpha1.TLSComplianceReport) error {
 	printProfileCompliance(w, "API Server", r.Status.APIServerProfileCompliance)
 	printProfileCompliance(w, "Kubelet", r.Status.KubeletProfileCompliance)
 
-	if len(r.Status.Conditions) > 0 {
-		_, _ = fmt.Fprintf(w, "\nConditions:\n")
-		tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-		_, _ = fmt.Fprintln(tw, "  TYPE\tSTATUS\tREASON\tMESSAGE")
-		for _, c := range r.Status.Conditions {
-			_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", c.Type, c.Status, c.Reason, c.Message)
-		}
-		_ = tw.Flush()
-	}
+	printConditions(w, r.Status.Conditions)
 
 	_, _ = fmt.Fprintf(w, "\nScan Info:\n")
 	if r.Status.FirstSeenAt != nil {
@@ -646,6 +638,8 @@ func newTargetCmd() *cobra.Command {
 		Short: "Manage TLSComplianceTarget resources",
 	}
 	cmd.AddCommand(newTargetListCmd())
+	cmd.AddCommand(newTargetGetCmd())
+	cmd.AddCommand(newTargetDescribeCmd())
 	cmd.AddCommand(newTargetCreateCmd())
 	cmd.AddCommand(newTargetDeleteCmd())
 	return cmd
@@ -673,6 +667,39 @@ func newTargetListCmd() *cobra.Command {
 		return []string{"table", "wide", "json", "yaml"}, cobra.ShellCompDirectiveNoFileComp
 	})
 	return cmd
+}
+
+func newTargetGetCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "get <name>",
+		Short: "Get a TLSComplianceTarget by name",
+		Example: `  # Get a target in table format
+  kubectl tlsreport target get google-com-443
+
+  # Get a target as JSON
+  kubectl tlsreport target get google-com-443 -o json
+
+  # Get a target as YAML
+  kubectl tlsreport target get google-com-443 -o yaml`,
+		Args: cobra.ExactArgs(1),
+		RunE: runTargetGet,
+	}
+	cmd.Flags().StringVarP(&targetOutputFormat, "output", "o", "table", "Output format: table, wide, json, yaml")
+	_ = cmd.RegisterFlagCompletionFunc("output", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		return []string{"table", "wide", "json", "yaml"}, cobra.ShellCompDirectiveNoFileComp
+	})
+	return cmd
+}
+
+func newTargetDescribeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "describe <name>",
+		Short: "Show detailed information about a TLSComplianceTarget",
+		Example: `  # Describe a specific target
+  kubectl tlsreport target describe google-com-443`,
+		Args: cobra.ExactArgs(1),
+		RunE: runTargetDescribe,
+	}
 }
 
 func newTargetCreateCmd() *cobra.Command {
@@ -777,6 +804,72 @@ func printTargetTableImpl(targets []securityv1alpha1.TLSComplianceTarget, wide b
 		_, _ = fmt.Fprintln(w, row)
 	}
 	return w.Flush()
+}
+
+func runTargetGet(cmd *cobra.Command, args []string) error {
+	c, err := buildClient()
+	if err != nil {
+		return err
+	}
+	var target securityv1alpha1.TLSComplianceTarget
+	if err := c.Get(cmd.Context(), client.ObjectKey{Name: args[0]}, &target); err != nil {
+		return fmt.Errorf("getting TLSComplianceTarget %q: %w", args[0], err)
+	}
+	return outputTargets([]securityv1alpha1.TLSComplianceTarget{target})
+}
+
+func runTargetDescribe(cmd *cobra.Command, args []string) error {
+	c, err := buildClient()
+	if err != nil {
+		return err
+	}
+	var target securityv1alpha1.TLSComplianceTarget
+	if err := c.Get(cmd.Context(), client.ObjectKey{Name: args[0]}, &target); err != nil {
+		return fmt.Errorf("getting TLSComplianceTarget %q: %w", args[0], err)
+	}
+	return printTargetDetail(&target)
+}
+
+func printTargetDetail(t *securityv1alpha1.TLSComplianceTarget) error {
+	w := os.Stdout
+
+	_, _ = fmt.Fprintf(w, "Name:         %s\n", t.Name)
+	_, _ = fmt.Fprintf(w, "Host:         %s\n", t.Spec.Host)
+	_, _ = fmt.Fprintf(w, "Port:         %d\n", t.Spec.Port)
+	_, _ = fmt.Fprintf(w, "Age:          %s\n", formatAge(time.Since(t.CreationTimestamp.Time)))
+
+	_, _ = fmt.Fprintf(w, "\nStatus:\n")
+	status := string(t.Status.ComplianceStatus)
+	if status == "" {
+		status = "(pending)"
+	}
+	_, _ = fmt.Fprintf(w, "  Compliance:    %s\n", status)
+	if t.Status.ReportName != "" {
+		_, _ = fmt.Fprintf(w, "  Report:        %s\n", t.Status.ReportName)
+	}
+	if t.Status.Message != "" {
+		_, _ = fmt.Fprintf(w, "  Message:       %s\n", t.Status.Message)
+	}
+	if t.Status.LastScannedAt != nil {
+		_, _ = fmt.Fprintf(w, "  Last Scanned:  %s\n", t.Status.LastScannedAt.Format("2006-01-02 15:04:05 UTC"))
+	}
+
+	printConditions(w, t.Status.Conditions)
+
+	return nil
+}
+
+func printConditions(w *os.File, conditions []metav1.Condition) {
+	if len(conditions) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "\nConditions:\n")
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "  TYPE\tSTATUS\tREASON\tMESSAGE")
+	for _, c := range conditions {
+		_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", c.Type, c.Status, c.Reason, c.Message)
+	}
+	_ = tw.Flush()
 }
 
 func runTargetCreate(cmd *cobra.Command, args []string) error {
