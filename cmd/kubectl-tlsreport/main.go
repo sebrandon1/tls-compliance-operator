@@ -703,12 +703,28 @@ func newTargetDescribeCmd() *cobra.Command {
 }
 
 func newTargetCreateCmd() *cobra.Command {
-	return &cobra.Command{
+	var waitFlag bool
+	var timeout time.Duration
+
+	cmd := &cobra.Command{
 		Use:   "create <host> <port>",
 		Short: "Create a TLSComplianceTarget for the given host and port",
-		Args:  cobra.ExactArgs(2),
-		RunE:  runTargetCreate,
+		Example: `  # Create a target
+  kubectl tlsreport target create google.com 443
+
+  # Create a target and wait for the scan result
+  kubectl tlsreport target create google.com 443 --wait
+
+  # Create with a custom timeout
+  kubectl tlsreport target create google.com 443 --wait --timeout 120s`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTargetCreate(cmd, args, waitFlag, timeout)
+		},
 	}
+	cmd.Flags().BoolVar(&waitFlag, "wait", false, "Wait for the scan to complete and display the result")
+	cmd.Flags().DurationVar(&timeout, "timeout", 60*time.Second, "Timeout when waiting for scan completion")
+	return cmd
 }
 
 func newTargetDeleteCmd() *cobra.Command {
@@ -872,7 +888,7 @@ func printConditions(w *os.File, conditions []metav1.Condition) {
 	_ = tw.Flush()
 }
 
-func runTargetCreate(cmd *cobra.Command, args []string) error {
+func runTargetCreate(cmd *cobra.Command, args []string, wait bool, timeout time.Duration) error {
 	host := args[0]
 	port, err := strconv.Atoi(args[1])
 	if err != nil || port < 1 || port > 65535 {
@@ -901,7 +917,49 @@ func runTargetCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "tlscompliancetarget/%s created\n", name)
-	return nil
+
+	if !wait {
+		return nil
+	}
+
+	return waitForTargetScan(cmd.Context(), c, name, timeout)
+}
+
+func waitForTargetScan(ctx context.Context, c client.Client, name string, timeout time.Duration) error {
+	fmt.Fprint(os.Stderr, "Waiting for scan to complete...")
+
+	waitCtx := ctx
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		waitCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	for {
+		select {
+		case <-waitCtx.Done():
+			fmt.Fprintln(os.Stderr)
+			return fmt.Errorf("timeout waiting for scan of target %s", name)
+		case <-time.After(2 * time.Second):
+			fmt.Fprint(os.Stderr, ".")
+			var target securityv1alpha1.TLSComplianceTarget
+			if err := c.Get(waitCtx, client.ObjectKey{Name: name}, &target); err != nil {
+				return fmt.Errorf("checking target status: %w", err)
+			}
+			if target.Status.LastScannedAt != nil {
+				fmt.Fprintln(os.Stderr, " done")
+				status := string(target.Status.ComplianceStatus)
+				fmt.Fprintf(os.Stdout, "Status: %s\n", status)
+				if target.Status.ReportName != "" {
+					fmt.Fprintf(os.Stdout, "Report: %s\n", target.Status.ReportName)
+				}
+				if target.Status.Message != "" {
+					fmt.Fprintf(os.Stdout, "Message: %s\n", target.Status.Message)
+				}
+				return nil
+			}
+		}
+	}
 }
 
 func runTargetDelete(ctx context.Context, args []string, deleteAll bool) error {
