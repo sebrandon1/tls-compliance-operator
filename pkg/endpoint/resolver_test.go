@@ -1482,7 +1482,7 @@ func TestExtractFromHTTPRoute_NoHostnames(t *testing.T) {
 
 func TestExtractFromTLSRoute(t *testing.T) {
 	route := &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "gateway.networking.k8s.io/v1alpha2", "kind": "TLSRoute",
+		"apiVersion": "gateway.networking.k8s.io/v1", "kind": "TLSRoute",
 		"metadata": map[string]interface{}{"name": "secure-route", "namespace": "default"},
 		"spec":     map[string]interface{}{"hostnames": []interface{}{"secure.example.com"}},
 	}}
@@ -1503,7 +1503,7 @@ func TestExtractFromTLSRoute(t *testing.T) {
 
 func TestExtractFromTLSRoute_NoHostnames(t *testing.T) {
 	route := &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "gateway.networking.k8s.io/v1alpha2", "kind": "TLSRoute",
+		"apiVersion": "gateway.networking.k8s.io/v1", "kind": "TLSRoute",
 		"metadata": map[string]interface{}{"name": "r", "namespace": "default"},
 		"spec":     map[string]interface{}{},
 	}}

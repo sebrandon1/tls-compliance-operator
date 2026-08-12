@@ -4491,6 +4491,68 @@ func TestCleanupOrphanedCRs_CRListError(t *testing.T) {
 	}
 }
 
+func TestCleanupOrphanedCRs_GatewayGVKs(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	now := metav1.Now()
+
+	tlsRoute := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "gateway.networking.k8s.io/v1",
+		"kind":       "TLSRoute",
+		"metadata":   map[string]interface{}{"name": "existing-route", "namespace": "default"},
+		"spec":       map[string]interface{}{"hostnames": []interface{}{"tls.example.com"}},
+	}}
+
+	existingCR := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "existing-route-443-abc12345"},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: "tls.example.com", Port: 443,
+			SourceKind: securityv1alpha1.SourceKindTLSRoute, SourceNamespace: "default", SourceName: "existing-route",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant, FirstSeenAt: &now},
+	}
+
+	orphanedCR := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "deleted-route-443-def67890"},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: "gone.example.com", Port: 443,
+			SourceKind: securityv1alpha1.SourceKindTLSRoute, SourceNamespace: "default", SourceName: "deleted-route",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant, FirstSeenAt: &now},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(tlsRoute, existingCR, orphanedCR).
+		WithStatusSubresource(existingCR, orphanedCR).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:              fakeClient,
+		Scheme:              scheme,
+		GatewayAPIAvailable: true,
+		GatewayGVKs: []schema.GroupVersionKind{
+			{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "TLSRoute"},
+		},
+	}
+
+	if err := r.cleanupOrphanedCRs(ctx); err != nil {
+		t.Fatalf("cleanupOrphanedCRs() error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(crList.Items) != 1 {
+		t.Fatalf("expected 1 CR (orphan removed), got %d", len(crList.Items))
+	}
+	if crList.Items[0].Name != "existing-route-443-abc12345" {
+		t.Errorf("remaining CR = %q, want existing-route-443-abc12345", crList.Items[0].Name)
+	}
+}
+
 func TestAppendExtraPortEndpoints(t *testing.T) {
 	base := []endpoint.Endpoint{{
 		Host:            "svc.default",

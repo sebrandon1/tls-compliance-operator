@@ -1114,15 +1114,22 @@ func runRescanAll(ctx context.Context, wait bool, timeout time.Duration) error {
 	if err != nil {
 		return fmt.Errorf("filtering reports: %w", err)
 	}
+
+	return rescanReports(ctx, c, reports, wait, timeout)
+}
+
+func rescanReports(ctx context.Context, c client.Client, reports []securityv1alpha1.TLSComplianceReport, wait bool, timeout time.Duration) error {
 	if len(reports) == 0 {
 		fmt.Fprintln(os.Stderr, "No reports match the specified filters.")
 		return nil
 	}
 
 	var triggered []string
+	var triggerFailed int
 	for i := range reports {
 		if err := triggerRescan(ctx, c, &reports[i]); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to trigger rescan for %s: %v\n", reports[i].Name, err)
+			triggerFailed++
 			continue
 		}
 		triggered = append(triggered, reports[i].Name)
@@ -1131,6 +1138,9 @@ func runRescanAll(ctx context.Context, wait bool, timeout time.Duration) error {
 	fmt.Fprintf(os.Stderr, "Rescan triggered for %d/%d reports\n", len(triggered), len(reports))
 
 	if !wait || len(triggered) == 0 {
+		if triggerFailed > 0 {
+			return exitCodeError{code: 1}
+		}
 		return nil
 	}
 
@@ -1146,6 +1156,9 @@ func runRescanAll(ctx context.Context, wait bool, timeout time.Duration) error {
 		completed++
 	}
 	fmt.Fprintf(os.Stderr, "Rescan completed for %d/%d reports\n", completed, len(triggered))
+	if triggerFailed > 0 || completed < len(triggered) {
+		return exitCodeError{code: 1}
+	}
 	return nil
 }
 

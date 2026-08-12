@@ -143,19 +143,23 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 	}
 
 	if r.GatewayAPIAvailable {
-		for _, gvkInfo := range []struct {
-			gvk  schema.GroupVersionKind
-			kind securityv1alpha1.SourceKind
-		}{
-			{httpRouteGVK, securityv1alpha1.SourceKindHTTPRoute},
-			{tlsRouteGVK, securityv1alpha1.SourceKindTLSRoute},
-			{gatewayGVK, securityv1alpha1.SourceKindGateway},
-		} {
-			gwSet, err := r.collectUnstructuredSet(ctx, gvkInfo.gvk)
+		for _, gvk := range r.GatewayGVKs {
+			var kind securityv1alpha1.SourceKind
+			switch gvk.Kind {
+			case "HTTPRoute":
+				kind = securityv1alpha1.SourceKindHTTPRoute
+			case "TLSRoute":
+				kind = securityv1alpha1.SourceKindTLSRoute
+			case "Gateway":
+				kind = securityv1alpha1.SourceKindGateway
+			default:
+				continue
+			}
+			gwSet, err := r.collectUnstructuredSet(ctx, gvk)
 			if err != nil {
-				logger.V(1).Info("failed to list Gateway API resources for cleanup", "kind", gvkInfo.gvk.Kind)
+				logger.V(1).Info("failed to list Gateway API resources for cleanup", "kind", gvk.Kind)
 			} else {
-				existingSources[gvkInfo.kind] = gwSet
+				existingSources[kind] = gwSet
 			}
 		}
 	}

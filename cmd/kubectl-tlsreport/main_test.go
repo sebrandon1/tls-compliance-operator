@@ -29,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 )
@@ -635,6 +636,144 @@ func TestWaitForRescan_Timeout(t *testing.T) {
 	err := waitForRescan(ctx, c, "test-report", 3*time.Second)
 	if err == nil || !strings.Contains(err.Error(), "timeout") {
 		t.Errorf("expected timeout error, got: %v", err)
+	}
+}
+
+func TestRescanReports_AllSucceed(t *testing.T) {
+	ctx := context.Background()
+
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{ObjectMeta: metav1.ObjectMeta{Name: "report-1"}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "report-2"}},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(&reports[0], &reports[1]).Build()
+
+	err := rescanReports(ctx, c, reports, false, 0)
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+}
+
+func TestRescanReports_EmptyReports(t *testing.T) {
+	ctx := context.Background()
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	stderr := captureStderr(t, func() {
+		err := rescanReports(ctx, c, nil, false, 0)
+		if err != nil {
+			t.Fatalf("expected nil error for empty reports, got: %v", err)
+		}
+	})
+	if !strings.Contains(stderr, "No reports match") {
+		t.Errorf("expected 'No reports match' message, got: %s", stderr)
+	}
+}
+
+func TestRescanReports_PartialTriggerFailure(t *testing.T) {
+	ctx := context.Background()
+
+	good := securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "report-good"},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(&good).Build()
+
+	reports := []securityv1alpha1.TLSComplianceReport{
+		good,
+		{ObjectMeta: metav1.ObjectMeta{Name: "report-missing"}},
+	}
+
+	err := rescanReports(ctx, c, reports, false, 0)
+	if err == nil {
+		t.Fatal("expected exit code error on partial trigger failure")
+	}
+	var ece exitCodeError
+	if !errors.As(err, &ece) || ece.code != 1 {
+		t.Errorf("expected exitCodeError{code:1}, got: %v", err)
+	}
+}
+
+func TestRescanReports_AllTriggersFail(t *testing.T) {
+	ctx := context.Background()
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{ObjectMeta: metav1.ObjectMeta{Name: "missing-1"}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "missing-2"}},
+	}
+
+	err := rescanReports(ctx, c, reports, false, 0)
+	if err == nil {
+		t.Fatal("expected exit code error when all triggers fail")
+	}
+	var ece exitCodeError
+	if !errors.As(err, &ece) || ece.code != 1 {
+		t.Errorf("expected exitCodeError{code:1}, got: %v", err)
+	}
+}
+
+func TestRescanReports_WaitTimeout(t *testing.T) {
+	ctx := context.Background()
+
+	report := securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "report-pending",
+			Annotations: map[string]string{rescanAnnotation: "2024-01-01T00:00:00Z"},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(&report).Build()
+
+	reports := []securityv1alpha1.TLSComplianceReport{report}
+
+	err := rescanReports(ctx, c, reports, true, 2*time.Second)
+	if err == nil {
+		t.Fatal("expected exit code error on wait timeout")
+	}
+	var ece exitCodeError
+	if !errors.As(err, &ece) || ece.code != 1 {
+		t.Errorf("expected exitCodeError{code:1}, got: %v", err)
+	}
+}
+
+func TestRescanReports_WaitSuccess(t *testing.T) {
+	ctx := context.Background()
+
+	report := securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "report-done"},
+		Status: securityv1alpha1.TLSComplianceReportStatus{
+			ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+		},
+	}
+
+	updateCount := 0
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(&report).WithStatusSubresource(&report).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Update: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+				if err := cl.Update(ctx, obj, opts...); err != nil {
+					return err
+				}
+				updateCount++
+				if updateCount == 1 {
+					// Simulate the controller clearing the rescan annotation
+					var r securityv1alpha1.TLSComplianceReport
+					if err := cl.Get(ctx, client.ObjectKeyFromObject(obj), &r); err == nil {
+						delete(r.Annotations, rescanAnnotation)
+						_ = cl.Update(ctx, &r, opts...)
+					}
+				}
+				return nil
+			},
+		}).
+		Build()
+
+	reports := []securityv1alpha1.TLSComplianceReport{report}
+
+	err := rescanReports(ctx, c, reports, true, 10*time.Second)
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
 	}
 }
 

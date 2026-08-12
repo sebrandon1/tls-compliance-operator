@@ -60,12 +60,6 @@ var routeGVK = schema.GroupVersionKind{
 	Kind:    "Route",
 }
 
-var (
-	httpRouteGVK = schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "HTTPRoute"}
-	tlsRouteGVK  = schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1alpha2", Kind: "TLSRoute"}
-	gatewayGVK   = schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "Gateway"}
-)
-
 // Event reasons for Kubernetes events
 const (
 	EventReasonTLSWarning          = "TLSWarning"
