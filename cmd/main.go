@@ -364,16 +364,21 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 
 	var gatewayGVKs []schema.GroupVersionKind
 	for _, gvk := range []struct {
-		group, version, kind string
+		group    string
+		versions []string
+		kind     string
 	}{
-		{"gateway.networking.k8s.io", "v1", "HTTPRoute"},
-		{"gateway.networking.k8s.io", "v1alpha2", "TLSRoute"},
-		{"gateway.networking.k8s.io", "v1", "Gateway"},
+		{"gateway.networking.k8s.io", []string{"v1"}, "HTTPRoute"},
+		{"gateway.networking.k8s.io", []string{"v1", "v1alpha2"}, "TLSRoute"},
+		{"gateway.networking.k8s.io", []string{"v1"}, "Gateway"},
 	} {
-		_, err = restMapper.RESTMapping(schema.GroupKind{Group: gvk.group, Kind: gvk.kind}, gvk.version)
-		if err == nil {
-			gatewayGVKs = append(gatewayGVKs, schema.GroupVersionKind{Group: gvk.group, Version: gvk.version, Kind: gvk.kind})
-			setupLog.Info("Gateway API resource detected", "kind", gvk.kind)
+		for _, version := range gvk.versions {
+			_, err = restMapper.RESTMapping(schema.GroupKind{Group: gvk.group, Kind: gvk.kind}, version)
+			if err == nil {
+				gatewayGVKs = append(gatewayGVKs, schema.GroupVersionKind{Group: gvk.group, Version: version, Kind: gvk.kind})
+				setupLog.Info("Gateway API resource detected", "kind", gvk.kind, "version", version)
+				break
+			}
 		}
 	}
 	if len(gatewayGVKs) == 0 {
