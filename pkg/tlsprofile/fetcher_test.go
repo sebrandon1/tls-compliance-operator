@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -366,5 +367,79 @@ func TestRefreshAll_FallsBackToDefaultOnError(t *testing.T) {
 	}
 	if got := f.GetAdherence(); got != "" {
 		t.Errorf("adherence = %q, want empty on error fallback", got)
+	}
+}
+
+func TestRefreshAll_FetchesInParallel(t *testing.T) {
+	delay := 80 * time.Millisecond
+	cl := newInterceptedFetcherClient(
+		func(_ context.Context, _ client.ObjectKey, obj *unstructured.Unstructured) error {
+			time.Sleep(delay)
+			obj.Object["spec"] = map[string]any{
+				"tlsSecurityProfile": map[string]any{"type": "Intermediate"},
+			}
+			return nil
+		},
+		func(_ context.Context, _ *unstructured.UnstructuredList) error {
+			time.Sleep(delay)
+			return nil
+		})
+
+	f := NewFetcher(cl)
+	start := time.Now()
+	f.RefreshAll(context.Background())
+	elapsed := time.Since(start)
+
+	// Sequential fetches would take ~3*delay; parallel should finish near one delay.
+	if elapsed >= 2*delay {
+		t.Fatalf("RefreshAll took %v; want < %v to confirm parallel fetches", elapsed, 2*delay)
+	}
+}
+
+func TestRefreshAll_PartialErrorKeepsSuccessfulProfiles(t *testing.T) {
+	cl := newInterceptedFetcherClient(
+		func(_ context.Context, key client.ObjectKey, obj *unstructured.Unstructured) error {
+			switch obj.GetKind() {
+			case "APIServer":
+				return fmt.Errorf("APIServer missing")
+			case "IngressController":
+				obj.Object["spec"] = map[string]any{
+					"tlsSecurityProfile": map[string]any{"type": "Old"},
+				}
+				return nil
+			}
+			return fmt.Errorf("not found")
+		},
+		func(_ context.Context, list *unstructured.UnstructuredList) error {
+			if list.GetKind() == "KubeletConfigList" {
+				list.Items = []unstructured.Unstructured{
+					{Object: map[string]any{
+						"apiVersion": "machineconfiguration.openshift.io/v1",
+						"kind":       "KubeletConfig",
+						"metadata":   map[string]any{"name": "kc1"},
+						"spec": map[string]any{
+							"tlsSecurityProfile": map[string]any{"type": "Modern"},
+						},
+					}},
+				}
+				return nil
+			}
+			return fmt.Errorf("not found")
+		})
+
+	f := NewFetcher(cl)
+	f.RefreshAll(context.Background())
+
+	if got := f.GetProfile(ComponentAPIServer); got.Type != ProfileTypeIntermediate {
+		t.Errorf("APIServer profile = %v, want Intermediate (default on error)", got.Type)
+	}
+	if got := f.GetProfile(ComponentIngressController); got.Type != ProfileTypeOld {
+		t.Errorf("IngressController profile = %v, want Old", got.Type)
+	}
+	if got := f.GetProfile(ComponentKubeletConfig); got.Type != ProfileTypeModern {
+		t.Errorf("KubeletConfig profile = %v, want Modern", got.Type)
+	}
+	if got := f.GetAdherence(); got != "" {
+		t.Errorf("adherence = %q, want empty when APIServer fetch fails", got)
 	}
 }

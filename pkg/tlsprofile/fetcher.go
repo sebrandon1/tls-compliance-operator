@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -52,36 +53,44 @@ func (f *Fetcher) GetAllProfiles() map[Component]Profile {
 	return result
 }
 
-// RefreshAll fetches TLS security profiles from all three OpenShift components.
+// RefreshAll fetches TLS security profiles from all three OpenShift components concurrently.
 func (f *Fetcher) RefreshAll(ctx context.Context) {
 	logger := log.FromContext(ctx).WithName("tlsprofile-fetcher")
 
-	// Fetch APIServer profile and adherence mode
-	profile, adherence, err := f.fetchAPIServerProfile(ctx)
-	if err != nil {
-		logger.V(1).Info("could not fetch APIServer TLS profile, using default", "error", err)
-		profile = DefaultProfile()
-	}
-	f.setProfile(ComponentAPIServer, &profile)
-	f.setAdherence(adherence)
+	var wg sync.WaitGroup
+	wg.Add(3)
 
-	// Fetch IngressController profile
-	profile, err = f.fetchIngressControllerProfile(ctx)
-	if err != nil {
-		logger.V(1).Info("could not fetch IngressController TLS profile, using default", "error", err)
-		profile = DefaultProfile()
-	}
-	f.setProfile(ComponentIngressController, &profile)
+	go func() {
+		defer wg.Done()
+		profile, adherence, err := f.fetchAPIServerProfile(ctx)
+		if err != nil {
+			logger.V(1).Info("could not fetch TLS profile, using default", "component", ComponentAPIServer, "error", err)
+			profile = DefaultProfile()
+		}
+		f.setAPIServer(&profile, adherence)
+	}()
 
-	// Fetch KubeletConfig profile
-	profile, err = f.fetchKubeletConfigProfile(ctx)
-	if err != nil {
-		logger.V(1).Info("could not fetch KubeletConfig TLS profile, using default", "error", err)
-		profile = DefaultProfile()
-	}
-	f.setProfile(ComponentKubeletConfig, &profile)
+	go func() {
+		defer wg.Done()
+		f.refreshComponent(ctx, logger, ComponentIngressController, f.fetchIngressControllerProfile)
+	}()
 
+	go func() {
+		defer wg.Done()
+		f.refreshComponent(ctx, logger, ComponentKubeletConfig, f.fetchKubeletConfigProfile)
+	}()
+
+	wg.Wait()
 	logger.Info("TLS security profiles refreshed")
+}
+
+func (f *Fetcher) refreshComponent(ctx context.Context, logger logr.Logger, component Component, fetch func(context.Context) (Profile, error)) {
+	profile, err := fetch(ctx)
+	if err != nil {
+		logger.V(1).Info("could not fetch TLS profile, using default", "component", component, "error", err)
+		profile = DefaultProfile()
+	}
+	f.setProfile(component, &profile)
 }
 
 // StartPeriodicRefresh starts a goroutine that periodically refreshes profiles.
@@ -123,6 +132,13 @@ func (f *Fetcher) GetAdherence() string {
 func (f *Fetcher) setAdherence(adherence string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.adherence = adherence
+}
+
+func (f *Fetcher) setAPIServer(profile *Profile, adherence string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.profiles[ComponentAPIServer] = *profile
 	f.adherence = adherence
 }
 
