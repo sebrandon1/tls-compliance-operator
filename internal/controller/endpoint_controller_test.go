@@ -35,7 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -3035,7 +3035,7 @@ func TestUpdateConditions_PQCCompliant_FIPSEnabled_LegacyTLS(t *testing.T) {
 	t.Error("PQCCompliant condition not found")
 }
 
-func drainEvents(recorder *record.FakeRecorder) []string {
+func drainEvents(recorder *events.FakeRecorder) []string {
 	var events []string
 	for {
 		select {
@@ -3048,7 +3048,7 @@ func drainEvents(recorder *record.FakeRecorder) []string {
 }
 
 func TestEmitComplianceEvents_PQCNotReady_FIPSEnabled(t *testing.T) {
-	recorder := record.NewFakeRecorder(10)
+	recorder := events.NewFakeRecorder(10)
 	r := &EndpointReconciler{FIPSEnabled: true, Recorder: recorder}
 	cr := &securityv1alpha1.TLSComplianceReport{}
 	cr.Spec.Host = "example.com"
@@ -3077,7 +3077,7 @@ func TestEmitComplianceEvents_PQCNotReady_FIPSEnabled(t *testing.T) {
 }
 
 func TestEmitComplianceEvents_PQCNotReady_FIPSDisabled(t *testing.T) {
-	recorder := record.NewFakeRecorder(10)
+	recorder := events.NewFakeRecorder(10)
 	r := &EndpointReconciler{FIPSEnabled: false, Recorder: recorder}
 	cr := &securityv1alpha1.TLSComplianceReport{}
 	cr.Spec.Host = "example.com"
@@ -3099,7 +3099,7 @@ func TestEmitComplianceEvents_PQCNotReady_FIPSDisabled(t *testing.T) {
 }
 
 func TestEmitComplianceEvents_PQCNotReady_FIPSEnabled_LegacyTLS(t *testing.T) {
-	recorder := record.NewFakeRecorder(10)
+	recorder := events.NewFakeRecorder(10)
 	r := &EndpointReconciler{FIPSEnabled: true, Recorder: recorder}
 	cr := &securityv1alpha1.TLSComplianceReport{}
 	cr.Spec.Host = "example.com"
@@ -3472,7 +3472,7 @@ func TestHandleTarget_SetsOwnerReference(t *testing.T) {
 				SupportsTLS13: true,
 			},
 		},
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: events.NewFakeRecorder(10),
 	}
 
 	_, err := r.handleTarget(context.Background(), target)
@@ -3518,7 +3518,7 @@ func TestHandleEndpoints_ReturnsFirstProcessEndpointError(t *testing.T) {
 		Scheme:     scheme,
 		Workers:    1,
 		TLSChecker: &MockTLSChecker{},
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 	}
 
 	endpoints := []endpoint.Endpoint{
@@ -3548,7 +3548,7 @@ func TestHandleEndpoints_SuccessReturnsNil(t *testing.T) {
 		TLSChecker: &MockTLSChecker{
 			Result: &tlscheck.TLSCheckResult{SupportsTLS13: true},
 		},
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: events.NewFakeRecorder(10),
 	}
 
 	endpoints := []endpoint.Endpoint{
@@ -3594,7 +3594,7 @@ func TestHandleHeadlessService_EndpointSliceListError(t *testing.T) {
 		Scheme:     scheme,
 		Workers:    1,
 		TLSChecker: &MockTLSChecker{},
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 	}
 
 	_, err := r.handleHeadlessService(context.Background(), svc)
@@ -3632,7 +3632,7 @@ func TestHandleTarget_ProcessEndpointError(t *testing.T) {
 		Scheme:     scheme,
 		Workers:    1,
 		TLSChecker: &MockTLSChecker{},
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 	}
 
 	_, err := r.handleTarget(context.Background(), target)
@@ -3654,7 +3654,7 @@ func TestHandleEndpoints_WorkersBusy_Requeues(t *testing.T) {
 		Scheme:     scheme,
 		Workers:    1,
 		TLSChecker: &MockTLSChecker{},
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		ManagerCtx: context.Background(),
 	}
 
@@ -3706,7 +3706,7 @@ func TestHandleTarget_WorkersBusy_Requeues(t *testing.T) {
 		Scheme:     scheme,
 		Workers:    1,
 		TLSChecker: &MockTLSChecker{},
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		ManagerCtx: context.Background(),
 	}
 
@@ -4037,7 +4037,7 @@ func TestEmitComplianceEvents(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			recorder := record.NewFakeRecorder(10)
+			recorder := events.NewFakeRecorder(10)
 			r := &EndpointReconciler{Recorder: recorder, CertExpiryDays: tt.certExpiryDays}
 			cr := &securityv1alpha1.TLSComplianceReport{
 				Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "example.com", Port: 443},
@@ -5102,7 +5102,7 @@ func TestHandleRescan_RemovesAnnotationAndRescans(t *testing.T) {
 		TLSChecker:     checker,
 		Workers:        1,
 		CertExpiryDays: 30,
-		Recorder:       record.NewFakeRecorder(10),
+		Recorder:       events.NewFakeRecorder(10),
 	}
 
 	_, err := reconciler.handleRescan(ctx, report)

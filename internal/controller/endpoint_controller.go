@@ -33,7 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 
 	"golang.org/x/time/rate"
 	"k8s.io/client-go/util/retry"
@@ -60,8 +60,9 @@ var routeGVK = schema.GroupVersionKind{
 	Kind:    "Route",
 }
 
-// Event reasons for Kubernetes events
+// Event reasons and actions for Kubernetes events
 const (
+	EventActionScan                = "Scan"
 	EventReasonTLSWarning          = "TLSWarning"
 	EventReasonTLSNonCompliant     = "TLSNonCompliant"
 	EventReasonComplianceChanged   = "ComplianceChanged"
@@ -86,7 +87,7 @@ type EndpointReconciler struct {
 	APIReader             client.Reader
 	Scheme                *runtime.Scheme
 	TLSChecker            tlscheck.Checker
-	Recorder              record.EventRecorder
+	Recorder              events.EventRecorder
 	IncludeNamespaces     map[string]bool
 	ExcludeNamespaces     map[string]bool
 	CertExpiryDays        int
@@ -144,6 +145,7 @@ func (r *EndpointReconciler) updateWithRetry(ctx context.Context, name string, m
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch;update
 // +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes;tlsroutes;gateways,verbs=get;list;watch

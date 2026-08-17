@@ -88,8 +88,8 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep *endpoint.E
 		logger.Info("created TLSComplianceReport", "name", crName, "host", ep.Host, "port", ep.Port)
 
 		if r.Recorder != nil {
-			r.Recorder.Event(cr, corev1.EventTypeNormal, EventReasonEndpointDiscovered,
-				fmt.Sprintf("Discovered TLS endpoint %s from %s %s/%s", hostPort(ep.Host, ep.Port), ep.SourceKind, ep.SourceNamespace, ep.SourceName))
+			r.Recorder.Eventf(cr, nil, corev1.EventTypeNormal, EventReasonEndpointDiscovered, EventActionScan,
+				"Discovered TLS endpoint %s from %s %s/%s", hostPort(ep.Host, ep.Port), ep.SourceKind, ep.SourceNamespace, ep.SourceName)
 		}
 		metrics.RecordEndpointDiscovered(string(ep.SourceKind), ep.SourceNamespace)
 
@@ -287,9 +287,9 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 			if r.Recorder != nil {
 				var cr securityv1alpha1.TLSComplianceReport
 				if err := r.Get(ctx, client.ObjectKey{Name: crName}, &cr); err == nil {
-					r.Recorder.Event(&cr, corev1.EventTypeWarning, EventReasonRetryExhausted,
-						fmt.Sprintf("TLS check retries exhausted for %s after %d attempts: %s",
-							hostPort(host, int32(port)), 1+r.MaxRetries, failReason))
+					r.Recorder.Eventf(&cr, nil, corev1.EventTypeWarning, EventReasonRetryExhausted, EventActionScan,
+						"TLS check retries exhausted for %s after %d attempts: %s",
+						hostPort(host, int32(port)), 1+r.MaxRetries, failReason)
 				}
 			}
 		}

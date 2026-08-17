@@ -286,41 +286,42 @@ func (r *EndpointReconciler) emitComplianceEvents(cr *securityv1alpha1.TLSCompli
 	}
 
 	if cr.Status.ComplianceStatus == securityv1alpha1.ComplianceStatusWarning {
-		r.Recorder.Event(cr, corev1.EventTypeWarning, EventReasonTLSWarning,
-			fmt.Sprintf("Endpoint %s supports modern TLS but also allows legacy versions", hostPort(cr.Spec.Host, cr.Spec.Port)))
+		r.Recorder.Eventf(cr, nil, corev1.EventTypeWarning, EventReasonTLSWarning, EventActionScan,
+			"Endpoint %s supports modern TLS but also allows legacy versions", hostPort(cr.Spec.Host, cr.Spec.Port))
 	}
 
 	if cr.Status.ComplianceStatus == securityv1alpha1.ComplianceStatusNonCompliant {
-		r.Recorder.Event(cr, corev1.EventTypeWarning, EventReasonTLSNonCompliant,
-			fmt.Sprintf("Endpoint %s only supports legacy TLS versions (no TLS 1.2 or 1.3)", hostPort(cr.Spec.Host, cr.Spec.Port)))
+		r.Recorder.Eventf(cr, nil, corev1.EventTypeWarning, EventReasonTLSNonCompliant, EventActionScan,
+			"Endpoint %s only supports legacy TLS versions (no TLS 1.2 or 1.3)", hostPort(cr.Spec.Host, cr.Spec.Port))
 	}
 
 	if oldStatus != "" && oldStatus != cr.Status.ComplianceStatus &&
 		oldStatus != securityv1alpha1.ComplianceStatusPending {
-		r.Recorder.Event(cr, corev1.EventTypeWarning, EventReasonComplianceChanged,
-			fmt.Sprintf("Compliance status changed from %s to %s for %s", oldStatus, cr.Status.ComplianceStatus, hostPort(cr.Spec.Host, cr.Spec.Port)))
+		r.Recorder.Eventf(cr, nil, corev1.EventTypeWarning, EventReasonComplianceChanged, EventActionScan,
+			"Compliance status changed from %s to %s for %s", oldStatus, cr.Status.ComplianceStatus, hostPort(cr.Spec.Host, cr.Spec.Port))
 	}
 
 	if oldPQCReadiness != "" && oldPQCReadiness != cr.Status.PQCReadiness {
 		if cr.Status.PQCReadiness == securityv1alpha1.PQCReadinessPQCReady {
-			r.Recorder.Event(cr, corev1.EventTypeNormal, EventReasonPQCReady,
-				fmt.Sprintf("Endpoint %s is now post-quantum ready (TLS 1.3 + hybrid ML-KEM)", hostPort(cr.Spec.Host, cr.Spec.Port)))
+			r.Recorder.Eventf(cr, nil, corev1.EventTypeNormal, EventReasonPQCReady, EventActionScan,
+				"Endpoint %s is now post-quantum ready (TLS 1.3 + hybrid ML-KEM)", hostPort(cr.Spec.Host, cr.Spec.Port))
 		} else {
-			msg := fmt.Sprintf("PQC readiness changed from %s to %s for %s", oldPQCReadiness, cr.Status.PQCReadiness, hostPort(cr.Spec.Host, cr.Spec.Port))
+			fipsSuffix := ""
 			if r.FIPSEnabled && cr.Status.PQCReadiness == securityv1alpha1.PQCReadinessTLS13Capable {
-				msg += " (FIPS mode active, ML-KEM unavailable)"
+				fipsSuffix = " (FIPS mode active, ML-KEM unavailable)"
 			}
-			r.Recorder.Event(cr, corev1.EventTypeWarning, EventReasonPQCNotReady, msg)
+			r.Recorder.Eventf(cr, nil, corev1.EventTypeWarning, EventReasonPQCNotReady, EventActionScan,
+				"PQC readiness changed from %s to %s for %s%s", oldPQCReadiness, cr.Status.PQCReadiness, hostPort(cr.Spec.Host, cr.Spec.Port), fipsSuffix)
 		}
 	}
 
 	if result.Certificate != nil {
 		if result.Certificate.IsExpired {
-			r.Recorder.Event(cr, corev1.EventTypeWarning, EventReasonCertificateExpired,
-				fmt.Sprintf("TLS certificate has expired for %s", hostPort(cr.Spec.Host, cr.Spec.Port)))
+			r.Recorder.Eventf(cr, nil, corev1.EventTypeWarning, EventReasonCertificateExpired, EventActionScan,
+				"TLS certificate has expired for %s", hostPort(cr.Spec.Host, cr.Spec.Port))
 		} else if result.Certificate.DaysUntilExpiry <= r.CertExpiryDays {
-			r.Recorder.Event(cr, corev1.EventTypeWarning, EventReasonCertificateExpiring,
-				fmt.Sprintf("TLS certificate for %s expires in %d days", hostPort(cr.Spec.Host, cr.Spec.Port), result.Certificate.DaysUntilExpiry))
+			r.Recorder.Eventf(cr, nil, corev1.EventTypeWarning, EventReasonCertificateExpiring, EventActionScan,
+				"TLS certificate for %s expires in %d days", hostPort(cr.Spec.Host, cr.Spec.Port), result.Certificate.DaysUntilExpiry)
 		}
 	}
 }

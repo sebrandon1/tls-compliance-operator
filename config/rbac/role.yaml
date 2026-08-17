@@ -38,6 +38,14 @@ rules:
   - list
   - watch
 - apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+  - update
+- apiGroups:
   - gateway.networking.k8s.io
   resources:
   - gateways

@@ -497,7 +497,7 @@ spec:
 			}).WithTimeout(5 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
 
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "events",
+				cmd := exec.Command("kubectl", "get", "events.events.k8s.io",
 					"--field-selector", "reason=CertificateExpiring",
 					"-o", "jsonpath={.items[*].reason}")
 				output, err := utils.Run(cmd)
