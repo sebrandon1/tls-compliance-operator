@@ -461,7 +461,7 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 		APIReader:             mgr.GetAPIReader(),
 		Scheme:                mgr.GetScheme(),
 		TLSChecker:            checker,
-		Recorder:              mgr.GetEventRecorderFor("tls-compliance-controller"), //nolint:staticcheck // migrating to events API is a separate task
+		Recorder:              mgr.GetEventRecorder("tls-compliance-controller"),
 		IncludeNamespaces:     includedNS,
 		ExcludeNamespaces:     excludedNS,
 		CertExpiryDays:        cfg.certExpiryWarningDays,
