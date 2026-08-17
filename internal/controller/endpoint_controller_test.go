@@ -5428,5 +5428,155 @@ func TestGetNodeAddresses_NoNodes(t *testing.T) {
 	}
 }
 
+func countingNodeListClient(t *testing.T, objects ...client.Object) (client.Client, *atomic.Int32) {
+	t.Helper()
+	var listCalls atomic.Int32
+	c := fake.NewClientBuilder().
+		WithScheme(newTestScheme()).
+		WithObjects(objects...).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if _, ok := list.(*corev1.NodeList); ok {
+					listCalls.Add(1)
+				}
+				return cl.List(ctx, list, opts...)
+			},
+		}).
+		Build()
+	return c, &listCalls
+}
+
+func testNodeWithInternalIP() *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
+		Status: corev1.NodeStatus{
+			Addresses: []corev1.NodeAddress{
+				{Type: corev1.NodeInternalIP, Address: "10.0.0.1"},
+			},
+		},
+	}
+}
+
+func TestGetNodeAddresses_CacheHit(t *testing.T) {
+	c, listCalls := countingNodeListClient(t, testNodeWithInternalIP())
+	r := &EndpointReconciler{Client: c, Scheme: newTestScheme()}
+
+	addrs1, err := r.getNodeAddresses(context.Background())
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	addrs2, err := r.getNodeAddresses(context.Background())
+	if err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+	if listCalls.Load() != 1 {
+		t.Errorf("expected 1 List within TTL, got %d", listCalls.Load())
+	}
+	if len(addrs1) != 1 || addrs1[0] != "10.0.0.1" {
+		t.Errorf("first call addresses = %v, want [10.0.0.1]", addrs1)
+	}
+	if len(addrs2) != 1 || addrs2[0] != "10.0.0.1" {
+		t.Errorf("cached addresses = %v, want [10.0.0.1]", addrs2)
+	}
+}
+
+func TestGetNodeAddresses_CacheExpired(t *testing.T) {
+	c, listCalls := countingNodeListClient(t, testNodeWithInternalIP())
+	r := &EndpointReconciler{Client: c, Scheme: newTestScheme()}
+
+	if _, err := r.getNodeAddresses(context.Background()); err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	r.nodeAddrExpiry = time.Now().Add(-time.Second)
+	if _, err := r.getNodeAddresses(context.Background()); err != nil {
+		t.Fatalf("after expiry: %v", err)
+	}
+	if listCalls.Load() != 2 {
+		t.Errorf("expected 2 List calls after TTL, got %d", listCalls.Load())
+	}
+}
+
+func TestGetNodeAddresses_EmptyNotCached(t *testing.T) {
+	c, listCalls := countingNodeListClient(t)
+	r := &EndpointReconciler{Client: c, Scheme: newTestScheme()}
+
+	for i := 0; i < 2; i++ {
+		addrs, err := r.getNodeAddresses(context.Background())
+		if err != nil {
+			t.Fatalf("call %d: %v", i+1, err)
+		}
+		if len(addrs) != 0 {
+			t.Fatalf("call %d: expected 0 addresses, got %v", i+1, addrs)
+		}
+	}
+	if listCalls.Load() != 2 {
+		t.Errorf("empty result should not be cached: expected 2 List calls, got %d", listCalls.Load())
+	}
+}
+
+func TestGetNodeAddresses_ListError(t *testing.T) {
+	c := fake.NewClientBuilder().
+		WithScheme(newTestScheme()).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if _, ok := list.(*corev1.NodeList); ok {
+					return fmt.Errorf("list nodes failed")
+				}
+				return cl.List(ctx, list, opts...)
+			},
+		}).
+		Build()
+	r := &EndpointReconciler{Client: c, Scheme: newTestScheme()}
+	_, err := r.getNodeAddresses(context.Background())
+	if err == nil {
+		t.Fatal("expected list error")
+	}
+}
+
+func TestGetNodeAddresses_ReturnedSliceIsCopy(t *testing.T) {
+	c, _ := countingNodeListClient(t, testNodeWithInternalIP())
+	r := &EndpointReconciler{Client: c, Scheme: newTestScheme()}
+
+	addrs, err := r.getNodeAddresses(context.Background())
+	if err != nil {
+		t.Fatalf("getNodeAddresses: %v", err)
+	}
+	addrs[0] = "mutated"
+	cached, err := r.getNodeAddresses(context.Background())
+	if err != nil {
+		t.Fatalf("cached call: %v", err)
+	}
+	if cached[0] != "10.0.0.1" {
+		t.Errorf("mutating returned slice corrupted cache: got %v", cached)
+	}
+}
+
+func TestGetNodeAddresses_ExpiredListError(t *testing.T) {
+	var listCalls atomic.Int32
+	c := fake.NewClientBuilder().
+		WithScheme(newTestScheme()).
+		WithObjects(testNodeWithInternalIP()).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if _, ok := list.(*corev1.NodeList); ok {
+					if listCalls.Add(1) > 1 {
+						return fmt.Errorf("list nodes failed")
+					}
+				}
+				return cl.List(ctx, list, opts...)
+			},
+		}).
+		Build()
+	r := &EndpointReconciler{Client: c, Scheme: newTestScheme()}
+
+	if _, err := r.getNodeAddresses(context.Background()); err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	r.nodeAddrExpiry = time.Now().Add(-time.Second)
+	if _, err := r.getNodeAddresses(context.Background()); err == nil {
+		t.Fatal("expected list error after expiry, not a stale cache")
+	}
+}
+
 // Ensure _ satisfies the client.Object interface for compile-time check
 var _ client.Object = &securityv1alpha1.TLSComplianceReport{}

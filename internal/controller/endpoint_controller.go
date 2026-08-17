@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -81,6 +82,8 @@ const workerBusyRequeueDelay = 10 * time.Second
 
 const listPageSize = 500
 
+const nodeAddressCacheTTL = time.Minute
+
 // EndpointReconciler reconciles Service, Ingress, and Route resources
 type EndpointReconciler struct {
 	client.Client
@@ -110,6 +113,9 @@ type EndpointReconciler struct {
 	ManagerCtx            context.Context
 	checkSem              chan struct{}
 	checkSemOnce          sync.Once
+	nodeAddrMu            sync.RWMutex
+	nodeAddrCache         []string
+	nodeAddrExpiry        time.Time
 }
 
 func (r *EndpointReconciler) apiReader() client.Reader {
@@ -284,6 +290,41 @@ func (r *EndpointReconciler) handleService(ctx context.Context, svc *corev1.Serv
 }
 
 func (r *EndpointReconciler) getNodeAddresses(ctx context.Context) ([]string, error) {
+	r.nodeAddrMu.RLock()
+	cached := r.cloneCachedNodeAddresses()
+	r.nodeAddrMu.RUnlock()
+	if cached != nil {
+		return cached, nil
+	}
+
+	addrs, err := r.listNodeAddresses(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	r.nodeAddrMu.Lock()
+	defer r.nodeAddrMu.Unlock()
+	if cached := r.cloneCachedNodeAddresses(); cached != nil {
+		return cached, nil
+	}
+	if len(addrs) == 0 {
+		r.nodeAddrCache = nil
+		r.nodeAddrExpiry = time.Time{}
+		return addrs, nil
+	}
+	r.nodeAddrCache = addrs
+	r.nodeAddrExpiry = time.Now().Add(nodeAddressCacheTTL)
+	return slices.Clone(addrs), nil
+}
+
+func (r *EndpointReconciler) cloneCachedNodeAddresses() []string {
+	if len(r.nodeAddrCache) > 0 && time.Now().Before(r.nodeAddrExpiry) {
+		return slices.Clone(r.nodeAddrCache)
+	}
+	return nil
+}
+
+func (r *EndpointReconciler) listNodeAddresses(ctx context.Context) ([]string, error) {
 	var nodeList corev1.NodeList
 	if err := r.List(ctx, &nodeList); err != nil {
 		return nil, fmt.Errorf("listing nodes: %w", err)
