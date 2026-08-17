@@ -120,6 +120,9 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep *endpoint.E
 }
 
 func (r *EndpointReconciler) tryAsyncCheck(crName, host string, port int, namespace string) error {
+	if r.skipIfCircuitOpen(crName) {
+		return nil
+	}
 	r.initCheckSemaphore()
 	select {
 	case r.checkSem <- struct{}{}:
@@ -170,6 +173,9 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	logger := log.FromContext(ctx).WithValues("crName", crName)
 
 	if r.TLSChecker == nil {
+		return
+	}
+	if r.skipIfCircuitOpen(crName) {
 		return
 	}
 
@@ -288,6 +294,12 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 		}
 		metrics.RecordCheckError(reason)
 
+		if isCircuitFailure(failReason) {
+			r.recordCircuitFailure(crName)
+		} else {
+			r.recordCircuitSuccess(crName)
+		}
+
 		if err := r.updateStatusWithRetry(ctx, crName, func(cr *securityv1alpha1.TLSComplianceReport) {
 			now := metav1.Now()
 			cr.Status.LastCheckAt = &now
@@ -335,6 +347,8 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 	keyExchangeTypes := tlscheck.KeyExchangeTypes(result.CipherSuites)
 	pqcReadiness := determinePQCReadiness(result)
 	complianceStatus := determineComplianceStatus(result)
+
+	r.recordCircuitSuccess(crName)
 
 	var oldComplianceStatus securityv1alpha1.ComplianceStatus
 	var oldPQCReadiness securityv1alpha1.PQCReadiness

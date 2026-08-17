@@ -244,6 +244,15 @@ var (
 		},
 		[]string{"reason"},
 	)
+
+	// CircuitOpenSkippedTotal tracks TLS checks skipped because the endpoint circuit is open
+	CircuitOpenSkippedTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: MetricsNamespace,
+			Name:      "circuit_open_skipped_total",
+			Help:      "Total number of TLS checks skipped because the endpoint circuit breaker is open",
+		},
+	)
 )
 
 func init() {
@@ -270,6 +279,7 @@ func init() {
 		ReconcileInFlight,
 		ReconcileByResourceTotal,
 		CheckErrorsTotal,
+		CircuitOpenSkippedTotal,
 	)
 }
 
@@ -430,4 +440,9 @@ func RecordReconcileSuccess(sourceKind string) {
 // RecordCheckError records a TLS check error by failure reason
 func RecordCheckError(reason string) {
 	CheckErrorsTotal.WithLabelValues(reason).Inc()
+}
+
+// RecordCircuitOpenSkipped records a TLS check skipped because the circuit is open
+func RecordCircuitOpenSkipped() {
+	CircuitOpenSkippedTotal.Inc()
 }

@@ -304,3 +304,7 @@ func TestRecordCheckError(t *testing.T) {
 		t.Errorf("expected counter to increment by 1, got %v -> %v", before, after)
 	}
 }
+
+func TestRecordCircuitOpenSkipped(t *testing.T) {
+	assertCounterInc(t, CircuitOpenSkippedTotal, RecordCircuitOpenSkipped)
+}
