@@ -108,6 +108,7 @@ type EndpointReconciler struct {
 	RunOnceDone           chan error
 	InitialScanDone       atomic.Bool
 	ManagerCtx            context.Context
+	checkTimeout          time.Duration
 	checkSem              chan struct{}
 	checkSemOnce          sync.Once
 }
