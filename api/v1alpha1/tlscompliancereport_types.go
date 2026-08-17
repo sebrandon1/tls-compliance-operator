@@ -35,6 +35,11 @@ const (
 	SourceKindGateway   SourceKind = "Gateway"
 )
 
+// RescanAnnotation is the TLSComplianceReport annotation the kubectl plugin
+// sets to request an immediate re-check. The controller removes it after the
+// scan starts.
+const RescanAnnotation = "tls-compliance.telco.openshift.io/rescan"
+
 // ComplianceStatus indicates the TLS compliance status of an endpoint
 // +kubebuilder:validation:Enum=Compliant;NonCompliant;Warning;Unreachable;Timeout;Closed;Filtered;NoTLS;PlaintextHTTP;MutualTLSRequired;Pending;Unknown
 type ComplianceStatus string

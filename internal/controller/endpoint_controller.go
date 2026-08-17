@@ -73,7 +73,6 @@ const (
 	EventReasonRetryExhausted      = "RetryExhausted"
 	EventReasonPQCReady            = "PQCReady"
 	EventReasonPQCNotReady         = "PQCNotReady"
-	RescanAnnotation               = "tls-compliance.telco.openshift.io/rescan"
 )
 
 var errWorkersBusy = errors.New("TLS check deferred: workers busy")
@@ -222,7 +221,7 @@ func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	var report securityv1alpha1.TLSComplianceReport
 	if err := r.Get(ctx, client.ObjectKey{Name: req.Name}, &report); err == nil {
-		if _, hasRescan := report.Annotations[RescanAnnotation]; hasRescan {
+		if _, hasRescan := report.Annotations[securityv1alpha1.RescanAnnotation]; hasRescan {
 			result, err := r.handleRescan(ctx, &report)
 			metrics.RecordReconcileLatency("TLSComplianceReport", time.Since(start).Seconds())
 			return result, err
@@ -465,7 +464,7 @@ func (r *EndpointReconciler) handleRescan(ctx context.Context, report *securityv
 	logger.Info("rescan requested", "report", report.Name)
 
 	if err := r.updateWithRetry(ctx, report.Name, func(cr *securityv1alpha1.TLSComplianceReport) {
-		delete(cr.Annotations, RescanAnnotation)
+		delete(cr.Annotations, securityv1alpha1.RescanAnnotation)
 	}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("removing rescan annotation: %w", err)
 	}

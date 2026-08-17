@@ -5071,7 +5071,7 @@ func TestHandleRescan_RemovesAnnotationAndRescans(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-report",
 			Annotations: map[string]string{
-				RescanAnnotation: "true",
+				securityv1alpha1.RescanAnnotation: "true",
 			},
 		},
 		Spec: securityv1alpha1.TLSComplianceReportSpec{
@@ -5114,7 +5114,7 @@ func TestHandleRescan_RemovesAnnotationAndRescans(t *testing.T) {
 	if err := fakeClient.Get(ctx, client.ObjectKey{Name: "test-report"}, &updated); err != nil {
 		t.Fatalf("failed to get report: %v", err)
 	}
-	if _, hasAnnotation := updated.Annotations[RescanAnnotation]; hasAnnotation {
+	if _, hasAnnotation := updated.Annotations[securityv1alpha1.RescanAnnotation]; hasAnnotation {
 		t.Error("rescan annotation should have been removed")
 	}
 	if checker.CheckCount() == 0 {
@@ -5130,7 +5130,7 @@ func TestHandleRescan_AnnotationRemovalError(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "error-report",
 			Annotations: map[string]string{
-				RescanAnnotation: "true",
+				securityv1alpha1.RescanAnnotation: "true",
 			},
 		},
 		Spec: securityv1alpha1.TLSComplianceReportSpec{
