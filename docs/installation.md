@@ -75,4 +75,4 @@ kubectl delete -f https://github.com/sebrandon1/tls-compliance-operator/releases
 
 ---
 
-Next: [Viewing Reports](viewing-reports.md)
+Next: [Quick Start](quickstart.md)

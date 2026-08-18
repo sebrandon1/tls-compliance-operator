@@ -44,6 +44,8 @@ certificate details, and post-quantum readiness.
 kubectl apply -f https://github.com/sebrandon1/tls-compliance-operator/releases/latest/download/install.yaml
 ```
 
+For a walkthrough from deploy through export, see [Quick Start](docs/quickstart.md).
+
 To uninstall:
 
 ```bash
@@ -54,6 +56,7 @@ kubectl delete -f https://github.com/sebrandon1/tls-compliance-operator/releases
 
 | Guide | Description |
 |-------|-------------|
+| [Quick Start](docs/quickstart.md) | Deploy, view reports, create a target, export |
 | [Installation](docs/installation.md) | Deploy to your cluster in one command |
 | [Configuration](docs/configuration.md) | Flags, environment variables, resource sizing |
 | [Architecture](docs/architecture.md) | How the operator works, compliance logic |
