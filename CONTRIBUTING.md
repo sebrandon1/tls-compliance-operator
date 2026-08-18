@@ -66,6 +66,7 @@ make test-e2e  # Creates a Kind cluster, runs tests, cleans up
 - golangci-lint enforces style checks — run `make lint` before submitting
 - Prefer table-driven tests
 - Keep comments minimal — explain "why", not "what"
+- `make check-coverage` requires at least 70% coverage (override with `COVERAGE_THRESHOLD`)
 
 ## Reporting Issues
 

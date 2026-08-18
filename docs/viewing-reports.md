@@ -4,10 +4,10 @@
 
 ```bash
 $ kubectl get tlsreport
-NAME                                                           HOST                                                  PORT    SOURCE    COMPLIANCE   GRADE   TLS1.3   TLS1.2   TLS1.0   PQC            CERTEXPIRY   AGE
-rhcos4-moderate-master-rs-openshift-compliance-8443-03744f25   rhcos4-moderate-master-rs.openshift-compliance         8443    Service   Compliant    A       true     false    false    TLS13Capable   0            5m
-google-com-443-01d44386                                        google.com                                            443     Target    Compliant    B       true     true     true     PQCReady       53           2m
-ocp4-cis-rs-openshift-compliance-8443-aab74008                 ocp4-cis-rs.openshift-compliance                      8443    Service   Closed               false    false    false    NoPQC                       6m
+NAME                                                           HOST                                                  PORT    SOURCE    COMPLIANCE   GRADE   FS     TLS1.3   TLS1.2   TLS1.0   PQC            CERTEXPIRY   AGE
+rhcos4-moderate-master-rs-openshift-compliance-8443-03744f25   rhcos4-moderate-master-rs.openshift-compliance         8443    Service   Compliant    A       true   true     false    false    TLS13Capable   0            5m
+google-com-443-01d44386                                        google.com                                            443     Target    Compliant    B       true   true     true     true     PQCReady       53           2m
+ocp4-cis-rs-openshift-compliance-8443-aab74008                 ocp4-cis-rs.openshift-compliance                      8443    Service   Closed               false  false    false    false    NoPQC                       6m
 ```
 
 ### What the Columns Mean
@@ -144,7 +144,7 @@ API Server Profile Compliance:
 Conditions:
   Type: TLSCompliant      Status: True   Message: Endpoint supports modern TLS (1.2 or 1.3)
   Type: CertificateValid  Status: True   Message: TLS certificate is valid for 53 more days
-  Type: PQCCompliant      Status: True   Message: Endpoint supports TLS 1.3 with post-quantum key exchange (ML-KEM)
+  Type: PQCCompliant      Status: True   Message: Endpoint supports TLS 1.3 with hybrid ML-KEM key exchange (verified by active probe)
 ```
 
 ## Filtering Reports

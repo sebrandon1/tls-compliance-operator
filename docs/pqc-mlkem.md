@@ -103,7 +103,9 @@ my-service-default-443-...   my-svc.ns     443    Service  Compliant    A       
 
 ### Wide view
 
-Wide output adds the `ML-KEM` column showing active probe results:
+`kubectl get tlsreport -o wide` adds SSL 3.0 and ML-KEM columns.
+`kubectl tlsreport get` already includes ML-KEM in the default table; `-o wide`
+adds namespace, TLS 1.0, SSL 3.0, issuer, and cert expiry.
 
 ```bash
 $ kubectl tlsreport get -o wide
@@ -133,7 +135,7 @@ The `PQCCompliant` condition provides programmatic access:
 ```
 Conditions:
   Type: PQCCompliant  Status: True   Reason: PQCReady
-    Message: Endpoint supports TLS 1.3 with ML-KEM key exchange (verified by active probe)
+    Message: Endpoint supports TLS 1.3 with hybrid ML-KEM key exchange (verified by active probe)
 ```
 
 Possible condition states:
@@ -143,6 +145,7 @@ Possible condition states:
 | True | PQCReady | Endpoint supports TLS 1.3 with hybrid ML-KEM key exchange (verified by active probe) |
 | True | PQCReady | Endpoint supports TLS 1.3 with hybrid ML-KEM key exchange |
 | False | TLS13Capable | Endpoint supports TLS 1.3 but has not negotiated a post-quantum key exchange |
+| False | TLS13Capable | Endpoint supports TLS 1.3 but has not negotiated a post-quantum key exchange (FIPS mode active, ML-KEM unavailable) |
 | False | LegacyTLS | Endpoint only supports TLS 1.2 or older, no path to post-quantum cryptography |
 | Unknown | NoPQC | No TLS detected on endpoint |
 
@@ -176,8 +179,8 @@ kubectl tlsreport csv --sort-by pqc
 
 ```
 Post-Quantum Cryptography Readiness
-  PQC Ready Rate:                12.5%
-  ML-KEM Supported (active probe): 3
+  PQC Ready Rate:                    12.5%
+  ML-KEM Supported (active probe):   3/24
   PQCReady:       3
   TLS13Capable:   15
   LegacyTLS:      5

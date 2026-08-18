@@ -7,20 +7,20 @@ JUnit XML, and Markdown formats for CI/CD pipelines, auditing, and dashboards.
 
 ### Download a pre-built binary
 
-Pre-built binaries are available in `dist/plugins/` for multiple platforms:
+Release binaries are published for `linux-amd64`, `linux-arm64`,
+`darwin-amd64`, and `darwin-arm64`:
 
 ```bash
 # Linux (amd64)
-sudo cp dist/plugins/kubectl-tlsreport-linux-amd64 /usr/local/bin/kubectl-tlsreport
-sudo chmod +x /usr/local/bin/kubectl-tlsreport
+curl -LO https://github.com/sebrandon1/tls-compliance-operator/releases/latest/download/kubectl-tlsreport-linux-amd64
+chmod +x kubectl-tlsreport-linux-amd64
+sudo mv kubectl-tlsreport-linux-amd64 /usr/local/bin/kubectl-tlsreport
 
 # macOS (Apple Silicon)
-sudo cp dist/plugins/kubectl-tlsreport-darwin-arm64 /usr/local/bin/kubectl-tlsreport
-sudo chmod +x /usr/local/bin/kubectl-tlsreport
+curl -LO https://github.com/sebrandon1/tls-compliance-operator/releases/latest/download/kubectl-tlsreport-darwin-arm64
+chmod +x kubectl-tlsreport-darwin-arm64
+sudo mv kubectl-tlsreport-darwin-arm64 /usr/local/bin/kubectl-tlsreport
 ```
-
-Available platforms: `linux-amd64`, `linux-arm64`, `linux-ppc64le`, `linux-s390x`,
-`darwin-amd64`, `darwin-arm64`.
 
 ### Build from source
 
@@ -64,12 +64,12 @@ kubectl tlsreport markdown
 kubectl tlsreport md  # shorthand
 ```
 
-Produces a Markdown table matching `kubectl get tlsreport` columns:
+Produces a Markdown table matching `kubectl tlsreport get` columns:
 
 ```
-| Host | Port | Source | Compliance | Grade | FS | TLS1.3 | TLS1.2 | TLS1.0 | PQC | CertExpiry | Age |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| my-service.default | 443 | Service | Compliant | A | true | true | true | false | PQCReady | 364 | 5m |
+| Host | Port | Source | Compliance | Grade | FS | TLS1.3 | TLS1.2 | TLS1.0 | PQC | MLKEM | CertExpiry | Age |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| my-service.default | 443 | Service | Compliant | A | true | true | true | false | PQCReady | true | 364 | 5m |
 ```
 
 ## Querying Reports
@@ -82,7 +82,7 @@ The `get` subcommand lists reports in table format with output options:
 # Default table output
 kubectl tlsreport get
 
-# Wide output (includes SSL3.0, ML-KEM columns)
+# Wide output (adds namespace, TLS 1.0, SSL 3.0, issuer, cert expiry)
 kubectl tlsreport get -o wide
 
 # JSON output
@@ -116,7 +116,8 @@ kubectl tlsreport version
 
 ## Filtering
 
-Filter by namespace, compliance status, source kind, PQC readiness, or certificate expiry:
+Filter by namespace, compliance status, source kind, PQC readiness, TLS version,
+cipher grade, or certificate expiry:
 
 ```bash
 # Only reports from a specific namespace
@@ -130,6 +131,15 @@ kubectl tlsreport csv --source Route
 
 # Only endpoints not yet PQC-ready
 kubectl tlsreport csv --pqc-status LegacyTLS
+
+# Endpoints that support TLS 1.2
+kubectl tlsreport csv --tls-version 1.2
+
+# Exact cipher grade
+kubectl tlsreport csv --grade A
+
+# Minimum cipher grade (A and B)
+kubectl tlsreport csv --min-grade B
 
 # Certificates expiring within 30 days
 kubectl tlsreport csv --expires-within 30d

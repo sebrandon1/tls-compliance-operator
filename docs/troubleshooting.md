@@ -80,13 +80,20 @@ oc rollout restart deployment/tls-compliance-operator-controller-manager \
 | **Warning** | Supports modern TLS but also legacy versions | Remove legacy TLS support |
 | **Closed** | Port not listening | Check if service pods are running |
 | **Timeout** | Connection timed out | Check network connectivity / firewall rules |
-| **Filtered** | No response (firewall drop) | Check network policies |
+| **Filtered** | Reserved (firewall drop); not currently produced | Check network policies |
 | **Unreachable** | Could not connect (generic failure) | Check DNS resolution, verify the endpoint exists |
 | **NoTLS** | Port open but doesn't speak TLS | Expected for non-TLS services |
 | **PlaintextHTTP** | Endpoint responds with HTTP but no TLS | Add TLS termination via ingress controller or sidecar proxy |
 | **MutualTLSRequired** | Server requires client certificate | Expected for mTLS endpoints; use `--client-cert`/`--client-key` to probe |
 | **Pending** | Not yet checked | Wait for scan cycle |
 | **Unknown** | Status could not be determined | Investigate endpoint health, check operator logs |
+
+## Endpoints Stuck as Timeout or Unreachable
+
+After 3 consecutive Timeout or Unreachable results, the operator opens a
+circuit breaker for that report and skips further TLS checks for 15 minutes.
+This avoids hammering dead endpoints. Successful checks close the circuit.
+Skipped checks increment `tls_compliance_circuit_open_skipped_total`.
 
 ## Reports Accumulating / Not Being Cleaned Up
 
@@ -99,7 +106,7 @@ env:
   value: "90"
 ```
 
-Reports with no status change for the configured number of days are removed
+Reports with no scan activity for the configured number of days are removed
 during each cleanup cycle. Monitor deletions with:
 
 ```promql

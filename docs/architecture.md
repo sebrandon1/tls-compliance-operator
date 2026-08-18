@@ -38,9 +38,9 @@
 
 ## Flow
 
-1. **Controller** watches Services, Ingresses, Routes, and Gateway API resources (HTTPRoute, TLSRoute, Gateway) for changes; periodically scans all Pods. Headless services are resolved via the EndpointSlice API to discover individual pod endpoints.
+1. **Controller** watches Services, Ingresses, Routes, and Gateway API resources (HTTPRoute, TLSRoute, Gateway) for changes; periodically scans Pods and `TLSComplianceTarget` CRs. Headless services are resolved via the EndpointSlice API. NodePort services are probed on each node address; LoadBalancer services include ingress IP/hostname endpoints.
 2. **Endpoint Resolver** extracts TLS endpoints (host:port) from each resource type
-3. **TLS Checker** probes each endpoint with all TLS versions in parallel using Go's `crypto/tls`, then performs active ML-KEM probing for PQC readiness
+3. **TLS Checker** probes each endpoint with all TLS versions in parallel using Go's `crypto/tls`, then performs active ML-KEM probing for PQC readiness. After 3 consecutive Timeout or Unreachable failures, a circuit breaker skips that endpoint for 15 minutes.
 4. **TLSComplianceReport** CR is created/updated with results
 5. **Events and Metrics** are emitted for observability
 
@@ -53,9 +53,10 @@
 | **Warning** | Supports modern TLS (1.2/1.3) but also allows legacy versions (SSL 3.0/TLS 1.0/1.1) |
 | **Timeout** | Connection timed out waiting for a response |
 | **Closed** | Port is not listening (connection refused) |
-| **Filtered** | No response and no explicit refusal (e.g. firewall drop) |
+| **Filtered** | Reserved for firewall-drop cases; the checker does not currently emit this status |
 | **Unreachable** | Could not connect to endpoint (unclassified network error) |
 | **NoTLS** | Port is open but does not speak TLS |
+| **PlaintextHTTP** | Port responds with HTTP and no TLS |
 | **MutualTLSRequired** | Server requires a client certificate to complete handshake |
 | **Pending** | Not yet checked |
 | **Unknown** | Status could not be determined |
