@@ -223,6 +223,7 @@ func (r *EndpointReconciler) deleteCleanupReport(ctx context.Context, ref *repor
 		log.FromContext(ctx).Error(err, "failed to delete TLSComplianceReport", "name", ref.name, "ttl", ttl)
 		return
 	}
+	r.recordCircuitSuccess(ref.name)
 	if ttl {
 		metrics.RecordReportTTLDeleted()
 	}

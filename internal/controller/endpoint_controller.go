@@ -116,6 +116,8 @@ type EndpointReconciler struct {
 	nodeAddrMu            sync.RWMutex
 	nodeAddrCache         []string
 	nodeAddrExpiry        time.Time
+	circuitMu             sync.Mutex
+	circuits              map[string]circuitState
 }
 
 func (r *EndpointReconciler) apiReader() client.Reader {
@@ -469,6 +471,7 @@ func (r *EndpointReconciler) handleRescan(ctx context.Context, report *securityv
 		return ctrl.Result{}, fmt.Errorf("removing rescan annotation: %w", err)
 	}
 
+	r.recordCircuitSuccess(report.Name)
 	r.performTLSCheck(ctx, report.Name, report.Spec.Host, int(report.Spec.Port), report.Spec.SourceNamespace, false)
 	return ctrl.Result{}, nil
 }
