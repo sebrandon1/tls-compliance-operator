@@ -129,12 +129,41 @@ func (r *EndpointReconciler) tryAsyncCheck(crName, host string, port int, namesp
 				<-r.checkSem
 				metrics.RecordWorkerRelease()
 			}()
-			r.performTLSCheck(r.ManagerCtx, crName, host, port, namespace, true)
+			// Reconcile context is cancelled when Reconcile returns, so async
+			// probes must use ManagerCtx (process lifetime). Wrap it with a
+			// timeout so a hung CheckEndpoint cannot hold a worker until shutdown.
+			ctx, cancel := context.WithTimeout(r.managerCtx(), r.asyncCheckTimeout())
+			defer cancel()
+			r.performTLSCheck(ctx, crName, host, port, namespace, true)
 		}()
 		return nil
 	default:
 		return errWorkersBusy
 	}
+}
+
+func (r *EndpointReconciler) managerCtx() context.Context {
+	if r.ManagerCtx != nil {
+		return r.ManagerCtx
+	}
+	return context.Background()
+}
+
+func (r *EndpointReconciler) asyncCheckTimeout() time.Duration {
+	if r.checkTimeout > 0 {
+		return r.checkTimeout
+	}
+	attempts := 1 + r.MaxRetries
+	if attempts < 1 {
+		attempts = 1
+	}
+	backoffCap := r.MaxBackoff
+	if backoffCap <= 0 {
+		backoffCap = 5 * time.Minute
+	}
+	// Cover each CheckEndpoint attempt plus backoff between them so the
+	// deadline cannot cancel a still-valid retry.
+	return time.Duration(attempts)*tlscheck.DefaultTimeout + time.Duration(attempts-1)*backoffCap
 }
 
 func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host string, port int, namespace string, holdsSemaphore bool) {
@@ -221,14 +250,18 @@ func (r *EndpointReconciler) retryTLSCheck(ctx context.Context, crName, host str
 				metrics.RecordWorkerRelease()
 			}
 
+			timer := time.NewTimer(retryDelay)
 			select {
 			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
 				if holdsSemaphore {
 					r.checkSem <- struct{}{}
 					metrics.RecordWorkerAcquire()
 				}
 				return nil, nil
-			case <-time.After(retryDelay):
+			case <-timer.C:
 			}
 
 			if holdsSemaphore {
