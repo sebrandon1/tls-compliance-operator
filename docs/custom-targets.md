@@ -31,11 +31,16 @@ EOF
 ```
 
 The operator picks it up within seconds and creates a corresponding
-`TLSComplianceReport`:
+`TLSComplianceReport`. You can also create targets with the plugin:
+
+```bash
+kubectl tlsreport target create google.com 443
+kubectl tlsreport target create google.com 443 --wait
+```
 
 ```bash
 $ kubectl get tlsreport | grep google
-google-com-443-01d44386   google.com   443   Target   Compliant   B   true   true   true   true   53   72s
+google-com-443-01d44386   google.com   443   Target   Compliant   B   true   true   true   true   PQCReady   53   72s
 ```
 
 The `SOURCE` column shows `Target` to distinguish these from auto-discovered
@@ -62,7 +67,7 @@ Status:
     tls12:  true
     tls13:  true
   Negotiated Curves:
-    TLS 1.3:  X25519MLKEM768 (hybrid)
+    TLS 1.3:  X25519MLKEM768
   Certificate Info:
     Days Until Expiry:  53
     Issuer:      CN=WR2,O=Google Trust Services,C=US

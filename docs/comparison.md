@@ -25,14 +25,14 @@ The [openshift/tls-scanner](https://github.com/openshift/tls-scanner) is a batch
 | Rate limiting | Configurable rate limiter for TLS checks |
 | Mutual TLS detection | Detects when server requires client certificate |
 | Multi-arch support | Builds for amd64, arm64, s390x, ppc64le |
-| Finer-grained failure statuses | Timeout, Closed, and Filtered states for unreachable endpoints |
+| Finer-grained failure statuses | Timeout, Closed, and Unreachable (Filtered is reserved in the API) |
 | Include-mode namespace filtering | `--include-namespaces` for allow-list namespace monitoring |
 | IANA/OpenSSL cipher name mapping | Bidirectional cipher suite name translation |
 | Cipher strength grading (A-F) | Per-cipher and overall strength grades |
 | OpenShift TLSSecurityProfile compliance | Checks against APIServer, IngressController, and KubeletConfig profiles |
 | Arbitrary target scanning | `TLSComplianceTarget` CRD for scanning any host:port |
 | Configurable worker pool | `--workers` flag for concurrent periodic scan throughput |
-| CSV and JUnit XML export | `kubectl-tlsreport` plugin for CI/CD integration |
+| CSV, JSON, YAML, JUnit, Markdown export | `kubectl-tlsreport` plugin for CI/CD integration |
 | Post-quantum readiness detection | Reports negotiated key exchange curves and PQC status |
 | Active ML-KEM probing | Dedicated TLS 1.3 handshake to confirm post-quantum key exchange support |
 | Gateway API support | Auto-detects and monitors HTTPRoute, TLSRoute, and Gateway resources |
@@ -43,8 +43,9 @@ The [openshift/tls-scanner](https://github.com/openshift/tls-scanner) is a batch
 | Webhook validation | Admission webhook validates TLSComplianceTarget resources |
 | mTLS client certificates | Client cert support for probing mTLS-protected endpoints |
 | Per-namespace rate limiting | Fine-grained TLS check rate control per namespace |
-| YAML export | Additional export format via kubectl-tlsreport plugin |
 | Pod IP and hostNetwork scanning | Discovers TLS servers on pod IPs even without a Service/Ingress/Route |
+| NodePort and LoadBalancer endpoints | Probes node addresses and load-balancer ingress in addition to ClusterIP |
+| Run-once CI mode | `--run-once` scan with pass/fail exit codes |
 
 ## Architectural Differences
 
@@ -53,5 +54,5 @@ The [openshift/tls-scanner](https://github.com/openshift/tls-scanner) is a batch
 | Execution model | Long-running controller with periodic rescans | Batch Job (run once, collect results) |
 | TLS probing | Go `crypto/tls` | nmap with TLS scripts |
 | Output format | Kubernetes CRDs + events + Prometheus | Raw scan results / reports |
-| Discovery | Service, Ingress, Route watches + Pod IP scanning | Pod-level endpoint scanning via lsof |
+| Discovery | Service, Ingress, Route, Gateway API, Pod, NodePort/LoadBalancer | Pod-level endpoint scanning via lsof |
 | Deployment | Operator (Deployment + CRDs) | Job or CronJob |

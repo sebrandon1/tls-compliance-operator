@@ -121,6 +121,7 @@ Running with `SCAN_FORMAT=json` produces an array of report objects:
 ```json
 [
   {
+    "crName": "console-openshift-console-443-a1b2c3d4",
     "host": "console.openshift-console.svc",
     "port": "443",
     "source": "Service",
@@ -154,6 +155,7 @@ Running with `SCAN_FORMAT=json` produces an array of report objects:
     "scanDuration": "1.234s"
   },
   {
+    "crName": "downloads-openshift-console-8080-e5f6a7b8",
     "host": "downloads.openshift-console.svc",
     "port": "8080",
     "source": "Service",
@@ -178,6 +180,7 @@ Running with `SCAN_FORMAT=json` produces an array of report objects:
 ```
 
 Key fields for ML-KEM/PQC validation:
+- **`crName`** — TLSComplianceReport resource name
 - **`pqcReadiness`** — `PQCReady`, `TLS13Capable`, `LegacyTLS`, or `NoPQC`
 - **`mlkemSupported`** — `true` if active ML-KEM probing confirmed hybrid key exchange
 - **`quantumReady`** — `true` if passive detection found a post-quantum curve

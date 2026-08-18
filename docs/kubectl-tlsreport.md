@@ -7,20 +7,20 @@ in your cluster. Once installed, kubectl discovers it as `kubectl tlsreport`.
 
 ### Download a pre-built binary
 
-Pre-built binaries are available in `dist/plugins/` for multiple platforms:
+Release binaries are published for `linux-amd64`, `linux-arm64`,
+`darwin-amd64`, and `darwin-arm64`:
 
 ```bash
 # Linux (amd64)
-sudo cp dist/plugins/kubectl-tlsreport-linux-amd64 /usr/local/bin/kubectl-tlsreport
-sudo chmod +x /usr/local/bin/kubectl-tlsreport
+curl -LO https://github.com/sebrandon1/tls-compliance-operator/releases/latest/download/kubectl-tlsreport-linux-amd64
+chmod +x kubectl-tlsreport-linux-amd64
+sudo mv kubectl-tlsreport-linux-amd64 /usr/local/bin/kubectl-tlsreport
 
 # macOS (Apple Silicon)
-sudo cp dist/plugins/kubectl-tlsreport-darwin-arm64 /usr/local/bin/kubectl-tlsreport
-sudo chmod +x /usr/local/bin/kubectl-tlsreport
+curl -LO https://github.com/sebrandon1/tls-compliance-operator/releases/latest/download/kubectl-tlsreport-darwin-arm64
+chmod +x kubectl-tlsreport-darwin-arm64
+sudo mv kubectl-tlsreport-darwin-arm64 /usr/local/bin/kubectl-tlsreport
 ```
-
-Available platforms: `linux-amd64`, `linux-arm64`, `linux-ppc64le`, `linux-s390x`,
-`darwin-amd64`, `darwin-arm64`.
 
 ### Build from source
 
@@ -43,7 +43,7 @@ These flags are available on all subcommands:
 | `--expired` | | Show only expired certificates |
 | `--cert-issuer` | | Filter by certificate issuer (substring match) |
 | `--cert-subject` | | Filter by certificate subject (substring match) |
-| `--tls-version` | | Filter by TLS version support (1.0, 1.1, 1.2, 1.3, ssl3.0). Invalid values error instead of matching nothing. |
+| `--tls-version` | | Filter by TLS version support (`1.0`, `1.1`, `1.2`, `1.3`, `ssl3.0`; aliases `tls1.x`, `ssl30`, `3.0`). Invalid values error instead of matching nothing. |
 | `--grade` | | Filter by exact cipher grade (A, B, C, D, F) |
 | `--min-grade` | | Filter by minimum cipher grade (e.g. B shows A and B) |
 | `--sort-by` | | Sort results (host, port, compliance, expiry, grade, pqc) |
@@ -89,6 +89,9 @@ kubectl tlsreport junit --fail-on-non-compliant > results.xml
 Display reports in a table. Supports `table`, `wide`, `json`, and `yaml`
 output formats.
 
+Default table columns: NAME, HOST, PORT, SOURCE, COMPLIANCE, GRADE, FS,
+TLS 1.3, TLS 1.2, PQC, MLKEM.
+
 ```bash
 kubectl tlsreport get [name] [-o format]
 ```
@@ -101,7 +104,7 @@ kubectl tlsreport get [name] [-o format]
 # List all reports
 kubectl tlsreport get
 
-# Wide output (includes TLS 1.0, SSL 3.0, ML-KEM, issuer, cert expiry)
+# Wide output (adds namespace, TLS 1.0, SSL 3.0, issuer, and cert expiry)
 kubectl tlsreport get -o wide
 
 # Get a specific report by name
@@ -191,20 +194,46 @@ endpoints (external services, partner APIs, etc.).
 #### target list
 
 ```bash
-kubectl tlsreport target list
+kubectl tlsreport target list [-o table|wide|json|yaml]
 ```
 
 Lists all targets with their host, port, status, associated report name,
 last scan time, and age.
 
+#### target get
+
+```bash
+kubectl tlsreport target get <name> [-o table|wide|json|yaml]
+```
+
+```bash
+kubectl tlsreport target get google-com-443
+kubectl tlsreport target get google-com-443 -o json
+```
+
+#### target describe
+
+```bash
+kubectl tlsreport target describe <name>
+```
+
+```bash
+kubectl tlsreport target describe google-com-443
+```
+
 #### target create
 
 ```bash
-kubectl tlsreport target create <host> <port>
+kubectl tlsreport target create <host> <port> [--wait] [--timeout duration]
 ```
 
 Creates a `TLSComplianceTarget` resource. The operator picks it up and
 creates a corresponding `TLSComplianceReport` within seconds.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--wait` | `false` | Wait for the scan to complete and display the result |
+| `--timeout` | `60s` | Timeout when waiting for scan completion |
 
 ```bash
 # Scan an external endpoint
@@ -212,6 +241,9 @@ kubectl tlsreport target create google.com 443
 
 # Scan an internal service by DNS
 kubectl tlsreport target create my-api.partner.example.com 8443
+
+# Create and wait for the scan result
+kubectl tlsreport target create google.com 443 --wait --timeout 120s
 ```
 
 #### target delete

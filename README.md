@@ -12,19 +12,19 @@ for TLS version compliance, certificate health, and security posture.
 ## Overview
 
 The TLS Compliance Operator watches Services, Ingresses, OpenShift Routes,
-Gateway API resources (HTTPRoute, TLSRoute, Gateway), and Pods to discover TLS
-endpoints, then probes each endpoint to determine which TLS versions it
-supports. It creates `TLSComplianceReport` custom resources with compliance
-status, supported TLS versions, cipher suites, certificate details, and
-post-quantum readiness.
+Gateway API resources (HTTPRoute, TLSRoute, Gateway), Pods, and optional
+`TLSComplianceTarget` CRs to discover TLS endpoints, then probes each endpoint
+to determine which TLS versions it supports. It creates `TLSComplianceReport`
+custom resources with compliance status, supported TLS versions, cipher suites,
+certificate details, and post-quantum readiness.
 
 ## Key Features
 
-- **Automatic Discovery** — Services, Ingresses, Routes, Pods, and ExternalName services
+- **Automatic Discovery** — Services (including ExternalName, NodePort, and LoadBalancer), Ingresses, Routes, and Pods
 - **Gateway API Support** — Auto-discovers HTTPRoute, TLSRoute, and Gateway resources
 - **Headless Service Scanning** — Discovers pod endpoints via EndpointSlice API
 - **TLS Version Detection** — Probes for SSL 3.0, TLS 1.0, 1.1, 1.2, and 1.3 support (in parallel)
-- **Compliance Classification** — Compliant, NonCompliant, Timeout, Closed, NoTLS, MutualTLSRequired
+- **Compliance Classification** — Compliant, Warning, NonCompliant, plus connectivity statuses (Timeout, Closed, Unreachable, NoTLS, PlaintextHTTP, MutualTLSRequired)
 - **Certificate Tracking** — Issuer, subject, DNS names, expiration, chain length, public key details
 - **Cipher Strength Grading** — A-F grades for negotiated cipher suites
 - **Forward Secrecy Detection** — Identifies whether all cipher suites use ephemeral key exchange (ECDHE/DHE)
@@ -91,7 +91,7 @@ make docker-buildx IMG=quay.io/bapalm/tls-compliance-operator:latest  # Multi-ar
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit issues and pull requests.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

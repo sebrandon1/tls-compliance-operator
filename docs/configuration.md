@@ -2,7 +2,7 @@
 
 The tls-compliance-operator is configured via command-line flags. Every flag
 can also be set via an environment variable, which is useful when deploying
-with Helm or kustomize overlays where modifying container args is inconvenient.
+with kustomize overlays where modifying container args is inconvenient.
 
 **Precedence:** CLI flag > environment variable > default value.
 
@@ -16,9 +16,9 @@ If a flag is set on the command line, its environment variable is ignored.
 | `--cleanup-interval` | `TLS_COMPLIANCE_CLEANUP_INTERVAL` | duration | `5m` | How often the operator removes TLSComplianceReport CRs whose source resource (Service, Ingress, Route) has been deleted. |
 | `--tls-check-timeout` | `TLS_COMPLIANCE_CHECK_TIMEOUT` | duration | `5s` | Timeout for each individual TLS connection attempt. The operator probes all TLS versions (1.0, 1.1, 1.2, 1.3, SSLv3) in parallel, so worst-case time per endpoint is roughly 1x this value plus a small overhead for the ML-KEM active probe. Increase on high-latency networks. |
 | `--workers` | `TLS_COMPLIANCE_WORKERS` | int | `5` | Number of concurrent goroutines used during periodic scans. Range: 1-50. Higher values scan faster but use more CPU and network. This also controls `MaxConcurrentReconciles` for the controller work queue. |
-| `--extra-tls-ports` | `TLS_COMPLIANCE_EXTRA_TLS_PORTS` | string | `""` | Comma-separated list of additional port numbers to treat as TLS endpoints (e.g., `12345,54321`). These are checked in addition to the built-in defaults (443, 8443, 9443, 2379, 5671, 6380, 9200) and any port named `https` or `https-*`. |
+| `--extra-tls-ports` | `TLS_COMPLIANCE_EXTRA_TLS_PORTS` | string | `""` | Comma-separated list of additional port numbers to treat as TLS endpoints (e.g., `12345,54321`). These are checked in addition to the built-in defaults (443, 2379, 2380, 5443, 5671, 6380, 6443, 7443, 8443, 9091, 9092, 9093, 9100, 9200, 9443, 10250, 10257, 10259) and any port named `https` or `https-*`. |
 | `--scan-all-ports` | `TLS_COMPLIANCE_SCAN_ALL_PORTS` | bool | `false` | Scan all declared TCP container ports on pods, not just known TLS ports. Useful for discovering TLS on non-standard ports that the default heuristics miss. Increases scan time and may produce more `NoTLS` reports. HTTP health-probe ports are still skipped. |
-| `--enumerate-ciphers` | _(none)_ | bool | `true` | Enumerate all supported cipher suites per TLS version. When enabled, the operator performs multiple handshakes to discover every cipher suite each TLS version accepts. Disable for faster scans if you only need the first negotiated cipher. |
+| `--enumerate-ciphers` | `TLS_COMPLIANCE_ENUMERATE_CIPHERS` | bool | `true` | Enumerate all supported cipher suites per TLS version. When enabled, the operator performs multiple handshakes to discover every cipher suite each TLS version accepts. Disable for faster scans if you only need the first negotiated cipher. |
 | `--metrics-per-endpoint` | `TLS_COMPLIANCE_METRICS_PER_ENDPOINT` | bool | `false` | Emit per-endpoint Prometheus metrics (certificate expiry, TLS version support, PQC readiness, forward secrecy). Leave off on large clusters (2000+ endpoints) to avoid high metric cardinality and Prometheus memory usage. Aggregate metrics (`tls_compliance_endpoints_total`) are always emitted regardless of this setting. |
 
 ## Rate Limiting
@@ -27,7 +27,7 @@ If a flag is set on the command line, its environment variable is ignored.
 |------|---------|------|---------|-------------|
 | `--rate-limit` | `TLS_COMPLIANCE_RATE_LIMIT` | float | `10` | Maximum TLS checks per second (token bucket rate). Controls how aggressively the operator probes endpoints. On large clusters, increase this alongside `--workers` for faster scans. |
 | `--rate-burst` | `TLS_COMPLIANCE_RATE_BURST` | int | `20` | Token bucket burst size. Allows short bursts above the rate limit. Range: 1-1000. |
-| `--namespace-rate-limits` | _(none)_ | string | `""` | Per-namespace TLS check rate limits. Format: `namespace=rate,...` (e.g., `production=2.0,staging=10.0`). Namespaces not listed use the global `--rate-limit`. Useful for limiting scan impact on sensitive namespaces while allowing faster scans elsewhere. |
+| `--namespace-rate-limits` | `TLS_COMPLIANCE_NAMESPACE_RATE_LIMITS` | string | `""` | Per-namespace TLS check rate limits. Format: `namespace=rate,...` (e.g., `production=2.0,staging=10.0`). Namespaces not listed use the global `--rate-limit`. Useful for limiting scan impact on sensitive namespaces while allowing faster scans elsewhere. |
 
 ## Namespace Filtering
 
@@ -212,7 +212,10 @@ The default resource limits are configured for small-to-medium clusters
 | Resource | Request | Limit |
 |----------|---------|-------|
 | CPU | 10m | 500m |
-| Memory | 64Mi | 256Mi |
+| Memory | 128Mi | 512Mi |
+
+The Deployment also sets `GOMAXPROCS=1` and `GOMEMLIMIT=460MiB` so the Go
+runtime stays within the container memory limit.
 
 ### Scaling Guidance
 
@@ -221,9 +224,9 @@ concurrency settings:
 
 | Endpoints | Workers | Rate Limit | Recommended Memory Limit |
 |-----------|---------|------------|-------------------------|
-| < 500 | 5 | 10 | 256Mi (default) |
-| 500-2000 | 10 | 20 | 512Mi |
-| 2000+ | 20 | 50 | 1Gi |
+| < 500 | 5 | 10 | 512Mi (default) |
+| 500-2000 | 10 | 20 | 1Gi |
+| 2000+ | 20 | 50 | 2Gi |
 
 Increasing `--workers` and `--rate-limit` will increase peak memory usage
 since more TLS checks run concurrently. Monitor actual usage with:
@@ -232,17 +235,23 @@ since more TLS checks run concurrently. Monitor actual usage with:
 container_memory_working_set_bytes{container="manager"}
 ```
 
-### High-Memory Kustomize Overlay
-
-For larger clusters, use the provided kustomize overlay:
+### Kustomize Overlays
 
 ```bash
+# Larger clusters (edit values in the overlay as needed)
 kubectl kustomize config/overlays/high-memory/ | kubectl apply -f -
+
+# Constrained clusters
+kubectl kustomize config/overlays/low-resource/ | kubectl apply -f -
+
+# Three replicas with leader election (memory matches the default)
+kubectl kustomize config/overlays/high-availability/ | kubectl apply -f -
 ```
 
-This sets memory limits to 512Mi and requests to 128Mi. Customize the overlay
-values for your workload by editing
-`config/overlays/high-memory/kustomization.yaml`.
+`config/overlays/high-memory/` currently sets the same 128Mi request / 512Mi
+limit as the default Deployment. Raise those values (and `GOMEMLIMIT`) in
+`config/overlays/high-memory/kustomization.yaml` for larger workloads.
+`config/overlays/low-resource/` requests 5m/32Mi and limits 250m/128Mi.
 
 ---
 

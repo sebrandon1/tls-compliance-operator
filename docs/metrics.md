@@ -12,14 +12,22 @@ All metrics use the `tls_compliance_` prefix.
 | `tls_compliance_pqc_readiness` | Gauge | `host`, `port`, `readiness` | Post-quantum cryptography readiness (1=current status). One-hot across: PQCReady, TLS13Capable, LegacyTLS, NoPQC. Requires `--metrics-per-endpoint`. |
 | `tls_compliance_reconcile_total` | Counter | `result` | Reconciliation attempts |
 | `tls_compliance_reconcile_errors_total` | Counter | `source_kind`, `error_type` | Errors during resource reconciliation by source kind and error type |
+| `tls_compliance_reconcile_by_resource_total` | Counter | `source_kind`, `result` | Reconciliation attempts by resource type and result |
+| `tls_compliance_reconcile_latency_seconds` | Histogram | `source_kind` | End-to-end reconciliation latency |
+| `tls_compliance_reconcile_in_flight` | Gauge | - | Reconciliations currently in progress |
 | `tls_compliance_scan_cycle_duration_seconds` | Histogram | - | Full scan cycle duration |
 | `tls_compliance_check_retries_total` | Counter | `reason` | TLS check retry attempts by failure reason |
 | `tls_compliance_check_retries_exhausted_total` | Counter | - | Times TLS check retries were exhausted without success |
+| `tls_compliance_check_errors_total` | Counter | `reason` | TLS check errors by failure reason |
+| `tls_compliance_circuit_open_skipped_total` | Counter | - | TLS checks skipped because the endpoint circuit breaker is open |
 | `tls_compliance_scan_cycle_last_completed_timestamp` | Gauge | - | Unix timestamp of last successful scan cycle |
 | `tls_compliance_cleanup_cycle_last_completed_timestamp` | Gauge | - | Unix timestamp of last successful cleanup cycle |
 | `tls_compliance_reports_ttl_deleted_total` | Counter | - | TLSComplianceReports deleted by retention policy |
 | `tls_compliance_scan_cycle_errors_total` | Counter | - | Total number of periodic scan cycle failures |
 | `tls_compliance_fips_mode_enabled` | Gauge | - | Whether the cluster is running in FIPS mode (1=yes, 0=no) |
+| `tls_compliance_worker_pool_in_use` | Gauge | - | Worker pool slots currently in use |
+| `tls_compliance_endpoints_discovered_total` | Counter | `source_kind`, `namespace` | Endpoints discovered by source kind and namespace |
+
 
 Per-endpoint series (`tls_compliance_certificate_expiry_days`, `tls_compliance_version_support`, `tls_compliance_forward_secrecy`, `tls_compliance_pqc_readiness`) are emitted only when `--metrics-per-endpoint=true`. That flag defaults to `false` because host/port labels create high cardinality on large clusters. Aggregate metrics such as `tls_compliance_endpoints_total` are always emitted.
 
@@ -60,6 +68,12 @@ tls_compliance_fips_mode_enabled == 1
 
 # Alert on scan cycle errors
 rate(tls_compliance_scan_cycle_errors_total[1h]) > 0
+
+# TLS checks skipped by the circuit breaker
+rate(tls_compliance_circuit_open_skipped_total[15m])
+
+# Worker pool utilization
+tls_compliance_worker_pool_in_use
 ```
 
 ## Monitoring Setup
@@ -88,7 +102,7 @@ Prometheus Operator-based clusters (including OpenShift). Apply it to enable
 automatic scraping:
 
 ```bash
-kubectl apply -f config/prometheus/monitor.yaml
+kubectl apply -f config/prometheus/monitor.yaml -n tls-compliance-operator-system
 ```
 
 The ServiceMonitor selects pods with the `control-plane: controller-manager`
@@ -126,10 +140,12 @@ Pre-built alerting rules are provided at
 `config/prometheus/alerting-rules.yaml`. Apply them to your cluster:
 
 ```bash
-kubectl apply -f config/prometheus/alerting-rules.yaml
+kubectl apply -f config/prometheus/alerting-rules.yaml -n tls-compliance-operator-system
 ```
 
-The following alerts are included. Certificate expiry alerts require `--metrics-per-endpoint=true`; the others use aggregate metrics that are always emitted.
+The following alerts are included. Certificate expiry, PQC regression, and
+forward secrecy alerts require `--metrics-per-endpoint=true`; the others use
+aggregate metrics that are always emitted.
 
 | Alert | Severity | Condition | Description |
 |-------|----------|-----------|-------------|
@@ -140,34 +156,22 @@ The following alerts are included. Certificate expiry alerts require `--metrics-
 | `TLSScanCycleStalled` | warning | No scan completion in 2 hours | Periodic scan loop may be stuck |
 | `TLSCleanupCycleStalled` | warning | No cleanup in 10 minutes | Cleanup loop may be stuck |
 | `TLSEndpointUnreachable` | info | Unreachable endpoints for > 24h | Persistent network connectivity issues |
+| `TLSComplianceReconcileErrorRate` | warning | Reconcile errors > 0.5/s for 5m | High reconciliation error rate |
+| `TLSEndpointPQCReadinessRegression` | warning | PQC-ready count dropped by > 1 in 1h | Post-quantum readiness declining |
+| `TLSEndpointForwardSecrecyLost` | warning | Forward secrecy = 0 for 15m | Endpoint no longer uses FS for all ciphers |
+| `TLSEndpointFIPSModeChanged` | critical | FIPS mode toggled within 1h | Unexpected FIPS mode change |
+| `TLSEndpointWarningStatus` | warning | Warning status for > 4h | Endpoints allow both modern and legacy TLS |
+| `TLSComplianceRetriesExhausted` | warning | Retry exhaustion > 0.1/s for 10m | Persistent check failures |
 
 ### Grafana Dashboard
 
 A pre-built Grafana dashboard is included at `config/grafana/dashboard.json`.
-It provides panels for compliance status breakdown, certificate expiry,
-TLS version support, scan performance, and retry activity. Certificate expiry,
-TLS version, PQC, and forward secrecy panels require `--metrics-per-endpoint=true`.
+It provides panels for compliance status, certificate expiry, TLS version
+support, PQC and forward secrecy, scan performance, worker pool utilization,
+reconciliation, retries, and retention. Certificate expiry, TLS version, PQC,
+and forward secrecy panels require `--metrics-per-endpoint=true`.
 
-**Import via Grafana UI:**
-
-1. Open Grafana and navigate to **Dashboards > Import**
-2. Click **Upload JSON file** and select `config/grafana/dashboard.json`
-3. Select your Prometheus datasource
-4. Click **Import**
-
-**Import via ConfigMap** (for sidecar-provisioned Grafana):
-
-```bash
-kubectl create configmap tls-compliance-dashboard \
-  --from-file=dashboard.json=config/grafana/dashboard.json \
-  -n monitoring
-
-kubectl label configmap tls-compliance-dashboard \
-  grafana_dashboard=1 \
-  -n monitoring
-```
-
-Adjust the namespace and label to match your Grafana sidecar configuration.
+See [config/grafana/README.md](../config/grafana/README.md) for import steps.
 
 ---
 
