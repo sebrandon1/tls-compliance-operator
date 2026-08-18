@@ -6,10 +6,10 @@ All metrics use the `tls_compliance_` prefix.
 |--------|------|--------|-------------|
 | `tls_compliance_endpoints_total` | Gauge | `status` | Endpoints by compliance status |
 | `tls_compliance_check_duration_seconds` | Histogram | - | TLS check duration |
-| `tls_compliance_certificate_expiry_days` | Gauge | `host`, `port` | Days until certificate expiry |
-| `tls_compliance_version_support` | Gauge | `host`, `port`, `version` | TLS version support (1=yes, 0=no) |
-| `tls_compliance_forward_secrecy` | Gauge | `host`, `port` | Forward secrecy support (1=all ciphers use ephemeral key exchange, 0=not) |
-| `tls_compliance_pqc_readiness` | Gauge | `host`, `port`, `readiness` | Post-quantum cryptography readiness (1=current status). One-hot across: PQCReady, TLS13Capable, LegacyTLS, NoPQC |
+| `tls_compliance_certificate_expiry_days` | Gauge | `host`, `port` | Days until certificate expiry. Requires `--metrics-per-endpoint`. |
+| `tls_compliance_version_support` | Gauge | `host`, `port`, `version` | TLS version support (1=yes, 0=no). Requires `--metrics-per-endpoint`. |
+| `tls_compliance_forward_secrecy` | Gauge | `host`, `port` | Forward secrecy support (1=all ciphers use ephemeral key exchange, 0=not). Requires `--metrics-per-endpoint`. |
+| `tls_compliance_pqc_readiness` | Gauge | `host`, `port`, `readiness` | Post-quantum cryptography readiness (1=current status). One-hot across: PQCReady, TLS13Capable, LegacyTLS, NoPQC. Requires `--metrics-per-endpoint`. |
 | `tls_compliance_reconcile_total` | Counter | `result` | Reconciliation attempts |
 | `tls_compliance_reconcile_errors_total` | Counter | `source_kind`, `error_type` | Errors during resource reconciliation by source kind and error type |
 | `tls_compliance_scan_cycle_duration_seconds` | Histogram | - | Full scan cycle duration |
@@ -21,7 +21,11 @@ All metrics use the `tls_compliance_` prefix.
 | `tls_compliance_scan_cycle_errors_total` | Counter | - | Total number of periodic scan cycle failures |
 | `tls_compliance_fips_mode_enabled` | Gauge | - | Whether the cluster is running in FIPS mode (1=yes, 0=no) |
 
+Per-endpoint series (`tls_compliance_certificate_expiry_days`, `tls_compliance_version_support`, `tls_compliance_forward_secrecy`, `tls_compliance_pqc_readiness`) are emitted only when `--metrics-per-endpoint=true`. That flag defaults to `false` because host/port labels create high cardinality on large clusters. Aggregate metrics such as `tls_compliance_endpoints_total` are always emitted.
+
 ## Example PromQL Queries
+
+Queries that use `host`/`port` labels require `--metrics-per-endpoint=true`.
 
 ```promql
 # Percentage of compliant endpoints
@@ -125,7 +129,7 @@ Pre-built alerting rules are provided at
 kubectl apply -f config/prometheus/alerting-rules.yaml
 ```
 
-The following alerts are included:
+The following alerts are included. Certificate expiry alerts require `--metrics-per-endpoint=true`; the others use aggregate metrics that are always emitted.
 
 | Alert | Severity | Condition | Description |
 |-------|----------|-----------|-------------|
@@ -141,7 +145,8 @@ The following alerts are included:
 
 A pre-built Grafana dashboard is included at `config/grafana/dashboard.json`.
 It provides panels for compliance status breakdown, certificate expiry,
-TLS version support, scan performance, and retry activity.
+TLS version support, scan performance, and retry activity. Certificate expiry,
+TLS version, PQC, and forward secrecy panels require `--metrics-per-endpoint=true`.
 
 **Import via Grafana UI:**
 

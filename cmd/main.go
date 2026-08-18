@@ -170,8 +170,8 @@ func parseFlags() *operatorConfig {
 		"Enumerate all supported cipher suites per TLS version (disable for faster scans)")
 	flag.StringVar(&cfg.namespaceRateLimitsStr, "namespace-rate-limits", "",
 		"Per-namespace TLS check rate limits (e.g., production=2.0,staging=10.0)")
-	flag.BoolVar(&cfg.metricsPerEndpoint, "metrics-per-endpoint", true,
-		"Emit per-endpoint Prometheus metrics (disable for large clusters to reduce cardinality)")
+	flag.BoolVar(&cfg.metricsPerEndpoint, "metrics-per-endpoint", false,
+		"Emit per-endpoint Prometheus metrics (high cardinality; leave off on large clusters)")
 	flag.IntVar(&cfg.reportRetentionDays, "report-retention-days", 0,
 		"Delete TLSComplianceReport CRs with no activity for this many days (0 = disabled)")
 	flag.StringVar(&cfg.logFormat, "log-format", "text",

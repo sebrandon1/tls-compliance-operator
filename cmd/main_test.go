@@ -530,19 +530,19 @@ func TestResolveEnvConfig_EnumerateCiphers(t *testing.T) {
 
 func TestResolveEnvConfig_MetricsPerEndpoint(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	fs.Bool("metrics-per-endpoint", true, "")
+	fs.Bool("metrics-per-endpoint", false, "")
 	_ = fs.Parse([]string{})
 
 	lookup := func(key string) (string, bool) {
 		if key == "TLS_COMPLIANCE_METRICS_PER_ENDPOINT" {
-			return "false", true
+			return "true", true
 		}
 		return "", false
 	}
 
 	resolveEnvConfig(fs, lookup)
-	if fs.Lookup("metrics-per-endpoint").Value.String() != "false" {
-		t.Errorf("expected metrics-per-endpoint=false, got %s", fs.Lookup("metrics-per-endpoint").Value.String())
+	if fs.Lookup("metrics-per-endpoint").Value.String() != "true" {
+		t.Errorf("expected metrics-per-endpoint=true from env, got %s", fs.Lookup("metrics-per-endpoint").Value.String())
 	}
 }
 
