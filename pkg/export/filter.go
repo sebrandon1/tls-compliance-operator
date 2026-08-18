@@ -70,9 +70,12 @@ func (o *FilterOptions) IsEmpty() bool {
 		o.Grade == "" && o.MinGrade == ""
 }
 
+const tlsVersionValues = "1.0, 1.1, 1.2, 1.3, ssl3.0 (aliases: tls1.0, tls1.1, tls1.2, tls1.3, ssl30, 3.0)"
+
 // FilterReports returns the subset of reports matching all non-empty filter criteria.
 // Filters are combined with AND logic. Empty filters are pass-through.
-// Returns an error if ExpiresWithin contains an unparseable duration.
+// Returns an error if ExpiresWithin contains an unparseable duration, or if
+// Grade, MinGrade, or TLSVersion is set to an unrecognized value.
 func FilterReports(reports []securityv1alpha1.TLSComplianceReport, opts *FilterOptions) ([]securityv1alpha1.TLSComplianceReport, error) {
 	if opts.IsEmpty() {
 		return reports, nil
@@ -87,6 +90,9 @@ func FilterReports(reports []securityv1alpha1.TLSComplianceReport, opts *FilterO
 		if _, ok := gradeRank[strings.ToUpper(opts.MinGrade)]; !ok {
 			return nil, fmt.Errorf("invalid min-grade %q: must be one of A, B, C, D, F", opts.MinGrade)
 		}
+	}
+	if opts.TLSVersion != "" && !isKnownTLSVersion(opts.TLSVersion) {
+		return nil, fmt.Errorf("invalid tls-version %q: must be one of %s", opts.TLSVersion, tlsVersionValues)
 	}
 
 	var expiresWithin time.Duration
@@ -186,19 +192,29 @@ func meetsMinGrade(actual, minGrade string) bool {
 	return actualRank <= minRank
 }
 
+func isKnownTLSVersion(version string) bool {
+	_, known := tlsVersionSupported(securityv1alpha1.TLSVersionSupport{}, version)
+	return known
+}
+
 func matchesTLSVersion(r *securityv1alpha1.TLSComplianceReport, version string) bool {
+	supported, _ := tlsVersionSupported(r.Status.TLSVersions, version)
+	return supported
+}
+
+func tlsVersionSupported(v securityv1alpha1.TLSVersionSupport, version string) (supported bool, known bool) {
 	switch strings.ToLower(strings.TrimSpace(version)) {
 	case "1.3", "tls1.3":
-		return r.Status.TLSVersions.TLS13
+		return v.TLS13, true
 	case "1.2", "tls1.2":
-		return r.Status.TLSVersions.TLS12
+		return v.TLS12, true
 	case "1.1", "tls1.1":
-		return r.Status.TLSVersions.TLS11
+		return v.TLS11, true
 	case "1.0", "tls1.0":
-		return r.Status.TLSVersions.TLS10
+		return v.TLS10, true
 	case "ssl3.0", "ssl30", "3.0":
-		return r.Status.TLSVersions.SSL30
+		return v.SSL30, true
 	default:
-		return false
+		return false, false
 	}
 }

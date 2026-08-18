@@ -43,7 +43,7 @@ These flags are available on all subcommands:
 | `--expired` | | Show only expired certificates |
 | `--cert-issuer` | | Filter by certificate issuer (substring match) |
 | `--cert-subject` | | Filter by certificate subject (substring match) |
-| `--tls-version` | | Filter by TLS version support (1.0, 1.1, 1.2, 1.3, ssl3.0) |
+| `--tls-version` | | Filter by TLS version support (1.0, 1.1, 1.2, 1.3, ssl3.0). Invalid values error instead of matching nothing. |
 | `--grade` | | Filter by exact cipher grade (A, B, C, D, F) |
 | `--min-grade` | | Filter by minimum cipher grade (e.g. B shows A and B) |
 | `--sort-by` | | Sort results (host, port, compliance, expiry, grade, pqc) |
