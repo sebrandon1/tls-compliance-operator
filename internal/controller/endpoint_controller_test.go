@@ -4461,6 +4461,206 @@ func TestCleanupOrphanedCRs_IngressOrphan(t *testing.T) {
 	}
 }
 
+func TestCleanupOrphanedCRs_MixedSourceKinds(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+	now := metav1.Now()
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "keep-svc", Namespace: testNamespace},
+	}
+	ing := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{Name: "keep-ing", Namespace: testNamespace},
+	}
+
+	keepSvcCR := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "keep-svc-443"},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: "keep-svc.example.com", Port: 443,
+			SourceKind: securityv1alpha1.SourceKindService, SourceNamespace: testNamespace, SourceName: "keep-svc",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{FirstSeenAt: &now},
+	}
+	orphanSvcCR := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "gone-svc-443"},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: "gone-svc.example.com", Port: 443,
+			SourceKind: securityv1alpha1.SourceKindService, SourceNamespace: testNamespace, SourceName: "gone-svc",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{FirstSeenAt: &now},
+	}
+	keepIngCR := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "keep-ing-443"},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: "keep-ing.example.com", Port: 443,
+			SourceKind: securityv1alpha1.SourceKindIngress, SourceNamespace: testNamespace, SourceName: "keep-ing",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{FirstSeenAt: &now},
+	}
+	orphanIngCR := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "gone-ing-443"},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: "gone-ing.example.com", Port: 443,
+			SourceKind: securityv1alpha1.SourceKindIngress, SourceNamespace: testNamespace, SourceName: "gone-ing",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{FirstSeenAt: &now},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(svc, ing, keepSvcCR, orphanSvcCR, keepIngCR, orphanIngCR).
+		WithStatusSubresource(keepSvcCR, orphanSvcCR, keepIngCR, orphanIngCR).
+		Build()
+
+	r := &EndpointReconciler{Client: fakeClient, Scheme: scheme}
+	if err := r.cleanupOrphanedCRs(ctx); err != nil {
+		t.Fatalf("cleanupOrphanedCRs() error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("List CRs: %v", err)
+	}
+	if len(crList.Items) != 2 {
+		t.Fatalf("expected 2 CRs remaining (one Service, one Ingress), got %d", len(crList.Items))
+	}
+	remaining := map[string]bool{}
+	for i := range crList.Items {
+		remaining[crList.Items[i].Name] = true
+	}
+	if !remaining["keep-svc-443"] || !remaining["keep-ing-443"] {
+		t.Errorf("remaining CRs = %v, want keep-svc-443 and keep-ing-443", remaining)
+	}
+}
+
+func TestCleanupOrphanedCRs_SingleCRListPass(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+	now := metav1.Now()
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "keep-svc", Namespace: testNamespace},
+	}
+	cr := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "keep-svc-443"},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: "keep-svc.example.com", Port: 443,
+			SourceKind: securityv1alpha1.SourceKindService, SourceNamespace: testNamespace, SourceName: "keep-svc",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{FirstSeenAt: &now},
+	}
+
+	var crListCalls atomic.Int32
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(svc, cr).
+		WithStatusSubresource(cr).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if _, ok := list.(*securityv1alpha1.TLSComplianceReportList); ok {
+					crListCalls.Add(1)
+				}
+				return cl.List(ctx, list, opts...)
+			},
+		}).
+		Build()
+
+	r := &EndpointReconciler{Client: fakeClient, Scheme: scheme}
+	if err := r.cleanupOrphanedCRs(ctx); err != nil {
+		t.Fatalf("cleanupOrphanedCRs() error = %v", err)
+	}
+	if crListCalls.Load() != 1 {
+		t.Errorf("expected 1 CR list pass, got %d", crListCalls.Load())
+	}
+}
+
+func TestCleanupOrphanedCRs_SkipsUnneededGatewayList(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+	now := metav1.Now()
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "keep-svc", Namespace: testNamespace},
+	}
+	cr := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "keep-svc-443"},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: "keep-svc.example.com", Port: 443,
+			SourceKind: securityv1alpha1.SourceKindService, SourceNamespace: testNamespace, SourceName: "keep-svc",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{FirstSeenAt: &now},
+	}
+
+	var tlsRouteLists atomic.Int32
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(svc, cr).
+		WithStatusSubresource(cr).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if uList, ok := list.(*unstructured.UnstructuredList); ok && uList.GetKind() == "TLSRoute" {
+					tlsRouteLists.Add(1)
+				}
+				return cl.List(ctx, list, opts...)
+			},
+		}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client:              fakeClient,
+		Scheme:              scheme,
+		GatewayAPIAvailable: true,
+		GatewayGVKs: []schema.GroupVersionKind{
+			{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "TLSRoute"},
+		},
+	}
+	if err := r.cleanupOrphanedCRs(ctx); err != nil {
+		t.Fatalf("cleanupOrphanedCRs() error = %v", err)
+	}
+	if tlsRouteLists.Load() != 0 {
+		t.Errorf("expected 0 TLSRoute lists when no TLSRoute CRs exist, got %d", tlsRouteLists.Load())
+	}
+}
+
+func TestCleanupOrphanedCRs_DeleteErrorPreservesCR(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+	now := metav1.Now()
+
+	orphan := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "gone-svc-443"},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: "gone-svc.example.com", Port: 443,
+			SourceKind: securityv1alpha1.SourceKindService, SourceNamespace: testNamespace, SourceName: "gone-svc",
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{FirstSeenAt: &now},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(orphan).
+		WithStatusSubresource(orphan).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Delete: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+				return fmt.Errorf("injected delete error")
+			},
+		}).
+		Build()
+
+	r := &EndpointReconciler{Client: fakeClient, Scheme: scheme}
+	if err := r.cleanupOrphanedCRs(ctx); err != nil {
+		t.Fatalf("cleanupOrphanedCRs() error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("List CRs: %v", err)
+	}
+	if len(crList.Items) != 1 {
+		t.Fatalf("expected orphan CR to remain after delete error, got %d", len(crList.Items))
+	}
+}
+
 func TestCleanupOrphanedCRs_CRListError(t *testing.T) {
 	scheme := newTestScheme()
 	injectedErr := fmt.Errorf("injected CR list error")

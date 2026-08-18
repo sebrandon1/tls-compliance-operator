@@ -66,20 +66,33 @@ func sourceKey(namespace, name string) string {
 func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 
-	// Pass 1: paginate CRs to discover which source kinds are in use.
 	neededKinds := make(map[securityv1alpha1.SourceKind]bool)
-	var foundCRs bool
+	var reports []reportRef
 	var crList securityv1alpha1.TLSComplianceReportList
 	if err := paginatedList(ctx, r.apiReader(), &crList, func() {
 		for i := range crList.Items {
-			neededKinds[crList.Items[i].Spec.SourceKind] = true
-			foundCRs = true
+			cr := &crList.Items[i]
+			neededKinds[cr.Spec.SourceKind] = true
+			lastActivity := cr.CreationTimestamp.Time
+			if cr.Status.LastCheckAt != nil {
+				lastActivity = cr.Status.LastCheckAt.Time
+			}
+			reports = append(reports, reportRef{
+				name:            cr.Name,
+				namespace:       cr.Namespace,
+				sourceKind:      cr.Spec.SourceKind,
+				sourceNamespace: cr.Spec.SourceNamespace,
+				sourceName:      cr.Spec.SourceName,
+				host:            cr.Spec.Host,
+				port:            cr.Spec.Port,
+				lastActivity:    lastActivity,
+			})
 		}
 	}); err != nil {
 		return fmt.Errorf("failed to list TLSComplianceReports: %w", err)
 	}
 
-	if !foundCRs {
+	if len(reports) == 0 {
 		return nil
 	}
 
@@ -155,6 +168,9 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 			default:
 				continue
 			}
+			if !neededKinds[kind] {
+				continue
+			}
 			gwSet, err := r.collectUnstructuredSet(ctx, gvk)
 			if err != nil {
 				logger.V(1).Info("failed to list Gateway API resources for cleanup", "kind", gvk.Kind)
@@ -164,48 +180,53 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 		}
 	}
 
-	// Pass 2: paginate CRs again to check for orphans and TTL expiry.
 	cutoff := time.Now().Add(-time.Duration(r.ReportRetentionDays) * 24 * time.Hour)
-	var crList2 securityv1alpha1.TLSComplianceReportList
-	return paginatedList(ctx, r.apiReader(), &crList2, func() {
-		for i := range crList2.Items {
-			cr := &crList2.Items[i]
+	for i := range reports {
+		ref := &reports[i]
 
-			sourceSet, known := existingSources[cr.Spec.SourceKind]
-			if known {
-				key := sourceKey(cr.Spec.SourceNamespace, cr.Spec.SourceName)
-				if !sourceSet[key] {
-					logger.Info("deleting orphaned TLSComplianceReport", "name", cr.Name,
-						"sourceKind", cr.Spec.SourceKind, "sourceName", cr.Spec.SourceName)
-					if err := r.Delete(ctx, cr); err != nil && !apierrors.IsNotFound(err) {
-						logger.Error(err, "failed to delete orphaned TLSComplianceReport", "name", cr.Name)
-					} else {
-						metrics.DeleteEndpointMetrics(cr.Spec.Host, fmt.Sprintf("%d", cr.Spec.Port))
-					}
-					continue
-				}
-			}
-
-			if r.ReportRetentionDays > 0 {
-				var lastActivity time.Time
-				if cr.Status.LastCheckAt != nil {
-					lastActivity = cr.Status.LastCheckAt.Time
-				} else {
-					lastActivity = cr.CreationTimestamp.Time
-				}
-				if lastActivity.Before(cutoff) {
-					logger.Info("deleting expired TLSComplianceReport", "name", cr.Name,
-						"lastActivity", lastActivity, "retentionDays", r.ReportRetentionDays)
-					if err := r.Delete(ctx, cr); err != nil && !apierrors.IsNotFound(err) {
-						logger.Error(err, "failed to delete expired TLSComplianceReport", "name", cr.Name)
-					} else {
-						metrics.RecordReportTTLDeleted()
-						metrics.DeleteEndpointMetrics(cr.Spec.Host, fmt.Sprintf("%d", cr.Spec.Port))
-					}
-				}
+		sourceSet, known := existingSources[ref.sourceKind]
+		if known {
+			key := sourceKey(ref.sourceNamespace, ref.sourceName)
+			if !sourceSet[key] {
+				logger.Info("deleting orphaned TLSComplianceReport", "name", ref.name,
+					"sourceKind", ref.sourceKind, "sourceName", ref.sourceName)
+				r.deleteCleanupReport(ctx, ref, false)
+				continue
 			}
 		}
-	})
+
+		if r.ReportRetentionDays > 0 && ref.lastActivity.Before(cutoff) {
+			logger.Info("deleting expired TLSComplianceReport", "name", ref.name,
+				"lastActivity", ref.lastActivity, "retentionDays", r.ReportRetentionDays)
+			r.deleteCleanupReport(ctx, ref, true)
+		}
+	}
+	return nil
+}
+
+type reportRef struct {
+	name            string
+	namespace       string
+	sourceKind      securityv1alpha1.SourceKind
+	sourceNamespace string
+	sourceName      string
+	host            string
+	port            int32
+	lastActivity    time.Time
+}
+
+func (r *EndpointReconciler) deleteCleanupReport(ctx context.Context, ref *reportRef, ttl bool) {
+	cr := &securityv1alpha1.TLSComplianceReport{}
+	cr.Name = ref.name
+	cr.Namespace = ref.namespace
+	if err := r.Delete(ctx, cr); err != nil && !apierrors.IsNotFound(err) {
+		log.FromContext(ctx).Error(err, "failed to delete TLSComplianceReport", "name", ref.name, "ttl", ttl)
+		return
+	}
+	if ttl {
+		metrics.RecordReportTTLDeleted()
+	}
+	metrics.DeleteEndpointMetrics(ref.host, fmt.Sprintf("%d", ref.port))
 }
 
 // collectNamespacedSet paginates a typed list and builds a set of sourceKey(namespace, name) entries.
