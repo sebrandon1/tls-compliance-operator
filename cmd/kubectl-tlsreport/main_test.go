@@ -569,7 +569,7 @@ func TestTriggerRescan(t *testing.T) {
 		if err := c.Get(ctx, client.ObjectKey{Name: "test-report"}, &updated); err != nil {
 			t.Fatalf("Get() error = %v", err)
 		}
-		val, ok := updated.Annotations[rescanAnnotation]
+		val, ok := updated.Annotations[securityv1alpha1.RescanAnnotation]
 		if !ok {
 			t.Fatal("expected rescan annotation to be set")
 		}
@@ -598,7 +598,7 @@ func TestTriggerRescan(t *testing.T) {
 		if updated.Annotations["existing"] != "value" {
 			t.Error("existing annotation was clobbered")
 		}
-		if _, ok := updated.Annotations[rescanAnnotation]; !ok {
+		if _, ok := updated.Annotations[securityv1alpha1.RescanAnnotation]; !ok {
 			t.Error("rescan annotation not set")
 		}
 	})
@@ -628,7 +628,7 @@ func TestWaitForRescan_Timeout(t *testing.T) {
 	report := &securityv1alpha1.TLSComplianceReport{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        "test-report",
-			Annotations: map[string]string{rescanAnnotation: "2024-01-01T00:00:00Z"},
+			Annotations: map[string]string{securityv1alpha1.RescanAnnotation: "2024-01-01T00:00:00Z"},
 		},
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(report).Build()
@@ -719,7 +719,7 @@ func TestRescanReports_WaitTimeout(t *testing.T) {
 	report := securityv1alpha1.TLSComplianceReport{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        "report-pending",
-			Annotations: map[string]string{rescanAnnotation: "2024-01-01T00:00:00Z"},
+			Annotations: map[string]string{securityv1alpha1.RescanAnnotation: "2024-01-01T00:00:00Z"},
 		},
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).
@@ -760,7 +760,7 @@ func TestRescanReports_WaitSuccess(t *testing.T) {
 					// Simulate the controller clearing the rescan annotation
 					var r securityv1alpha1.TLSComplianceReport
 					if err := cl.Get(ctx, client.ObjectKeyFromObject(obj), &r); err == nil {
-						delete(r.Annotations, rescanAnnotation)
+						delete(r.Annotations, securityv1alpha1.RescanAnnotation)
 						_ = cl.Update(ctx, &r, opts...)
 					}
 				}

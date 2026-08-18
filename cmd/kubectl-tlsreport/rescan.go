@@ -29,8 +29,6 @@ import (
 	"github.com/sebrandon1/tls-compliance-operator/pkg/export"
 )
 
-const rescanAnnotation = "tls-compliance.telco.openshift.io/rescan"
-
 func newRescanCmd() *cobra.Command {
 	var waitFlag bool
 	var allFlag bool
@@ -167,7 +165,7 @@ func triggerRescan(ctx context.Context, c client.Client, report *securityv1alpha
 	if report.Annotations == nil {
 		report.Annotations = make(map[string]string)
 	}
-	report.Annotations[rescanAnnotation] = time.Now().UTC().Format(time.RFC3339)
+	report.Annotations[securityv1alpha1.RescanAnnotation] = time.Now().UTC().Format(time.RFC3339)
 	if err := c.Update(ctx, report); err != nil {
 		return fmt.Errorf("triggering rescan for %s: %w", report.Name, err)
 	}
@@ -191,7 +189,7 @@ func waitForRescan(ctx context.Context, c client.Client, name string, timeout ti
 			if err := c.Get(waitCtx, client.ObjectKey{Name: name}, &updated); err != nil {
 				return fmt.Errorf("checking rescan status: %w", err)
 			}
-			if _, hasAnnotation := updated.Annotations[rescanAnnotation]; !hasAnnotation {
+			if _, hasAnnotation := updated.Annotations[securityv1alpha1.RescanAnnotation]; !hasAnnotation {
 				fmt.Fprintf(os.Stderr, "Rescan complete for %s (status: %s)\n", name, updated.Status.ComplianceStatus)
 				return nil
 			}
