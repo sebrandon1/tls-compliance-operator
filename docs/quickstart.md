@@ -63,8 +63,8 @@ few minutes.
 kubectl get tlsreport
 ```
 
-Install the `kubectl-tlsreport` plugin if you do not already have it. Release
-binaries and `make build-plugin` are in
+Install the `kubectl-tlsreport` plugin if you do not already have it. Krew,
+release binaries, and `make build-plugin` are in
 [Exporting Reports](exporting-reports.md#install-the-plugin).
 
 Then get an at-a-glance summary:

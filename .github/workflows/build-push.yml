@@ -66,13 +66,45 @@ jobs:
           VERSION="${{ github.event.release.tag_name }}"
           OUTPUT="kubectl-tlsreport-${{ matrix.goos }}-${{ matrix.goarch }}"
           go build -ldflags "-X main.version=${VERSION}" -o "${OUTPUT}" ./cmd/kubectl-tlsreport
+          hack/package-plugin.sh "${OUTPUT}" "${OUTPUT}.tar.gz"
 
       - name: Upload binary to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           BINARY="kubectl-tlsreport-${{ matrix.goos }}-${{ matrix.goarch }}"
-          gh release upload ${{ github.event.release.tag_name }} "${BINARY}" --clobber
+          gh release upload ${{ github.event.release.tag_name }} "${BINARY}" "${BINARY}.tar.gz" --clobber
+
+  krew-manifest:
+    name: Generate Krew Manifest
+    needs: build-plugin
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Download plugin archives from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          mkdir -p /tmp/krew
+          gh release download "$TAG" -R "${{ github.repository }}" \
+            --dir /tmp/krew -p "kubectl-tlsreport-*.tar.gz"
+
+      - name: Generate and upload Krew manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          hack/generate-krew-manifest.sh \
+            --version "$TAG" \
+            --archive-dir /tmp/krew \
+            --output /tmp/tlsreport.yaml
+          gh release upload "$TAG" /tmp/tlsreport.yaml --clobber
 
   build-and-push:
     name: Build and Push Multi-Arch Image
@@ -208,6 +240,9 @@ jobs:
           ## kubectl Plugin
 
           \`\`\`bash
+          # Krew (linux/darwin amd64 and arm64)
+          kubectl krew install --manifest-url https://github.com/${REPO}/releases/download/${TAG}/tlsreport.yaml
+
           # Linux (amd64)
           curl -LO https://github.com/${REPO}/releases/download/${TAG}/kubectl-tlsreport-linux-amd64
           chmod +x kubectl-tlsreport-linux-amd64

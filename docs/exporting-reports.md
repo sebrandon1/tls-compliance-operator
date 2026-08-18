@@ -5,6 +5,16 @@ JUnit XML, and Markdown formats for CI/CD pipelines, auditing, and dashboards.
 
 ## Install the Plugin
 
+### Krew (recommended)
+
+```bash
+kubectl krew install --manifest-url \
+  https://github.com/sebrandon1/tls-compliance-operator/releases/latest/download/tlsreport.yaml
+```
+
+Once the plugin is in the [Krew index](https://krew.sigs.k8s.io/), this becomes
+`kubectl krew install tlsreport`.
+
 ### Download a pre-built binary
 
 Release binaries are published for `linux-amd64`, `linux-arm64`,

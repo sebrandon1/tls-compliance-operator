@@ -19,7 +19,8 @@ Compliance statuses, PQC levels, and scan flow are documented in
 # Build and test
 make build                    # bin/manager
 make build-plugin             # bin/kubectl-tlsreport
-make test                     # unit tests (envtest)
+make package-plugin           # dist/kubectl-tlsreport-$GOOS-$GOARCH.tar.gz (Krew)
+make test                     # unit tests (envtest) + Krew packaging checks
 make benchmark                # Go benchmarks
 make check-coverage           # default threshold 70%
 make lint                     # golangci-lint
@@ -59,6 +60,8 @@ Requires **Go 1.26+**.
 |------|------|
 | `cmd/main.go` | Manager: flags, TLS checker, controller setup |
 | `cmd/kubectl-tlsreport/` | Cobra plugin (`kubectl tlsreport`) |
+| `plugins/tlsreport.yaml` | Krew manifest (SHA-pinned copy also uploaded on each release) |
+| `hack/package-plugin.sh` | Pack plugin binary + LICENSE into a Krew tar.gz |
 | `api/v1alpha1/` | CRD types (`TLSComplianceReport`, `TLSComplianceTarget`) |
 | `internal/controller/` | Watches, periodic scan, cleanup, circuit breaker |
 | `pkg/tlscheck/` | TLS probing (`crypto/tls`, rate-limited) |
