@@ -20,6 +20,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-logr/logr"
+	"github.com/go-logr/logr/funcr"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1665,7 +1667,7 @@ func TestParseExtraPorts(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ParseExtraPorts(tc.annotations)
+			got := parseExtraPorts(tc.annotations, logr.Discard())
 			if len(got) != len(tc.want) {
 				t.Fatalf("ParseExtraPorts() returned %d ports, want %d: %v", len(got), len(tc.want), got)
 			}
@@ -1675,6 +1677,50 @@ func TestParseExtraPorts(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestParseExtraPorts_LogsInvalidTokens(t *testing.T) {
+	var logs []string
+	log := funcr.New(func(_, args string) {
+		logs = append(logs, args)
+	}, funcr.Options{})
+
+	ann := map[string]string{AnnotationExtraPorts: "9443,abc,99999,8443"}
+	got := parseExtraPorts(ann, log)
+	if len(got) != 2 || got[0] != 9443 || got[1] != 8443 {
+		t.Fatalf("expected valid ports [9443 8443], got %v", got)
+	}
+	if len(logs) != 2 {
+		t.Fatalf("expected 2 log lines for invalid tokens, got %d: %v", len(logs), logs)
+	}
+	joined := strings.Join(logs, " ")
+	for _, want := range []string{"abc", "99999", AnnotationExtraPorts, "9443,abc,99999,8443"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("logs %v missing %q", logs, want)
+		}
+	}
+}
+
+func TestParseExtraPorts_SilentWhenEmptyOrMissing(t *testing.T) {
+	var logs []string
+	log := funcr.New(func(_, args string) {
+		logs = append(logs, args)
+	}, funcr.Options{})
+
+	parseExtraPorts(nil, log)
+	parseExtraPorts(map[string]string{}, log)
+	parseExtraPorts(map[string]string{AnnotationExtraPorts: ""}, log)
+	parseExtraPorts(map[string]string{AnnotationExtraPorts: "9443,,8443"}, log)
+	if len(logs) != 0 {
+		t.Errorf("expected no logs for empty/missing/blank tokens, got %v", logs)
+	}
+}
+
+func TestParseExtraPorts_PublicWrapper(t *testing.T) {
+	got := ParseExtraPorts(map[string]string{AnnotationExtraPorts: "443"})
+	if len(got) != 1 || got[0] != 443 {
+		t.Fatalf("ParseExtraPorts() = %v, want [443]", got)
 	}
 }
 
