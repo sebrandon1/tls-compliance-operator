@@ -230,6 +230,9 @@ func registerFlagCompletions(rootCmd *cobra.Command) {
 	_ = rootCmd.RegisterFlagCompletionFunc("sort-by", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
 		return []string{"host", "port", "compliance", "expiry", "grade", "pqc"}, cobra.ShellCompDirectiveNoFileComp
 	})
+	_ = rootCmd.RegisterFlagCompletionFunc("tls-version", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		return []string{"1.0", "1.1", "1.2", "1.3", "ssl3.0"}, cobra.ShellCompDirectiveNoFileComp
+	})
 }
 
 func printConditions(w *os.File, conditions []metav1.Condition) {

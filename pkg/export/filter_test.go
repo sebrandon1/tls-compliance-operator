@@ -470,7 +470,9 @@ func TestFilterReports_ByTLSVersion(t *testing.T) {
 		{"TLS 1.1", "1.1", 1, "legacy.example.com"},
 		{"SSL 3.0", "ssl3.0", 1, "ancient.example.com"},
 		{"case insensitive", "TLS1.3", 1, "modern.example.com"},
-		{"unknown version", "2.0", 0, ""},
+		{"alias tls1.2", "tls1.2", 2, ""},
+		{"alias ssl30", "ssl30", 1, "ancient.example.com"},
+		{"alias 3.0", "3.0", 1, "ancient.example.com"},
 	}
 
 	for _, tt := range tests {
@@ -515,6 +517,51 @@ func TestFilterReports_ByGrade(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := FilterReports(reports, &FilterOptions{Grade: tt.grade, MinGrade: tt.minGrade})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != tt.wantCount {
+				t.Errorf("expected %d reports, got %d", tt.wantCount, len(got))
+			}
+		})
+	}
+}
+
+func TestFilterReports_InvalidTLSVersion(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{Host: "modern.example.com", Port: 443},
+			Status: securityv1alpha1.TLSComplianceReportStatus{TLSVersions: securityv1alpha1.TLSVersionSupport{TLS12: true, TLS13: true}},
+		},
+	}
+
+	tests := []struct {
+		name      string
+		version   string
+		wantErr   string
+		wantCount int
+	}{
+		{"unknown version", "tls1.9", `invalid tls-version "tls1.9"`, 0},
+		{"empty after trim", "   ", `invalid tls-version "   "`, 0},
+		{"legacy unknown 2.0", "2.0", `invalid tls-version "2.0"`, 0},
+		{"valid alias tls1.3", "tls1.3", "", 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := FilterReports(reports, &FilterOptions{TLSVersion: tt.version})
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("expected error containing %q, got %q", tt.wantErr, err.Error())
+				}
+				if !strings.Contains(err.Error(), "must be one of") {
+					t.Errorf("expected error to list accepted values, got %q", err.Error())
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

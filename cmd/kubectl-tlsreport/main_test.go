@@ -425,7 +425,7 @@ func TestPrintNoResourcesFound(t *testing.T) {
 func TestFlagCompletionRegistered(t *testing.T) {
 	cmd := newRootCmd()
 
-	for _, flag := range []string{"status", "source", "pqc-status", "sort-by"} {
+	for _, flag := range []string{"status", "source", "pqc-status", "sort-by", "tls-version"} {
 		fn, ok := cmd.GetFlagCompletionFunc(flag)
 		if !ok {
 			t.Errorf("flag %q: completion not registered", flag)
@@ -1132,7 +1132,7 @@ func TestFetchReportsWithClient(t *testing.T) {
 func TestRegisterFlagCompletions_Invoke(t *testing.T) {
 	cmd := newRootCmd()
 
-	for _, flag := range []string{"status", "source", "pqc-status", "sort-by"} {
+	for _, flag := range []string{"status", "source", "pqc-status", "sort-by", "tls-version"} {
 		t.Run(flag, func(t *testing.T) {
 			fn, ok := cmd.GetFlagCompletionFunc(flag)
 			if !ok {
