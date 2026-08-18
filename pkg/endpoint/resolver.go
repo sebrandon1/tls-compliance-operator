@@ -25,10 +25,12 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/klog/v2"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/hostvalidation"
@@ -61,7 +63,13 @@ func ShouldSkipResource(annotations map[string]string) bool {
 }
 
 // ParseExtraPorts parses the extra-ports annotation value into port numbers.
+// Invalid tokens (non-numeric or outside 1-65535) are skipped and logged so
+// operators can see a bad annotation without failing the whole extract.
 func ParseExtraPorts(annotations map[string]string) []int32 {
+	return parseExtraPorts(annotations, klog.Background())
+}
+
+func parseExtraPorts(annotations map[string]string, log logr.Logger) []int32 {
 	if annotations == nil {
 		return nil
 	}
@@ -78,6 +86,10 @@ func ParseExtraPorts(annotations map[string]string) []int32 {
 		}
 		p, err := strconv.ParseInt(s, 10, 32)
 		if err != nil || p < 1 || p > 65535 {
+			log.Info("skipping invalid extra-ports token",
+				"annotation", AnnotationExtraPorts,
+				"value", val,
+				"token", s)
 			continue
 		}
 		ports = append(ports, int32(p))

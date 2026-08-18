@@ -200,7 +200,9 @@ spec:
 
 The annotation accepts a comma-separated list of port numbers (1-65535).
 These ports are scanned in addition to the ports the operator discovers
-from the resource spec.
+from the resource spec. Invalid tokens (non-numeric or out of range) are
+skipped and logged so the rest of the list still applies. Empty or missing
+annotations are ignored.
 
 ## Resource Sizing
 
