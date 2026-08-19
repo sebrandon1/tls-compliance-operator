@@ -43,8 +43,12 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
-test: manifests generate fmt vet setup-envtest ## Run tests.
+test: manifests generate fmt vet setup-envtest test-krew ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test -race $$(go list ./... | grep -v /e2e) -coverprofile cover.out
+
+.PHONY: test-krew
+test-krew: ## Validate Krew plugin packaging and manifest generation.
+	hack/krew_test.sh
 
 .PHONY: benchmark
 benchmark: ## Run Go benchmark tests.
@@ -122,6 +126,13 @@ PLUGIN_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || ec
 .PHONY: build-plugin
 build-plugin: fmt vet ## Build kubectl-tlsreport plugin binary.
 	go build -ldflags "-X main.version=$(PLUGIN_VERSION)" -o bin/kubectl-tlsreport ./cmd/kubectl-tlsreport
+
+PLUGIN_OS ?= $(shell go env GOOS)
+PLUGIN_ARCH ?= $(shell go env GOARCH)
+
+.PHONY: package-plugin
+package-plugin: build-plugin ## Package kubectl-tlsreport as a Krew tar.gz for PLUGIN_OS/PLUGIN_ARCH.
+	hack/package-plugin.sh bin/kubectl-tlsreport dist/kubectl-tlsreport-$(PLUGIN_OS)-$(PLUGIN_ARCH).tar.gz
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
