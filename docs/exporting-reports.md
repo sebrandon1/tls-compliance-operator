@@ -118,6 +118,25 @@ Get an at-a-glance compliance summary:
 kubectl tlsreport summary
 ```
 
+### Compare snapshots (`diff`)
+
+Compare two JSON/YAML exports, or a saved snapshot against the live cluster.
+Useful after a cluster upgrade or TLS profile change.
+
+```bash
+# Capture a baseline
+kubectl tlsreport json > before.json
+
+# Compare the baseline to the live cluster
+kubectl tlsreport diff before.json
+
+# Compare two files
+kubectl tlsreport diff before.json after.json
+
+# Fail CI when compliance, grade, or TLS posture gets worse
+kubectl tlsreport diff before.json after.json --fail-on-regression
+```
+
 ### Version
 
 ```bash
@@ -236,7 +255,19 @@ kubectl tlsreport summary --source Service --fail-on-non-compliant
 kubectl tlsreport json -n production --source Service --fail-on-non-compliant
 ```
 
-The flag works with all subcommands and respects all filter flags.
+The flag works with export, get, summary, and describe, and respects all
+filter flags.
+
+### Upgrade validation with --fail-on-regression
+
+Compare a saved JSON/YAML snapshot to a later export (or the live cluster)
+and fail when posture gets worse:
+
+```bash
+kubectl tlsreport json > before.json
+# ... upgrade ...
+kubectl tlsreport diff before.json after.json --fail-on-regression
+```
 
 ### JUnit XML for test result ingestion
 

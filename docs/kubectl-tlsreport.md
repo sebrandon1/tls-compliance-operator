@@ -160,6 +160,45 @@ kubectl tlsreport summary -n production
 kubectl tlsreport summary --fail-on-non-compliant
 ```
 
+### diff
+
+Compare two JSON/YAML snapshots, or a snapshot against the live cluster.
+Endpoints are matched by host:port.
+
+```bash
+kubectl tlsreport diff <before-file> [after-file] [--fail-on-regression] [-o text|json]
+```
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--fail-on-regression` | | `false` | Exit with code 1 if any endpoint got worse |
+| `--output` | `-o` | `text` | Output format: text, json |
+
+A regression is a worse compliance status, a lower cipher grade, newly enabled
+legacy TLS (1.0/1.1/SSL 3.0), lost TLS 1.3, worse PQC readiness, or a newly
+added non-compliant endpoint. Certificate expiry and issuer changes are
+reported but are not regressions (rotation is expected).
+
+```bash
+# Capture a baseline, then compare against the live cluster
+kubectl tlsreport json > before.json
+kubectl tlsreport diff before.json
+
+# Compare two files (before and after a cluster upgrade)
+kubectl tlsreport json > after.json
+kubectl tlsreport diff before.json after.json
+
+# Fail CI when posture gets worse
+kubectl tlsreport diff before.json after.json --fail-on-regression
+
+# Machine-readable output
+kubectl tlsreport diff before.json after.json -o json
+```
+
+With one file argument, filter flags (`-n`, `--status`, and so on) apply only
+to the live cluster fetch. Filter flags cannot be combined with two file
+arguments.
+
 ### rescan
 
 Trigger an immediate rescan of one or more reports by setting a rescan
@@ -314,8 +353,9 @@ if any reports in the result set have a non-compliant status (NonCompliant,
 NoTLS, or PlaintextHTTP). Infrastructure statuses like Timeout and
 Unreachable do not trigger a failure.
 
-The flag works with all subcommands and respects all filter flags, so you
-can scope checks to specific namespaces, sources, or statuses:
+The flag works with export, get, summary, and describe, and respects all
+filter flags, so you can scope checks to specific namespaces, sources, or
+statuses:
 
 ```bash
 # Gate on all endpoints

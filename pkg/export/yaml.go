@@ -29,7 +29,7 @@ import (
 func WriteYAML(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) error {
 	enc := yaml.NewEncoder(w)
 
-	if err := enc.Encode(buildExportSlice(reports)); err != nil {
+	if err := enc.Encode(ToJSONReports(reports)); err != nil {
 		_ = enc.Close()
 		return fmt.Errorf("encoding YAML: %w", err)
 	}

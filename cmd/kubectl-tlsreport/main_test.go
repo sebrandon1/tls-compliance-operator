@@ -45,16 +45,14 @@ func TestNewRootCmd_Structure(t *testing.T) {
 		t.Error("expected RunE to be set")
 	}
 
-	summary := cmd.Commands()
-	found := false
-	for _, sub := range summary {
-		if sub.Use == "summary" {
-			found = true
-			break
-		}
+	found := map[string]bool{}
+	for _, sub := range cmd.Commands() {
+		found[strings.Fields(sub.Use)[0]] = true
 	}
-	if !found {
-		t.Error("expected summary subcommand")
+	for _, name := range []string{"summary", "get", "describe", "diff", "rescan", "target", "version", "completion"} {
+		if !found[name] {
+			t.Errorf("expected %s subcommand", name)
+		}
 	}
 }
 

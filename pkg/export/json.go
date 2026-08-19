@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"strconv"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
@@ -56,7 +57,9 @@ type JSONReport struct {
 	ScanDuration       string            `json:"scanDuration,omitempty"`
 }
 
-func buildExportSlice(reports []securityv1alpha1.TLSComplianceReport) []JSONReport {
+// ToJSONReports converts CRs to the flattened snapshot type used by JSON/YAML
+// export and by snapshot diff.
+func ToJSONReports(reports []securityv1alpha1.TLSComplianceReport) []JSONReport {
 	out := make([]JSONReport, 0, len(reports))
 	for i := range reports {
 		out = append(out, reportToJSON(&reports[i]))
@@ -64,11 +67,16 @@ func buildExportSlice(reports []securityv1alpha1.TLSComplianceReport) []JSONRepo
 	return out
 }
 
+// EndpointKey returns the host:port identity used to match endpoints across snapshots.
+func (r *JSONReport) EndpointKey() string {
+	return net.JoinHostPort(r.Host, r.Port)
+}
+
 // WriteJSON writes TLSComplianceReport items as pretty-printed JSON to the given writer.
 func WriteJSON(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(buildExportSlice(reports)); err != nil {
+	if err := enc.Encode(ToJSONReports(reports)); err != nil {
 		return fmt.Errorf("encoding JSON: %w", err)
 	}
 
