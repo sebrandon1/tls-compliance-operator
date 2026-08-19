@@ -281,6 +281,34 @@ stage('TLS Compliance') {
     reporter: java-junit
 ```
 
+## Comparing snapshots after an upgrade
+
+Save a JSON snapshot before a cluster upgrade or TLS profile change, then
+diff it against the live cluster (or a second export) afterward.
+
+`--fail-on-regression` exits with code 1 when an existing endpoint gets worse
+(compliance, cipher grade, newly enabled legacy TLS, lost TLS 1.3, or worse
+PQC readiness) or when a newly added endpoint is non-compliant.
+
+```bash
+kubectl tlsreport json > before.json
+# ... upgrade ...
+kubectl tlsreport json > after.json
+kubectl tlsreport diff before.json after.json --fail-on-regression
+```
+
+### Example: GitHub Actions (upgrade validation)
+
+```yaml
+- name: Capture TLS baseline
+  run: kubectl tlsreport json > before.json
+
+# ... upgrade steps ...
+
+- name: Diff TLS posture
+  run: kubectl tlsreport diff before.json --fail-on-regression
+```
+
 ## Combining with Filters
 
 The `--fail-on-non-compliant` flag respects all filter flags. This lets you

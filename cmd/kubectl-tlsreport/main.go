@@ -123,6 +123,7 @@ Use --kubeconfig and --context to target a specific cluster.`,
 	rootCmd.AddCommand(newSummaryCmd())
 	rootCmd.AddCommand(newGetCmd())
 	rootCmd.AddCommand(newDescribeCmd())
+	rootCmd.AddCommand(newDiffCmd())
 	rootCmd.AddCommand(newRescanCmd())
 	rootCmd.AddCommand(newTargetCmd())
 	rootCmd.AddCommand(newVersionCmd())

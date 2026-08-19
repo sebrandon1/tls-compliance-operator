@@ -36,7 +36,7 @@ certificate details, and post-quantum readiness.
 - **Arbitrary Targets** — Scan any host:port via `TLSComplianceTarget` CRD with webhook validation
 - **mTLS Client Certificates** — Optionally provide client certs for probing mTLS-protected endpoints
 - **Per-Namespace Rate Limiting** — Fine-grained rate control for sensitive namespaces
-- **Report Export** — CSV, JSON, YAML, JUnit XML, and Markdown via `kubectl-tlsreport` plugin
+- **Report Export** — CSV, JSON, YAML, JUnit XML, and Markdown via `kubectl-tlsreport`, plus snapshot diff for upgrade validation
 
 ## Quick Deploy
 

@@ -418,3 +418,19 @@ func TestWriteJSON_PQCReadinessValues(t *testing.T) {
 		}
 	}
 }
+
+func TestEndpointKey(t *testing.T) {
+	tests := []struct {
+		host, port, want string
+	}{
+		{"app.example.com", "443", "app.example.com:443"},
+		{"::1", "443", "[::1]:443"},
+		{"2001:db8::1", "8443", "[2001:db8::1]:8443"},
+	}
+	for _, tt := range tests {
+		got := (&JSONReport{Host: tt.host, Port: tt.port}).EndpointKey()
+		if got != tt.want {
+			t.Errorf("EndpointKey(%q, %q) = %q, want %q", tt.host, tt.port, got, tt.want)
+		}
+	}
+}
