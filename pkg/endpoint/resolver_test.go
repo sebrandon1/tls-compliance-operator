@@ -336,6 +336,42 @@ func TestExtractFromIngress_NoTLS(t *testing.T) {
 	}
 }
 
+func TestExtractFromIngress_SSRF(t *testing.T) {
+	tests := []struct {
+		name      string
+		hosts     []string
+		wantHosts []string
+	}{
+		{"cloud metadata IP", []string{"169.254.169.254"}, nil},
+		{"localhost", []string{"localhost"}, nil},
+		{"loopback IP", []string{"127.0.0.1"}, nil},
+		{"google metadata", []string{"metadata.google.internal"}, nil},
+		{"safe host", []string{"app.example.com"}, []string{"app.example.com"}},
+		{"mixed unsafe and safe", []string{"169.254.169.254", "app.example.com", "localhost"}, []string{"app.example.com"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ing := &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{Name: "ing", Namespace: "default"},
+				Spec: networkingv1.IngressSpec{
+					TLS: []networkingv1.IngressTLS{{Hosts: tt.hosts}},
+				},
+			}
+			endpoints := ExtractFromIngress(ing)
+			got := hostsFromEndpoints(endpoints)
+			if len(got) != len(tt.wantHosts) {
+				t.Fatalf("hosts = %v, want %v", got, tt.wantHosts)
+			}
+			for i, host := range tt.wantHosts {
+				if got[i] != host {
+					t.Errorf("host[%d] = %q, want %q", i, got[i], host)
+				}
+			}
+		})
+	}
+}
+
 func TestExtractFromRoute(t *testing.T) {
 	route := &unstructured.Unstructured{
 		Object: map[string]interface{}{
@@ -389,6 +425,48 @@ func TestExtractFromRoute_NoTLS(t *testing.T) {
 	endpoints := ExtractFromRoute(route)
 	if len(endpoints) != 0 {
 		t.Fatalf("expected 0 endpoints for non-TLS route, got %d", len(endpoints))
+	}
+}
+
+func TestExtractFromRoute_SSRF(t *testing.T) {
+	tests := []struct {
+		name        string
+		host        string
+		wantBlocked bool
+	}{
+		{"cloud metadata IP", "169.254.169.254", true},
+		{"localhost", "localhost", true},
+		{"loopback IP", "127.0.0.1", true},
+		{"google metadata", "metadata.google.internal", true},
+		{"safe host", "app.example.com", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			route := &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"apiVersion": "route.openshift.io/v1",
+					"kind":       "Route",
+					"metadata": map[string]interface{}{
+						"name":      "my-route",
+						"namespace": "default",
+					},
+					"spec": map[string]interface{}{
+						"host": tt.host,
+						"tls": map[string]interface{}{
+							"termination": "edge",
+						},
+					},
+				},
+			}
+			endpoints := ExtractFromRoute(route)
+			if tt.wantBlocked && len(endpoints) != 0 {
+				t.Errorf("expected SSRF-unsafe host %q to be blocked, got %d endpoints", tt.host, len(endpoints))
+			}
+			if !tt.wantBlocked && len(endpoints) == 0 {
+				t.Errorf("expected safe host %q to produce endpoints", tt.host)
+			}
+		})
 	}
 }
 
@@ -1482,6 +1560,37 @@ func TestExtractFromHTTPRoute_NoHostnames(t *testing.T) {
 	}
 }
 
+func TestExtractFromHTTPRoute_SSRF(t *testing.T) {
+	tests := []struct {
+		name      string
+		hostnames []interface{}
+		wantHosts []string
+	}{
+		{"cloud metadata IP", []interface{}{"169.254.169.254"}, nil},
+		{"localhost", []interface{}{"localhost"}, nil},
+		{"mixed unsafe and safe", []interface{}{"localhost", "app.example.com", "169.254.169.254"}, []string{"app.example.com"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			route := &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "gateway.networking.k8s.io/v1", "kind": "HTTPRoute",
+				"metadata": map[string]interface{}{"name": "r", "namespace": "default"},
+				"spec":     map[string]interface{}{"hostnames": tt.hostnames},
+			}}
+			got := hostsFromEndpoints(ExtractFromHTTPRoute(route))
+			if len(got) != len(tt.wantHosts) {
+				t.Fatalf("hosts = %v, want %v", got, tt.wantHosts)
+			}
+			for i, host := range tt.wantHosts {
+				if got[i] != host {
+					t.Errorf("host[%d] = %q, want %q", i, got[i], host)
+				}
+			}
+		})
+	}
+}
+
 func TestExtractFromTLSRoute(t *testing.T) {
 	route := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "gateway.networking.k8s.io/v1", "kind": "TLSRoute",
@@ -1512,6 +1621,37 @@ func TestExtractFromTLSRoute_NoHostnames(t *testing.T) {
 	eps := ExtractFromTLSRoute(route)
 	if len(eps) != 0 {
 		t.Errorf("expected 0 endpoints for TLSRoute without hostnames, got %d", len(eps))
+	}
+}
+
+func TestExtractFromTLSRoute_SSRF(t *testing.T) {
+	tests := []struct {
+		name      string
+		hostnames []interface{}
+		wantHosts []string
+	}{
+		{"cloud metadata IP", []interface{}{"169.254.169.254"}, nil},
+		{"localhost", []interface{}{"localhost"}, nil},
+		{"mixed unsafe and safe", []interface{}{"169.254.169.254", "secure.example.com"}, []string{"secure.example.com"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			route := &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "gateway.networking.k8s.io/v1", "kind": "TLSRoute",
+				"metadata": map[string]interface{}{"name": "r", "namespace": "default"},
+				"spec":     map[string]interface{}{"hostnames": tt.hostnames},
+			}}
+			got := hostsFromEndpoints(ExtractFromTLSRoute(route))
+			if len(got) != len(tt.wantHosts) {
+				t.Fatalf("hosts = %v, want %v", got, tt.wantHosts)
+			}
+			for i, host := range tt.wantHosts {
+				if got[i] != host {
+					t.Errorf("host[%d] = %q, want %q", i, got[i], host)
+				}
+			}
+		})
 	}
 }
 
@@ -2046,4 +2186,15 @@ func TestExtractFromService_NodePortStillGetsInternalEndpoint(t *testing.T) {
 	if endpoints[0].Port != 443 {
 		t.Errorf("port = %d, want 443 (service port, not node port)", endpoints[0].Port)
 	}
+}
+
+func hostsFromEndpoints(endpoints []Endpoint) []string {
+	if len(endpoints) == 0 {
+		return nil
+	}
+	hosts := make([]string, len(endpoints))
+	for i := range endpoints {
+		hosts[i] = endpoints[i].Host
+	}
+	return hosts
 }
