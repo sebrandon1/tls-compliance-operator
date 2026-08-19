@@ -39,7 +39,7 @@
 ## Flow
 
 1. **Controller** watches Services, Ingresses, Routes, and Gateway API resources (HTTPRoute, TLSRoute, Gateway) for changes; periodically scans Pods and `TLSComplianceTarget` CRs. Headless services are resolved via the EndpointSlice API. NodePort services are probed on each node address; LoadBalancer services include ingress IP/hostname endpoints.
-2. **Endpoint Resolver** extracts TLS endpoints (host:port) from each resource type
+2. **Endpoint Resolver** extracts TLS endpoints (host:port) from each resource type. User-specified hosts (ExternalName services, Ingress TLS hosts, Route hosts, HTTPRoute/TLSRoute hostnames) are checked with `IsSafeHost()` so loopback, link-local/metadata, and RFC1918 addresses are not probed (SSRF). Cluster-internal addresses from Pods, NodePorts, ClusterIPs, and Gateway status are not filtered this way.
 3. **TLS Checker** probes each endpoint with all TLS versions in parallel using Go's `crypto/tls`, then performs active ML-KEM probing for PQC readiness. After 3 consecutive Timeout or Unreachable failures, a circuit breaker skips that endpoint for 15 minutes.
 4. **TLSComplianceReport** CR is created/updated with results
 5. **Events and Metrics** are emitted for observability

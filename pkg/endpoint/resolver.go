@@ -238,13 +238,29 @@ func ExtractFromNodePortService(svc *corev1.Service, nodeAddresses []string) []E
 	return endpoints
 }
 
+// isSafeDiscoveredHost reports whether a user-specified host is safe to probe.
+// Loopback, link-local/metadata, RFC1918, and known internal hostnames are
+// skipped to prevent SSRF. Cluster-internal extractors (Pod, NodePort, ClusterIP,
+// Gateway status addresses) must not use this check — those IPs are expected.
+func isSafeDiscoveredHost(host string, sourceKind securityv1alpha1.SourceKind, name, namespace string) bool {
+	if hostvalidation.IsSafeHost(host) {
+		return true
+	}
+	klog.V(1).InfoS("skipping unsafe host",
+		"host", host,
+		"sourceKind", sourceKind,
+		"sourceName", name,
+		"sourceNamespace", namespace)
+	return false
+}
+
 func extractFromExternalNameService(svc *corev1.Service) []Endpoint {
 	host := svc.Spec.ExternalName
 	if host == "" {
 		return nil
 	}
 
-	if !hostvalidation.IsSafeHost(host) {
+	if !isSafeDiscoveredHost(host, securityv1alpha1.SourceKindService, svc.Name, svc.Namespace) {
 		return nil
 	}
 
@@ -282,6 +298,9 @@ func ExtractFromIngress(ing *networkingv1.Ingress) []Endpoint {
 
 	for _, tlsBlock := range ing.Spec.TLS {
 		for _, host := range tlsBlock.Hosts {
+			if !isSafeDiscoveredHost(host, securityv1alpha1.SourceKindIngress, ing.Name, ing.Namespace) {
+				continue
+			}
 			endpoints = append(endpoints, Endpoint{
 				Host:            host,
 				Port:            443,
@@ -318,6 +337,10 @@ func ExtractFromRoute(obj *unstructured.Unstructured) []Endpoint {
 		return nil
 	}
 
+	if !isSafeDiscoveredHost(host, securityv1alpha1.SourceKindRoute, obj.GetName(), obj.GetNamespace()) {
+		return nil
+	}
+
 	endpoints = append(endpoints, Endpoint{
 		Host:            host,
 		Port:            443,
@@ -337,6 +360,9 @@ func ExtractFromHTTPRoute(obj *unstructured.Unstructured) []Endpoint {
 	}
 	var endpoints []Endpoint
 	for _, host := range hostnames {
+		if !isSafeDiscoveredHost(host, securityv1alpha1.SourceKindHTTPRoute, obj.GetName(), obj.GetNamespace()) {
+			continue
+		}
 		endpoints = append(endpoints, Endpoint{
 			Host: host, Port: 443, SourceKind: securityv1alpha1.SourceKindHTTPRoute,
 			SourceNamespace: obj.GetNamespace(), SourceName: obj.GetName(),
@@ -353,6 +379,9 @@ func ExtractFromTLSRoute(obj *unstructured.Unstructured) []Endpoint {
 	}
 	var endpoints []Endpoint
 	for _, host := range hostnames {
+		if !isSafeDiscoveredHost(host, securityv1alpha1.SourceKindTLSRoute, obj.GetName(), obj.GetNamespace()) {
+			continue
+		}
 		endpoints = append(endpoints, Endpoint{
 			Host: host, Port: 443, SourceKind: securityv1alpha1.SourceKindTLSRoute,
 			SourceNamespace: obj.GetNamespace(), SourceName: obj.GetName(),
