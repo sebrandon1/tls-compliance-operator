@@ -163,6 +163,8 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 				kind = securityv1alpha1.SourceKindHTTPRoute
 			case "TLSRoute":
 				kind = securityv1alpha1.SourceKindTLSRoute
+			case "GRPCRoute":
+				kind = securityv1alpha1.SourceKindGRPCRoute
 			case "Gateway":
 				kind = securityv1alpha1.SourceKindGateway
 			default:

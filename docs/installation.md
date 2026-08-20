@@ -57,6 +57,7 @@ INFO  setup  OpenShift Route API detected, enabling Route monitoring
 INFO  setup  OpenShift Config API detected, enabling TLS security profile monitoring
 INFO  setup  Gateway API resource detected  {"kind": "HTTPRoute"}
 INFO  setup  Gateway API resource detected  {"kind": "TLSRoute"}
+INFO  setup  Gateway API resource detected  {"kind": "GRPCRoute"}
 INFO  setup  Gateway API resource detected  {"kind": "Gateway"}
 ```
 

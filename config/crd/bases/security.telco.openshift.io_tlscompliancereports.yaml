@@ -108,6 +108,7 @@ spec:
                 - Pod
                 - HTTPRoute
                 - TLSRoute
+                - GRPCRoute
                 - Gateway
                 type: string
               sourceName:

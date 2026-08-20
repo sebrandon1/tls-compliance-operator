@@ -35,7 +35,7 @@ The [openshift/tls-scanner](https://github.com/openshift/tls-scanner) is a batch
 | CSV, JSON, YAML, JUnit, Markdown, HTML, SARIF export | `kubectl-tlsreport` plugin for CI/CD integration, including snapshot diff |
 | Post-quantum readiness detection | Reports negotiated key exchange curves and PQC status |
 | Active ML-KEM probing | Dedicated TLS 1.3 handshake to confirm post-quantum key exchange support |
-| Gateway API support | Auto-detects and monitors HTTPRoute, TLSRoute, and Gateway resources |
+| Gateway API support | Auto-detects and monitors HTTPRoute, TLSRoute, GRPCRoute, and Gateway resources |
 | Headless service scanning | Discovers endpoints via EndpointSlice API for StatefulSet pods |
 | ALPN protocol detection | Reports negotiated ALPN (h2, http/1.1) per TLS version |
 | Forward secrecy detection | Identifies ephemeral key exchange (ECDHE/DHE) across all cipher suites |

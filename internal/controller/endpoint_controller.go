@@ -156,7 +156,7 @@ func (r *EndpointReconciler) updateWithRetry(ctx context.Context, name string, m
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch;update
 // +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch
-// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes;tlsroutes;gateways,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes;tlsroutes;grpcroutes;gateways,verbs=get;list;watch
 // +kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=operator.openshift.io,resources=ingresscontrollers,verbs=get;list;watch
@@ -416,6 +416,9 @@ func (r *EndpointReconciler) handleGatewayResource(ctx context.Context, obj *uns
 	case "TLSRoute":
 		endpoints = endpoint.ExtractFromTLSRoute(obj)
 		sourceKind = securityv1alpha1.SourceKindTLSRoute
+	case "GRPCRoute":
+		endpoints = endpoint.ExtractFromGRPCRoute(obj)
+		sourceKind = securityv1alpha1.SourceKindGRPCRoute
 	case "Gateway":
 		endpoints = endpoint.ExtractFromGateway(obj)
 		sourceKind = securityv1alpha1.SourceKindGateway

@@ -370,6 +370,7 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 	}{
 		{"gateway.networking.k8s.io", []string{"v1"}, "HTTPRoute"},
 		{"gateway.networking.k8s.io", []string{"v1", "v1alpha2"}, "TLSRoute"},
+		{"gateway.networking.k8s.io", []string{"v1", "v1alpha2"}, "GRPCRoute"},
 		{"gateway.networking.k8s.io", []string{"v1"}, "Gateway"},
 	} {
 		for _, version := range gvk.versions {

@@ -662,6 +662,8 @@ func TestComputeSummary_GatewayAPISourceKinds(t *testing.T) {
 			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant}},
 		{Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindTLSRoute},
 			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant}},
+		{Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindGRPCRoute},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant}},
 		{Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindGateway},
 			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusNonCompliant}},
 	}
@@ -673,6 +675,9 @@ func TestComputeSummary_GatewayAPISourceKinds(t *testing.T) {
 	if s.BySourceKind[securityv1alpha1.SourceKindTLSRoute] != 1 {
 		t.Errorf("expected 1 TLSRoute, got %d", s.BySourceKind[securityv1alpha1.SourceKindTLSRoute])
 	}
+	if s.BySourceKind[securityv1alpha1.SourceKindGRPCRoute] != 1 {
+		t.Errorf("expected 1 GRPCRoute, got %d", s.BySourceKind[securityv1alpha1.SourceKindGRPCRoute])
+	}
 	if s.BySourceKind[securityv1alpha1.SourceKindGateway] != 1 {
 		t.Errorf("expected 1 Gateway, got %d", s.BySourceKind[securityv1alpha1.SourceKindGateway])
 	}
@@ -682,7 +687,7 @@ func TestComputeSummary_GatewayAPISourceKinds(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	output := buf.String()
-	for _, kind := range []string{"HTTPRoute:", "TLSRoute:", "Gateway:"} {
+	for _, kind := range []string{"HTTPRoute:", "TLSRoute:", "GRPCRoute:", "Gateway:"} {
 		if !strings.Contains(output, kind) {
 			t.Errorf("expected output to contain %q", kind)
 		}

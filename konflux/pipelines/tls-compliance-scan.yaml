@@ -307,7 +307,7 @@ spec:
                   resources: [kubeletconfigs]
                   verbs: [get, list, watch]
                 - apiGroups: [gateway.networking.k8s.io]
-                  resources: [gateways, httproutes, tlsroutes]
+                  resources: [gateways, httproutes, tlsroutes, grpcroutes]
                   verbs: [get, list, watch]
                 - apiGroups: [security.telco.openshift.io]
                   resources: [tlscompliancereports, tlscompliancereports/status, tlscompliancereports/finalizers]

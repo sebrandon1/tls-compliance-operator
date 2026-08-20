@@ -47,7 +47,7 @@ These flags are available on all subcommands:
 |------|-------|-------------|
 | `--namespace` | `-n` | Filter by source namespace |
 | `--status` | | Filter by compliance status (Compliant, NonCompliant, Warning, Unreachable, Timeout, Closed, Filtered, NoTLS, PlaintextHTTP, MutualTLSRequired, Pending, Unknown) |
-| `--source` | | Filter by source kind (Service, Ingress, Route, Pod, HTTPRoute, TLSRoute, Gateway, Target) |
+| `--source` | | Filter by source kind (Service, Ingress, Route, Pod, HTTPRoute, TLSRoute, GRPCRoute, Gateway, Target) |
 | `--pqc-status` | | Filter by PQC readiness (PQCReady, TLS13Capable, LegacyTLS, NoPQC) |
 | `--expires-within` | | Show certs expiring within duration (e.g. 30d, 7d, 90d) |
 | `--expired` | | Show only expired certificates |

@@ -217,6 +217,7 @@ func registerFlagCompletions(rootCmd *cobra.Command) {
 			string(securityv1alpha1.SourceKindPod),
 			string(securityv1alpha1.SourceKindHTTPRoute),
 			string(securityv1alpha1.SourceKindTLSRoute),
+			string(securityv1alpha1.SourceKindGRPCRoute),
 			string(securityv1alpha1.SourceKindGateway),
 		}, cobra.ShellCompDirectiveNoFileComp
 	})

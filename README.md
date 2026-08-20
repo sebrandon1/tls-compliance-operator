@@ -12,7 +12,7 @@ for TLS version compliance, certificate health, and security posture.
 ## Overview
 
 The TLS Compliance Operator watches Services, Ingresses, OpenShift Routes,
-Gateway API resources (HTTPRoute, TLSRoute, Gateway), Pods, and optional
+Gateway API resources (HTTPRoute, TLSRoute, GRPCRoute, Gateway), Pods, and optional
 `TLSComplianceTarget` CRs to discover TLS endpoints, then probes each endpoint
 to determine which TLS versions it supports. It creates `TLSComplianceReport`
 custom resources with compliance status, supported TLS versions, cipher suites,
@@ -21,7 +21,7 @@ certificate details, and post-quantum readiness.
 ## Key Features
 
 - **Automatic Discovery** — Services (including ExternalName, NodePort, and LoadBalancer), Ingresses, Routes, and Pods
-- **Gateway API Support** — Auto-discovers HTTPRoute, TLSRoute, and Gateway resources
+- **Gateway API Support** — Auto-discovers HTTPRoute, TLSRoute, GRPCRoute, and Gateway resources
 - **Headless Service Scanning** — Discovers pod endpoints via EndpointSlice API
 - **TLS Version Detection** — Probes for SSL 3.0, TLS 1.0, 1.1, 1.2, and 1.3 support (in parallel)
 - **Compliance Classification** — Compliant, Warning, NonCompliant, plus connectivity statuses (Timeout, Closed, Unreachable, NoTLS, PlaintextHTTP, MutualTLSRequired)
