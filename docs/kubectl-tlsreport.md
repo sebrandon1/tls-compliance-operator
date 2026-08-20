@@ -103,18 +103,23 @@ kubectl tlsreport junit --fail-on-non-compliant > results.xml
 ### get
 
 Display reports in a table. Supports `table`, `wide`, `json`, and `yaml`
-output formats.
+output formats. Use `--watch` (`-w`) to stream create, update, and delete
+events until you interrupt the command (Ctrl-C). Filters (`--status`, `-l`,
+and the other report flags) apply to the initial snapshot and to later
+events. Table output prints the header once, then one row per event;
+JSON and YAML emit one object per event.
 
 Default table columns: NAME, HOST, PORT, SOURCE, COMPLIANCE, GRADE, FS,
 TLS 1.3, TLS 1.2, PQC, MLKEM.
 
 ```bash
-kubectl tlsreport get [name] [-o format]
+kubectl tlsreport get [name] [-o format] [--watch]
 ```
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
 | `--output` | `-o` | `table` | Output format: table, wide, json, yaml |
+| `--watch` | `-w` | `false` | Watch for create, update, and delete events |
 
 ```bash
 # List all reports
@@ -131,6 +136,12 @@ kubectl tlsreport get --status NonCompliant -n production
 
 # Get reports as JSON
 kubectl tlsreport get -o json
+
+# Watch reports as they are created or updated
+kubectl tlsreport get --watch
+
+# Watch a single report
+kubectl tlsreport get my-service-443-abc12345 --watch
 ```
 
 ### describe

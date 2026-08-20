@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -28,11 +29,13 @@ import (
 
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
+	"github.com/sebrandon1/tls-compliance-operator/pkg/export"
 )
 
 func TestNewRootCmd_Structure(t *testing.T) {
@@ -1192,6 +1195,384 @@ func TestNewGetCmd_OutputFlag(t *testing.T) {
 	}
 	if f.Shorthand != "o" {
 		t.Errorf("expected shorthand 'o', got %s", f.Shorthand)
+	}
+}
+
+func TestNewGetCmd_WatchFlag(t *testing.T) {
+	cmd := newGetCmd()
+	f := cmd.Flags().Lookup("watch")
+	if f == nil {
+		t.Fatal("expected --watch flag")
+	}
+	if f.DefValue != "false" {
+		t.Errorf("expected default false, got %s", f.DefValue)
+	}
+	if f.Shorthand != "w" {
+		t.Errorf("expected shorthand 'w', got %s", f.Shorthand)
+	}
+}
+
+func sampleWatchReport(name, host, status string) *securityv1alpha1.TLSComplianceReport {
+	r := &securityv1alpha1.TLSComplianceReport{}
+	r.Name = name
+	r.Spec.Host = host
+	r.Spec.Port = 443
+	r.Spec.SourceKind = securityv1alpha1.SourceKindService
+	r.Status.ComplianceStatus = securityv1alpha1.ComplianceStatus(status)
+	r.Status.OverallCipherGrade = "A"
+	return r
+}
+
+func TestReportMatchesGetFilters(t *testing.T) {
+	report := sampleWatchReport("svc-443", "svc.example", "NonCompliant")
+
+	t.Run("no filters", func(t *testing.T) {
+		filterOpts = export.FilterOptions{}
+		defer func() { filterOpts = export.FilterOptions{} }()
+		ok, err := reportMatchesGetFilters(report, "")
+		if err != nil || !ok {
+			t.Fatalf("match = %v, err = %v, want true", ok, err)
+		}
+	})
+	t.Run("name mismatch", func(t *testing.T) {
+		ok, err := reportMatchesGetFilters(report, "other")
+		if err != nil || ok {
+			t.Fatalf("match = %v, err = %v, want false", ok, err)
+		}
+	})
+	t.Run("status filter", func(t *testing.T) {
+		filterOpts = export.FilterOptions{Status: "NonCompliant"}
+		defer func() { filterOpts = export.FilterOptions{} }()
+		ok, err := reportMatchesGetFilters(report, "")
+		if err != nil || !ok {
+			t.Fatalf("match = %v, err = %v, want true", ok, err)
+		}
+		compliant := sampleWatchReport("ok-443", "ok.example", "Compliant")
+		ok, err = reportMatchesGetFilters(compliant, "")
+		if err != nil || ok {
+			t.Fatalf("compliant match = %v, err = %v, want false", ok, err)
+		}
+	})
+	t.Run("invalid expires-within", func(t *testing.T) {
+		filterOpts = export.FilterOptions{ExpiresWithin: "nope"}
+		defer func() { filterOpts = export.FilterOptions{} }()
+		ok, err := reportMatchesGetFilters(report, "")
+		if err == nil || ok {
+			t.Fatalf("match = %v, err = %v, want error", ok, err)
+		}
+		if !strings.Contains(err.Error(), "expires-within") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+}
+
+func TestFormatReportTableRow_Deleted(t *testing.T) {
+	r := sampleWatchReport("gone-443", "gone.example", "Compliant")
+	row := formatReportTableRow(r, false, true)
+	if !strings.Contains(row, "Deleted") {
+		t.Errorf("expected Deleted in row, got %q", row)
+	}
+	if !strings.Contains(row, "gone-443") {
+		t.Errorf("expected name in row, got %q", row)
+	}
+}
+
+func TestHandleGetWatchEvent(t *testing.T) {
+	outputFormat = "table"
+	filterOpts = export.FilterOptions{}
+	defer func() {
+		outputFormat = ""
+		filterOpts = export.FilterOptions{}
+	}()
+
+	t.Run("added", func(t *testing.T) {
+		var buf bytes.Buffer
+		r := sampleWatchReport("svc-443", "svc.example", "Compliant")
+		if err := handleGetWatchEvent(&buf, watch.Event{Type: watch.Added, Object: r}, ""); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(buf.String(), "svc-443") {
+			t.Errorf("output = %q", buf.String())
+		}
+	})
+	t.Run("deleted", func(t *testing.T) {
+		var buf bytes.Buffer
+		r := sampleWatchReport("svc-443", "svc.example", "Compliant")
+		if err := handleGetWatchEvent(&buf, watch.Event{Type: watch.Deleted, Object: r}, ""); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(buf.String(), "Deleted") {
+			t.Errorf("output = %q", buf.String())
+		}
+	})
+	t.Run("modified", func(t *testing.T) {
+		var buf bytes.Buffer
+		r := sampleWatchReport("svc-443", "svc.example", "Warning")
+		if err := handleGetWatchEvent(&buf, watch.Event{Type: watch.Modified, Object: r}, ""); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(buf.String(), "svc-443") || !strings.Contains(buf.String(), "Warning") {
+			t.Errorf("output = %q", buf.String())
+		}
+	})
+	t.Run("status filter skips", func(t *testing.T) {
+		filterOpts = export.FilterOptions{Status: "NonCompliant"}
+		defer func() { filterOpts = export.FilterOptions{} }()
+		var buf bytes.Buffer
+		r := sampleWatchReport("svc-443", "svc.example", "Compliant")
+		if err := handleGetWatchEvent(&buf, watch.Event{Type: watch.Modified, Object: r}, ""); err != nil {
+			t.Fatal(err)
+		}
+		if buf.Len() != 0 {
+			t.Errorf("expected no output, got %q", buf.String())
+		}
+	})
+	t.Run("name filter skips", func(t *testing.T) {
+		var buf bytes.Buffer
+		r := sampleWatchReport("svc-443", "svc.example", "Compliant")
+		if err := handleGetWatchEvent(&buf, watch.Event{Type: watch.Added, Object: r}, "other"); err != nil {
+			t.Fatal(err)
+		}
+		if buf.Len() != 0 {
+			t.Errorf("expected no output, got %q", buf.String())
+		}
+	})
+	t.Run("bookmark ignored", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := handleGetWatchEvent(&buf, watch.Event{Type: watch.Bookmark}, ""); err != nil {
+			t.Fatal(err)
+		}
+		if buf.Len() != 0 {
+			t.Errorf("expected no output, got %q", buf.String())
+		}
+	})
+	t.Run("json event", func(t *testing.T) {
+		outputFormat = "json"
+		defer func() { outputFormat = "table" }()
+		var buf bytes.Buffer
+		r := sampleWatchReport("svc-443", "svc.example", "Compliant")
+		if err := handleGetWatchEvent(&buf, watch.Event{Type: watch.Added, Object: r}, ""); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(buf.String(), `"host":"svc.example"`) {
+			t.Errorf("json = %q", buf.String())
+		}
+	})
+	t.Run("watch error", func(t *testing.T) {
+		err := handleGetWatchEvent(io.Discard, watch.Event{Type: watch.Error, Object: &metav1.Status{Message: "boom"}}, "")
+		if err == nil || !strings.Contains(err.Error(), "watch error") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+	t.Run("deleted ignores status filter", func(t *testing.T) {
+		filterOpts = export.FilterOptions{Status: "NonCompliant"}
+		defer func() { filterOpts = export.FilterOptions{} }()
+		var buf bytes.Buffer
+		r := sampleWatchReport("svc-443", "svc.example", "Compliant")
+		if err := handleGetWatchEvent(&buf, watch.Event{Type: watch.Deleted, Object: r}, ""); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(buf.String(), "Deleted") {
+			t.Errorf("expected deleted row, got %q", buf.String())
+		}
+	})
+	t.Run("nil object ignored", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := handleGetWatchEvent(&buf, watch.Event{Type: watch.Added}, ""); err != nil {
+			t.Fatal(err)
+		}
+		if buf.Len() != 0 {
+			t.Errorf("expected no output, got %q", buf.String())
+		}
+	})
+	t.Run("deleted name mismatch", func(t *testing.T) {
+		var buf bytes.Buffer
+		r := sampleWatchReport("svc-443", "svc.example", "Compliant")
+		if err := handleGetWatchEvent(&buf, watch.Event{Type: watch.Deleted, Object: r}, "other"); err != nil {
+			t.Fatal(err)
+		}
+		if buf.Len() != 0 {
+			t.Errorf("expected no output, got %q", buf.String())
+		}
+	})
+	t.Run("invalid filter error", func(t *testing.T) {
+		filterOpts = export.FilterOptions{ExpiresWithin: "nope"}
+		defer func() { filterOpts = export.FilterOptions{} }()
+		r := sampleWatchReport("svc-443", "svc.example", "Compliant")
+		err := handleGetWatchEvent(io.Discard, watch.Event{Type: watch.Added, Object: r}, "")
+		if err == nil || !strings.Contains(err.Error(), "expires-within") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+	t.Run("wide event", func(t *testing.T) {
+		outputFormat = "wide"
+		defer func() { outputFormat = "table" }()
+		var buf bytes.Buffer
+		r := sampleWatchReport("svc-443", "svc.example", "Compliant")
+		r.Spec.SourceNamespace = "prod"
+		if err := handleGetWatchEvent(&buf, watch.Event{Type: watch.Added, Object: r}, ""); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(buf.String(), "prod") {
+			t.Errorf("wide row = %q", buf.String())
+		}
+	})
+}
+
+func TestWriteWatchSnapshotAndEventFormats(t *testing.T) {
+	r := sampleWatchReport("svc-443", "svc.example", "Compliant")
+	reports := []securityv1alpha1.TLSComplianceReport{*r}
+
+	t.Run("unknown snapshot format", func(t *testing.T) {
+		outputFormat = "csv"
+		defer func() { outputFormat = "" }()
+		err := writeWatchSnapshot(io.Discard, reports)
+		if err == nil || !strings.Contains(err.Error(), "unknown output format") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+	t.Run("unknown event format", func(t *testing.T) {
+		outputFormat = "csv"
+		defer func() { outputFormat = "" }()
+		err := writeWatchEvent(io.Discard, r, false)
+		if err == nil || !strings.Contains(err.Error(), "unknown output format") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+	t.Run("yaml snapshot and event", func(t *testing.T) {
+		outputFormat = "yaml"
+		defer func() { outputFormat = "" }()
+		var buf bytes.Buffer
+		if err := writeWatchSnapshot(&buf, reports); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeWatchEvent(&buf, r, false); err != nil {
+			t.Fatal(err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "host: svc.example") {
+			t.Errorf("yaml = %q", out)
+		}
+		if strings.Count(out, "---") != 1 {
+			t.Errorf("expected one YAML document separator, got %q", out)
+		}
+	})
+	t.Run("json snapshot", func(t *testing.T) {
+		outputFormat = "json"
+		defer func() { outputFormat = "" }()
+		var buf bytes.Buffer
+		if err := writeWatchSnapshot(&buf, reports); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(buf.String(), `"host":"svc.example"`) {
+			t.Errorf("json = %q", buf.String())
+		}
+	})
+	t.Run("wide table snapshot", func(t *testing.T) {
+		outputFormat = "wide"
+		defer func() { outputFormat = "" }()
+		var buf bytes.Buffer
+		if err := writeWatchSnapshot(&buf, reports); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(buf.String(), "NAMESPACE") {
+			t.Errorf("wide header missing: %q", buf.String())
+		}
+	})
+}
+
+func TestFormatReportTableRow_WideDeleted(t *testing.T) {
+	r := sampleWatchReport("gone-443", "gone.example", "Compliant")
+	row := formatReportTableRow(r, true, true)
+	if !strings.Contains(row, "Deleted") {
+		t.Errorf("expected Deleted in wide row, got %q", row)
+	}
+}
+
+func TestWatchReports_CancelledContext(t *testing.T) {
+	report := sampleWatchReport("svc-443", "svc.example", "Compliant")
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(report).Build()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	outputFormat = "table"
+	labelSelector = ""
+	filterOpts = export.FilterOptions{}
+	defer func() {
+		outputFormat = ""
+		labelSelector = ""
+		filterOpts = export.FilterOptions{}
+	}()
+
+	var buf bytes.Buffer
+	if err := watchReports(ctx, c, "", &buf); err != nil {
+		t.Fatalf("watchReports() error = %v", err)
+	}
+	if !strings.Contains(buf.String(), "svc-443") {
+		t.Errorf("expected snapshot of existing report, got %q", buf.String())
+	}
+}
+
+func TestWatchReports_NamedMissing(t *testing.T) {
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	outputFormat = "table"
+	labelSelector = ""
+	filterOpts = export.FilterOptions{}
+	defer func() {
+		outputFormat = ""
+		labelSelector = ""
+		filterOpts = export.FilterOptions{}
+	}()
+
+	var buf bytes.Buffer
+	if err := watchReports(ctx, c, "missing-report", &buf); err != nil {
+		t.Fatalf("watchReports() error = %v", err)
+	}
+	if !strings.Contains(buf.String(), "NAME") {
+		t.Errorf("expected table header while waiting, got %q", buf.String())
+	}
+}
+
+func TestFilterReportsByName(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{*sampleWatchReport("a", "a.example", "Compliant"), *sampleWatchReport("b", "b.example", "Compliant")}
+	got := filterReportsByName(reports, "b")
+	if len(got) != 1 || got[0].Name != "b" {
+		t.Fatalf("got %v", got)
+	}
+	if got := filterReportsByName(reports, "missing"); len(got) != 0 {
+		t.Fatalf("missing name should return nil/empty, got %d", len(got))
+	}
+}
+
+func TestReportListOptions_InvalidSelector(t *testing.T) {
+	labelSelector = "!!invalid"
+	defer func() { labelSelector = "" }()
+	_, err := reportListOptions("")
+	if err == nil || !strings.Contains(err.Error(), "parsing label selector") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestReportListOptions_SelectorAndResourceVersion(t *testing.T) {
+	labelSelector = "app=web"
+	defer func() { labelSelector = "" }()
+	opts, err := reportListOptions("12345")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(opts) != 2 {
+		t.Fatalf("expected selector and resourceVersion options, got %d", len(opts))
+	}
+}
+
+func TestWatchReports_InvalidSelector(t *testing.T) {
+	labelSelector = "!!invalid"
+	defer func() { labelSelector = "" }()
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	err := watchReports(context.Background(), c, "", io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "parsing label selector") {
+		t.Fatalf("error = %v", err)
 	}
 }
 
