@@ -43,6 +43,7 @@ func newTargetCmd() *cobra.Command {
 	cmd.AddCommand(newTargetGetCmd())
 	cmd.AddCommand(newTargetDescribeCmd())
 	cmd.AddCommand(newTargetCreateCmd())
+	cmd.AddCommand(newTargetUpdateCmd())
 	cmd.AddCommand(newTargetDeleteCmd())
 	return cmd
 }
@@ -126,6 +127,33 @@ func newTargetCreateCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&waitFlag, "wait", false, "Wait for the scan to complete and display the result")
 	cmd.Flags().DurationVar(&timeout, "timeout", 60*time.Second, "Timeout when waiting for scan completion")
+	return cmd
+}
+
+func newTargetUpdateCmd() *cobra.Command {
+	var host string
+	var port int
+
+	cmd := &cobra.Command{
+		Use:   "update <name>",
+		Short: "Update host and/or port on an existing TLSComplianceTarget",
+		Example: `  # Update the host
+  kubectl tlsreport target update google-com-443 --host google.com
+
+  # Update the port
+  kubectl tlsreport target update google-com-443 --port 8443
+
+  # Update host and port
+  kubectl tlsreport target update google-com-443 --host google.com --port 443`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			hostSet := cmd.Flags().Changed("host")
+			portSet := cmd.Flags().Changed("port")
+			return runTargetUpdate(cmd.Context(), args[0], host, port, hostSet, portSet)
+		},
+	}
+	cmd.Flags().StringVar(&host, "host", "", "New hostname or IP")
+	cmd.Flags().IntVar(&port, "port", 0, "New port (1-65535)")
 	return cmd
 }
 
@@ -349,6 +377,52 @@ func waitForTargetScan(ctx context.Context, c client.Client, name string, timeou
 			}
 		}
 	}
+}
+
+func runTargetUpdate(ctx context.Context, name, host string, port int, hostSet, portSet bool) error {
+	if err := validateTargetUpdate(host, port, hostSet, portSet); err != nil {
+		return err
+	}
+
+	c, err := buildClient()
+	if err != nil {
+		return err
+	}
+	return updateTarget(ctx, c, name, host, port, hostSet, portSet)
+}
+
+func validateTargetUpdate(host string, port int, hostSet, portSet bool) error {
+	if !hostSet && !portSet {
+		return fmt.Errorf("at least one of --host or --port is required")
+	}
+	if hostSet && strings.TrimSpace(host) == "" {
+		return fmt.Errorf("host must not be empty")
+	}
+	if portSet && (port < 1 || port > 65535) {
+		return fmt.Errorf("invalid port %d: must be 1-65535", port)
+	}
+	return nil
+}
+
+func updateTarget(ctx context.Context, c client.Client, name, host string, port int, hostSet, portSet bool) error {
+	var target securityv1alpha1.TLSComplianceTarget
+	if err := c.Get(ctx, client.ObjectKey{Name: name}, &target); err != nil {
+		return fmt.Errorf("getting TLSComplianceTarget %q: %w", name, err)
+	}
+
+	if hostSet {
+		target.Spec.Host = host
+	}
+	if portSet {
+		target.Spec.Port = int32(port)
+	}
+
+	if err := c.Update(ctx, &target); err != nil {
+		return fmt.Errorf("updating target %q: %w", name, err)
+	}
+
+	fmt.Fprintf(os.Stderr, "tlscompliancetarget/%s updated\n", name)
+	return nil
 }
 
 func runTargetDelete(ctx context.Context, args []string, deleteAll bool) error {

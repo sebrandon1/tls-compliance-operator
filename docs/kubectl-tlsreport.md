@@ -295,6 +295,32 @@ kubectl tlsreport target create my-api.partner.example.com 8443
 kubectl tlsreport target create google.com 443 --wait --timeout 120s
 ```
 
+#### target update
+
+```bash
+kubectl tlsreport target update <name> [--host host] [--port port]
+```
+
+Patches `spec.host` and/or `spec.port` on an existing target. At least one
+of `--host` or `--port` is required. Changing host or port this way keeps
+the target name and its linked report.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--host` | | New hostname or IP |
+| `--port` | | New port (1–65535) |
+
+```bash
+# Update the host
+kubectl tlsreport target update google-com-443 --host google.com
+
+# Update the port
+kubectl tlsreport target update google-com-443 --port 8443
+
+# Update both
+kubectl tlsreport target update google-com-443 --host google.com --port 443
+```
+
 #### target delete
 
 ```bash
