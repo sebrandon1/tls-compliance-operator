@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	sigsyaml "sigs.k8s.io/yaml"
 
@@ -54,6 +56,15 @@ func newTargetListCmd() *cobra.Command {
 		Short: "List all TLSComplianceTargets",
 		Example: `  # List targets in table format
   kubectl tlsreport target list
+
+  # List non-compliant targets
+  kubectl tlsreport target list --status NonCompliant
+
+  # Sort by host
+  kubectl tlsreport target list --sort-by host
+
+  # Filter by label selector
+  kubectl tlsreport target list -l team=platform
 
   # List targets with additional details
   kubectl tlsreport target list -o wide
@@ -174,6 +185,10 @@ func newTargetDeleteCmd() *cobra.Command {
 func runTargetList(cmd *cobra.Command, _ []string) error {
 	targets, err := fetchTargets(cmd.Context())
 	if err != nil {
+		return err
+	}
+	targets = filterTargetsByStatus(targets, filterOpts.Status)
+	if err := sortTargets(targets, sortBy); err != nil {
 		return err
 	}
 	if len(targets) == 0 {
@@ -464,11 +479,61 @@ func fetchTargets(ctx context.Context) ([]securityv1alpha1.TLSComplianceTarget, 
 	if err != nil {
 		return nil, err
 	}
+	return fetchTargetsWithClient(ctx, c)
+}
+
+func fetchTargetsWithClient(ctx context.Context, c client.Client) ([]securityv1alpha1.TLSComplianceTarget, error) {
+	listOpts := []client.ListOption{}
+	if labelSelector != "" {
+		sel, err := labels.Parse(labelSelector)
+		if err != nil {
+			return nil, fmt.Errorf("parsing label selector: %w", err)
+		}
+		listOpts = append(listOpts, client.MatchingLabelsSelector{Selector: sel})
+	}
+
 	var targetList securityv1alpha1.TLSComplianceTargetList
-	if err := c.List(ctx, &targetList); err != nil {
+	if err := c.List(ctx, &targetList, listOpts...); err != nil {
 		return nil, fmt.Errorf("listing TLSComplianceTargets: %w", err)
 	}
 	return targetList.Items, nil
+}
+
+func filterTargetsByStatus(targets []securityv1alpha1.TLSComplianceTarget, status string) []securityv1alpha1.TLSComplianceTarget {
+	if status == "" {
+		return targets
+	}
+	out := make([]securityv1alpha1.TLSComplianceTarget, 0, len(targets))
+	for i := range targets {
+		if strings.EqualFold(string(targets[i].Status.ComplianceStatus), status) {
+			out = append(out, targets[i])
+		}
+	}
+	return out
+}
+
+func sortTargets(targets []securityv1alpha1.TLSComplianceTarget, key string) error {
+	switch strings.ToLower(key) {
+	case "":
+		return nil
+	case "host":
+		sort.SliceStable(targets, func(i, j int) bool {
+			return targets[i].Spec.Host < targets[j].Spec.Host
+		})
+	case "port":
+		sort.SliceStable(targets, func(i, j int) bool {
+			return targets[i].Spec.Port < targets[j].Spec.Port
+		})
+	case "compliance", "status":
+		sort.SliceStable(targets, func(i, j int) bool {
+			return string(targets[i].Status.ComplianceStatus) < string(targets[j].Status.ComplianceStatus)
+		})
+	case "expiry", "grade", "pqc":
+		return fmt.Errorf("unsupported --sort-by %q for targets (supported: host, port, compliance)", key)
+	default:
+		return fmt.Errorf("unknown --sort-by %q (supported: host, port, compliance)", key)
+	}
+	return nil
 }
 
 func formatAge(d time.Duration) string {
