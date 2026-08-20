@@ -126,7 +126,7 @@ spec:
 | `SCAN_NAMESPACE` | no | `tls-compliance-operator` | Namespace on the **target** cluster where the Job and CRDs are created. |
 | `INCLUDE_NAMESPACES` | no | `""` (all) | Comma-separated namespaces to scan. |
 | `EXCLUDE_NAMESPACES` | no | `""` (none) | Comma-separated namespaces to exclude. |
-| `OUTPUT_FORMAT` | no | `junit` | Output format: `csv`, `json`, `yaml`, `junit`, `markdown`, `html`. |
+| `OUTPUT_FORMAT` | no | `junit` | Output format: `csv`, `json`, `yaml`, `junit`, `markdown`, `html`, `sarif`. |
 | `WORKERS` | no | `"10"` | Concurrent scan workers. |
 | `JOB_TIMEOUT_SECONDS` | no | `"3600"` | Wait budget for the Job. |
 

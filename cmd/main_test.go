@@ -269,6 +269,7 @@ func TestValidateEnvValue(t *testing.T) {
 		{"valid output-format csv", "output-format", "csv", false},
 		{"valid output-format junit", "output-format", "junit", false},
 		{"valid output-format html", "output-format", "html", false},
+		{"valid output-format sarif", "output-format", "sarif", false},
 		{"invalid output-format", "output-format", "xml", true},
 		{"valid retention-days", "report-retention-days", "30", false},
 		{"retention-days zero", "report-retention-days", "0", false},
@@ -888,6 +889,39 @@ func TestWriteRunOnceOutput_HTML(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "<html") {
 		t.Error("expected HTML document")
+	}
+}
+
+func TestWriteRunOnceOutput_SARIF(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:       "sarif.example",
+				Port:       443,
+				SourceKind: securityv1alpha1.SourceKindService,
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusNonCompliant,
+			},
+		},
+	}
+
+	tmpFile := filepath.Join(t.TempDir(), "results.sarif")
+	cfg := &operatorConfig{outputFormat: "sarif", outputFile: tmpFile}
+
+	if err := writeRunOnceOutput(reports, cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(tmpFile)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
+	if !strings.Contains(string(data), "sarif.example:443") {
+		t.Error("expected output file to contain endpoint")
+	}
+	if !strings.Contains(string(data), `"version": "2.1.0"`) {
+		t.Error("expected SARIF 2.1.0 version")
 	}
 }
 
