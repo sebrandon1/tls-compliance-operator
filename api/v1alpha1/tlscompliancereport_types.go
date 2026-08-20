@@ -143,6 +143,15 @@ type CertificateInfo struct {
 	// SignatureAlgorithm is the algorithm used to sign the certificate (e.g. SHA256-RSA, ECDSA-SHA256)
 	// +optional
 	SignatureAlgorithm string `json:"signatureAlgorithm,omitempty"`
+	// SerialNumber is the certificate serial number in lowercase hex
+	// +optional
+	SerialNumber string `json:"serialNumber,omitempty"`
+	// Fingerprint is the SHA-256 digest of the DER-encoded certificate, lowercase hex
+	// +optional
+	Fingerprint string `json:"fingerprint,omitempty"`
+	// IPAddresses lists IP SANs on the certificate
+	// +optional
+	IPAddresses []string `json:"ipAddresses,omitempty"`
 }
 
 // TLSProfileComplianceResult contains the result of checking an endpoint

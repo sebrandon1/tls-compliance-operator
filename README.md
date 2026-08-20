@@ -25,7 +25,7 @@ certificate details, and post-quantum readiness.
 - **Headless Service Scanning** — Discovers pod endpoints via EndpointSlice API
 - **TLS Version Detection** — Probes for SSL 3.0, TLS 1.0, 1.1, 1.2, and 1.3 support (in parallel)
 - **Compliance Classification** — Compliant, Warning, NonCompliant, plus connectivity statuses (Timeout, Closed, Unreachable, NoTLS, PlaintextHTTP, MutualTLSRequired)
-- **Certificate Tracking** — Issuer, subject, DNS names, expiration, chain length, public key details
+- **Certificate Tracking** — Issuer, subject, DNS names, IP SANs, serial, SHA-256 fingerprint, expiration, chain length, public key details
 - **Cipher Strength Grading** — A-F grades for negotiated cipher suites
 - **Forward Secrecy Detection** — Identifies whether all cipher suites use ephemeral key exchange (ECDHE/DHE)
 - **ALPN Protocol Detection** — Reports negotiated application-layer protocols (h2, http/1.1)

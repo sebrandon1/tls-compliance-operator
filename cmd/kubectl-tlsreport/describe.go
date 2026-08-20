@@ -107,6 +107,15 @@ func printReportDetail(r *securityv1alpha1.TLSComplianceReport) error {
 		if len(cert.DNSNames) > 0 {
 			_, _ = fmt.Fprintf(w, "  DNS Names:        %s\n", strings.Join(cert.DNSNames, ", "))
 		}
+		if cert.SerialNumber != "" {
+			_, _ = fmt.Fprintf(w, "  Serial:           %s\n", cert.SerialNumber)
+		}
+		if cert.Fingerprint != "" {
+			_, _ = fmt.Fprintf(w, "  Fingerprint:      %s\n", cert.Fingerprint)
+		}
+		if len(cert.IPAddresses) > 0 {
+			_, _ = fmt.Fprintf(w, "  IP SANs:          %s\n", strings.Join(cert.IPAddresses, ", "))
+		}
 	}
 
 	if len(r.Status.CipherSuites) > 0 {

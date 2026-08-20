@@ -405,6 +405,9 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 				PublicKeyAlgorithm: result.Certificate.PublicKeyAlgorithm,
 				PublicKeyBits:      result.Certificate.PublicKeyBits,
 				SignatureAlgorithm: result.Certificate.SignatureAlgorithm,
+				SerialNumber:       result.Certificate.SerialNumber,
+				Fingerprint:        result.Certificate.Fingerprint,
+				IPAddresses:        result.Certificate.IPAddresses,
 			}
 		}
 

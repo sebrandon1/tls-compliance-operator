@@ -20,7 +20,9 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"time"
 )
 
@@ -104,6 +106,9 @@ type CertificateDetails struct {
 	PublicKeyAlgorithm string
 	PublicKeyBits      int
 	SignatureAlgorithm string
+	SerialNumber       string
+	Fingerprint        string
+	IPAddresses        []string
 }
 
 // ParseCertificate extracts CertificateDetails from an x509 certificate.
@@ -137,7 +142,33 @@ func ParseCertificate(cert *x509.Certificate, hostname string) *CertificateDetai
 		PublicKeyAlgorithm: cert.PublicKeyAlgorithm.String(),
 		PublicKeyBits:      publicKeyBits(cert),
 		SignatureAlgorithm: cert.SignatureAlgorithm.String(),
+		SerialNumber:       certSerialHex(cert),
+		Fingerprint:        certFingerprintSHA256(cert),
+		IPAddresses:        certIPAddresses(cert),
 	}
+}
+
+func certSerialHex(cert *x509.Certificate) string {
+	if cert.SerialNumber == nil {
+		return ""
+	}
+	return cert.SerialNumber.Text(16)
+}
+
+func certFingerprintSHA256(cert *x509.Certificate) string {
+	sum := sha256.Sum256(cert.Raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func certIPAddresses(cert *x509.Certificate) []string {
+	if len(cert.IPAddresses) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(cert.IPAddresses))
+	for _, ip := range cert.IPAddresses {
+		out = append(out, ip.String())
+	}
+	return out
 }
 
 func publicKeyBits(cert *x509.Certificate) int {

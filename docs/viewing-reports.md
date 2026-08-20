@@ -86,6 +86,9 @@ Certificate:
   Signature Alg:     ECDSA-SHA256
   Chain Length:       3
   DNS Names:         *.google.com, google.com
+  Serial:            a1b2c3
+  Fingerprint:       4b5c6d... (SHA-256 of the DER certificate)
+  IP SANs:           203.0.113.10
 ```
 
 **Forward Secrecy and Key Exchange:**

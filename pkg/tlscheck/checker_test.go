@@ -21,9 +21,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
@@ -409,6 +411,58 @@ func TestParseCertificate(t *testing.T) {
 	}
 	if details.SignatureAlgorithm == "" {
 		t.Error("expected signature algorithm to be populated")
+	}
+	if details.SerialNumber != "1" {
+		t.Errorf("serial = %q, want 1", details.SerialNumber)
+	}
+	if len(details.Fingerprint) != 64 {
+		t.Errorf("fingerprint length = %d, want 64 hex chars", len(details.Fingerprint))
+	}
+	sum := sha256.Sum256(cert.Raw)
+	if details.Fingerprint != hex.EncodeToString(sum[:]) {
+		t.Errorf("fingerprint mismatch: got %s", details.Fingerprint)
+	}
+	if len(details.IPAddresses) != 1 || details.IPAddresses[0] != "127.0.0.1" {
+		t.Errorf("IPAddresses = %v, want [127.0.0.1]", details.IPAddresses)
+	}
+}
+
+func TestParseCertificate_CustomSerialAndIPv6SAN(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+	serial := new(big.Int)
+	serial.SetString("deadbeef", 16)
+	template := &x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: "ip-only"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IPAddresses:           []net.IP{net.ParseIP("2001:db8::1")},
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("failed to create certificate: %v", err)
+	}
+	parsed, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		t.Fatalf("failed to parse certificate: %v", err)
+	}
+
+	details := ParseCertificate(parsed, "2001:db8::1")
+	if details.SerialNumber != "deadbeef" {
+		t.Errorf("serial = %q, want deadbeef", details.SerialNumber)
+	}
+	sum := sha256.Sum256(parsed.Raw)
+	if details.Fingerprint != hex.EncodeToString(sum[:]) {
+		t.Errorf("fingerprint mismatch")
+	}
+	if len(details.IPAddresses) != 1 || details.IPAddresses[0] != "2001:db8::1" {
+		t.Errorf("IPAddresses = %v, want [2001:db8::1]", details.IPAddresses)
 	}
 }
 

@@ -194,10 +194,19 @@ spec:
                     items:
                       type: string
                     type: array
+                  fingerprint:
+                    description: Fingerprint is the SHA-256 digest of the DER-encoded
+                      certificate, lowercase hex
+                    type: string
                   hostnameMatch:
                     description: HostnameMatch indicates whether the certificate is
                       valid for the tested endpoint hostname
                     type: boolean
+                  ipAddresses:
+                    description: IPAddresses lists IP SANs on the certificate
+                    items:
+                      type: string
+                    type: array
                   isExpired:
                     description: IsExpired indicates if the certificate has expired
                     type: boolean
@@ -221,6 +230,10 @@ spec:
                   publicKeyBits:
                     description: PublicKeyBits is the size of the public key in bits
                     type: integer
+                  serialNumber:
+                    description: SerialNumber is the certificate serial number in
+                      lowercase hex
+                    type: string
                   signatureAlgorithm:
                     description: SignatureAlgorithm is the algorithm used to sign
                       the certificate (e.g. SHA256-RSA, ECDSA-SHA256)
