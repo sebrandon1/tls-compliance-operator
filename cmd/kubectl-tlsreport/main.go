@@ -265,15 +265,11 @@ func buildClient() (client.WithWatch, error) {
 		return nil, fmt.Errorf("building kubeconfig: %w", err)
 	}
 
-	c, err := client.New(restConfig, client.Options{Scheme: scheme})
+	c, err := client.NewWithWatch(restConfig, client.Options{Scheme: scheme})
 	if err != nil {
 		return nil, fmt.Errorf("creating client: %w", err)
 	}
-	wc, ok := c.(client.WithWatch)
-	if !ok {
-		return nil, errors.New("kubernetes client does not support watch")
-	}
-	return wc, nil
+	return c, nil
 }
 
 func fetchReports(ctx context.Context) ([]securityv1alpha1.TLSComplianceReport, error) {
