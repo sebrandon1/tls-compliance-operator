@@ -928,6 +928,9 @@ func TestPrintReportDetail_FullReport(t *testing.T) {
 		SignatureAlgorithm: "SHA256-RSA",
 		ChainLength:        3,
 		DNSNames:           []string{"example.com", "www.example.com"},
+		SerialNumber:       "deadbeef",
+		Fingerprint:        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		IPAddresses:        []string{"203.0.113.10"},
 	}
 	report.Status.CipherSuites = map[string][]string{
 		"TLS 1.3": {"TLS_AES_128_GCM_SHA256"},
@@ -974,6 +977,9 @@ func TestPrintReportDetail_FullReport(t *testing.T) {
 		"Signature Alg:",
 		"Chain Length:",
 		"DNS Names:",
+		"Serial:",
+		"Fingerprint:",
+		"IP SANs:",
 		"Cipher Suites:",
 		"TLS_AES_128_GCM_SHA256",
 		"Key Exchange Types:",

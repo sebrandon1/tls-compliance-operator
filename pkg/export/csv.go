@@ -37,6 +37,7 @@ var CSVHeader = []string{
 	"PubKeyAlgorithm", "PubKeyBits", "SignatureAlgorithm", "ChainLength",
 	"ALPNProtocols",
 	"ScanDuration",
+	"CertSerial", "CertFingerprint", "IPAddresses",
 }
 
 // WriteCSV writes TLSComplianceReport items as CSV to the given writer.
@@ -107,6 +108,7 @@ func reportToCSVRow(r *securityv1alpha1.TLSComplianceReport) []string {
 	certExpiry, certIssuer := extractCertInfo(r)
 
 	pubKeyAlg, pubKeyBits, sigAlg, chainLen := "", "", "", ""
+	serial, fingerprint, ipSANs := "", "", ""
 	if r.Status.CertificateInfo != nil {
 		pubKeyAlg = r.Status.CertificateInfo.PublicKeyAlgorithm
 		if r.Status.CertificateInfo.PublicKeyBits > 0 {
@@ -115,6 +117,11 @@ func reportToCSVRow(r *securityv1alpha1.TLSComplianceReport) []string {
 		sigAlg = r.Status.CertificateInfo.SignatureAlgorithm
 		if r.Status.CertificateInfo.ChainLength > 0 {
 			chainLen = strconv.Itoa(r.Status.CertificateInfo.ChainLength)
+		}
+		serial = r.Status.CertificateInfo.SerialNumber
+		fingerprint = r.Status.CertificateInfo.Fingerprint
+		if len(r.Status.CertificateInfo.IPAddresses) > 0 {
+			ipSANs = strings.Join(r.Status.CertificateInfo.IPAddresses, ",")
 		}
 	}
 
@@ -144,5 +151,8 @@ func reportToCSVRow(r *securityv1alpha1.TLSComplianceReport) []string {
 		chainLen,
 		formatALPNProtocols(r.Status.ALPNProtocols),
 		r.Status.ScanDuration,
+		serial,
+		fingerprint,
+		ipSANs,
 	}
 }
