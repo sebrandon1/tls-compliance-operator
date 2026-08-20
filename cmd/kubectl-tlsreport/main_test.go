@@ -894,7 +894,7 @@ func TestNewTargetCmd_Structure(t *testing.T) {
 	for _, sub := range cmd.Commands() {
 		subNames[sub.Name()] = true
 	}
-	for _, want := range []string{"list", "get", "describe", "create", "delete"} {
+	for _, want := range []string{"list", "get", "describe", "create", "update", "delete"} {
 		if !subNames[want] {
 			t.Errorf("expected %q subcommand", want)
 		}
@@ -1521,4 +1521,159 @@ func TestWaitForTargetScan_Timeout(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "timeout") {
 		t.Errorf("expected timeout error, got: %v", err)
 	}
+}
+
+func TestNewTargetUpdateCmd_Structure(t *testing.T) {
+	cmd := newTargetUpdateCmd()
+	if cmd.Use != "update <name>" {
+		t.Errorf("unexpected Use: %s", cmd.Use)
+	}
+	if cmd.Flags().Lookup("host") == nil {
+		t.Error("expected --host flag")
+	}
+	if cmd.Flags().Lookup("port") == nil {
+		t.Error("expected --port flag")
+	}
+}
+
+func TestNewTargetUpdateCmd_Validation(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{name: "missing flags", args: []string{"google-com-443"}, wantErr: "at least one of --host or --port is required"},
+		{name: "empty host", args: []string{"google-com-443", "--host", ""}, wantErr: "host must not be empty"},
+		{name: "invalid port", args: []string{"google-com-443", "--port", "0"}, wantErr: "invalid port 0: must be 1-65535"},
+		{name: "missing name", args: []string{"--host", "example.com"}, wantErr: "accepts 1 arg"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newTargetUpdateCmd()
+			cmd.SetArgs(tt.args)
+			cmd.SilenceUsage = true
+			err := cmd.Execute()
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateTargetUpdate(t *testing.T) {
+	tests := []struct {
+		name    string
+		host    string
+		port    int
+		hostSet bool
+		portSet bool
+		wantErr string
+	}{
+		{name: "host only", host: "example.com", hostSet: true},
+		{name: "port only", port: 8443, portSet: true},
+		{name: "host and port", host: "example.com", port: 443, hostSet: true, portSet: true},
+		{name: "missing flags", wantErr: "at least one of --host or --port is required"},
+		{name: "empty host", host: "  ", hostSet: true, wantErr: "host must not be empty"},
+		{name: "port too low", port: 0, portSet: true, wantErr: "invalid port 0: must be 1-65535"},
+		{name: "port too high", port: 65536, portSet: true, wantErr: "invalid port 65536: must be 1-65535"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateTargetUpdate(tt.host, tt.port, tt.hostSet, tt.portSet)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestUpdateTarget(t *testing.T) {
+	ctx := context.Background()
+	existing := &securityv1alpha1.TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "google-com-443"},
+		Spec: securityv1alpha1.TLSComplianceTargetSpec{
+			Host: "google.com",
+			Port: 443,
+		},
+	}
+
+	t.Run("update host", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing.DeepCopy()).Build()
+		stderr := captureStderr(t, func() {
+			if err := updateTarget(ctx, c, "google-com-443", "maps.google.com", 0, true, false); err != nil {
+				t.Fatalf("updateTarget() error = %v", err)
+			}
+		})
+		if !strings.Contains(stderr, "tlscompliancetarget/google-com-443 updated") {
+			t.Errorf("unexpected stderr: %s", stderr)
+		}
+		var got securityv1alpha1.TLSComplianceTarget
+		if err := c.Get(ctx, client.ObjectKey{Name: "google-com-443"}, &got); err != nil {
+			t.Fatalf("Get after update: %v", err)
+		}
+		if got.Spec.Host != "maps.google.com" {
+			t.Errorf("host = %q, want maps.google.com", got.Spec.Host)
+		}
+		if got.Spec.Port != 443 {
+			t.Errorf("port = %d, want 443", got.Spec.Port)
+		}
+	})
+
+	t.Run("update port", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing.DeepCopy()).Build()
+		if err := updateTarget(ctx, c, "google-com-443", "", 8443, false, true); err != nil {
+			t.Fatalf("updateTarget() error = %v", err)
+		}
+		var got securityv1alpha1.TLSComplianceTarget
+		if err := c.Get(ctx, client.ObjectKey{Name: "google-com-443"}, &got); err != nil {
+			t.Fatalf("Get after update: %v", err)
+		}
+		if got.Spec.Host != "google.com" {
+			t.Errorf("host = %q, want google.com", got.Spec.Host)
+		}
+		if got.Spec.Port != 8443 {
+			t.Errorf("port = %d, want 8443", got.Spec.Port)
+		}
+	})
+
+	t.Run("update host and port", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing.DeepCopy()).Build()
+		if err := updateTarget(ctx, c, "google-com-443", "example.com", 8443, true, true); err != nil {
+			t.Fatalf("updateTarget() error = %v", err)
+		}
+		var got securityv1alpha1.TLSComplianceTarget
+		if err := c.Get(ctx, client.ObjectKey{Name: "google-com-443"}, &got); err != nil {
+			t.Fatalf("Get after update: %v", err)
+		}
+		if got.Spec.Host != "example.com" || got.Spec.Port != 8443 {
+			t.Errorf("spec = %s:%d, want example.com:8443", got.Spec.Host, got.Spec.Port)
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(scheme).Build()
+		err := updateTarget(ctx, c, "missing", "example.com", 443, true, true)
+		if err == nil || !strings.Contains(err.Error(), "getting TLSComplianceTarget \"missing\"") {
+			t.Fatalf("error = %v, want not found", err)
+		}
+	})
+
+	t.Run("update error", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing.DeepCopy()).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Update: func(_ context.Context, _ client.WithWatch, _ client.Object, _ ...client.UpdateOption) error {
+					return errors.New("conflict")
+				},
+			}).Build()
+		err := updateTarget(ctx, c, "google-com-443", "example.com", 0, true, false)
+		if err == nil || !strings.Contains(err.Error(), "updating target") {
+			t.Fatalf("error = %v, want updating target", err)
+		}
+	})
 }
