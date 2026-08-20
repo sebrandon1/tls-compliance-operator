@@ -21,7 +21,7 @@ import (
 )
 
 // SourceKind indicates the type of Kubernetes resource that exposed the endpoint
-// +kubebuilder:validation:Enum=Service;Ingress;Route;Target;Pod;HTTPRoute;TLSRoute;Gateway
+// +kubebuilder:validation:Enum=Service;Ingress;Route;Target;Pod;HTTPRoute;TLSRoute;GRPCRoute;Gateway
 type SourceKind string
 
 const (
@@ -32,6 +32,7 @@ const (
 	SourceKindPod       SourceKind = "Pod"
 	SourceKindHTTPRoute SourceKind = "HTTPRoute"
 	SourceKindTLSRoute  SourceKind = "TLSRoute"
+	SourceKindGRPCRoute SourceKind = "GRPCRoute"
 	SourceKindGateway   SourceKind = "Gateway"
 )
 

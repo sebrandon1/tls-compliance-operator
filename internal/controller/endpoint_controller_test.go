@@ -2852,6 +2852,49 @@ func TestEndpointReconciler_HandleGatewayResource_HTTPRoute(t *testing.T) {
 	}
 }
 
+func TestEndpointReconciler_HandleGatewayResource_GRPCRoute(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		Build()
+
+	reconciler := &EndpointReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		CertExpiryDays: 30,
+	}
+
+	grpcRoute := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "gateway.networking.k8s.io/v1",
+		"kind":       "GRPCRoute",
+		"metadata":   map[string]interface{}{"name": "grpc-api", "namespace": "default"},
+		"spec":       map[string]interface{}{"hostnames": []interface{}{"grpc.example.com"}},
+	}}
+
+	gvk := schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "GRPCRoute"}
+	_, err := reconciler.handleGatewayResource(ctx, grpcRoute, gvk)
+	if err != nil {
+		t.Fatalf("handleGatewayResource() error = %v", err)
+	}
+
+	var crList securityv1alpha1.TLSComplianceReportList
+	if err := fakeClient.List(ctx, &crList); err != nil {
+		t.Fatalf("failed to list reports: %v", err)
+	}
+	if len(crList.Items) != 1 {
+		t.Fatalf("expected 1 report, got %d", len(crList.Items))
+	}
+	if crList.Items[0].Spec.SourceKind != securityv1alpha1.SourceKindGRPCRoute {
+		t.Errorf("sourceKind = %q, want GRPCRoute", crList.Items[0].Spec.SourceKind)
+	}
+	if crList.Items[0].Spec.Host != "grpc.example.com" {
+		t.Errorf("host = %q, want grpc.example.com", crList.Items[0].Spec.Host)
+	}
+}
+
 func TestEndpointReconciler_HandleGatewayResource_Gateway(t *testing.T) {
 	ctx := context.Background()
 	scheme := newTestScheme()

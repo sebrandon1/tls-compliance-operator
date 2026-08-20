@@ -354,36 +354,31 @@ func ExtractFromRoute(obj *unstructured.Unstructured) []Endpoint {
 
 // ExtractFromHTTPRoute extracts TLS endpoints from a Gateway API HTTPRoute (unstructured).
 func ExtractFromHTTPRoute(obj *unstructured.Unstructured) []Endpoint {
-	hostnames, _, _ := unstructured.NestedStringSlice(obj.Object, "spec", "hostnames")
-	if len(hostnames) == 0 {
-		return nil
-	}
-	var endpoints []Endpoint
-	for _, host := range hostnames {
-		if !isSafeDiscoveredHost(host, securityv1alpha1.SourceKindHTTPRoute, obj.GetName(), obj.GetNamespace()) {
-			continue
-		}
-		endpoints = append(endpoints, Endpoint{
-			Host: host, Port: 443, SourceKind: securityv1alpha1.SourceKindHTTPRoute,
-			SourceNamespace: obj.GetNamespace(), SourceName: obj.GetName(),
-		})
-	}
-	return endpoints
+	return extractFromGatewayRoute(obj, securityv1alpha1.SourceKindHTTPRoute)
 }
 
 // ExtractFromTLSRoute extracts TLS endpoints from a Gateway API TLSRoute (unstructured).
 func ExtractFromTLSRoute(obj *unstructured.Unstructured) []Endpoint {
+	return extractFromGatewayRoute(obj, securityv1alpha1.SourceKindTLSRoute)
+}
+
+// ExtractFromGRPCRoute extracts TLS endpoints from a Gateway API GRPCRoute (unstructured).
+func ExtractFromGRPCRoute(obj *unstructured.Unstructured) []Endpoint {
+	return extractFromGatewayRoute(obj, securityv1alpha1.SourceKindGRPCRoute)
+}
+
+func extractFromGatewayRoute(obj *unstructured.Unstructured, kind securityv1alpha1.SourceKind) []Endpoint {
 	hostnames, _, _ := unstructured.NestedStringSlice(obj.Object, "spec", "hostnames")
 	if len(hostnames) == 0 {
 		return nil
 	}
 	var endpoints []Endpoint
 	for _, host := range hostnames {
-		if !isSafeDiscoveredHost(host, securityv1alpha1.SourceKindTLSRoute, obj.GetName(), obj.GetNamespace()) {
+		if !isSafeDiscoveredHost(host, kind, obj.GetName(), obj.GetNamespace()) {
 			continue
 		}
 		endpoints = append(endpoints, Endpoint{
-			Host: host, Port: 443, SourceKind: securityv1alpha1.SourceKindTLSRoute,
+			Host: host, Port: 443, SourceKind: kind,
 			SourceNamespace: obj.GetNamespace(), SourceName: obj.GetName(),
 		})
 	}

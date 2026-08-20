@@ -87,7 +87,7 @@ update:
   reserved network ranges to prevent server-side request forgery.
 
 Discovery applies the same reserved/internal host rules to ExternalName
-Services, Ingress TLS hosts, Route hosts, and HTTPRoute/TLSRoute hostnames.
+Services, Ingress TLS hosts, Route hosts, and HTTPRoute/TLSRoute/GRPCRoute hostnames.
 Those hosts are skipped rather than probed.
 
 ### Blocked Host Categories

@@ -67,6 +67,7 @@ var knownSourceKinds = []securityv1alpha1.SourceKind{
 	securityv1alpha1.SourceKindPod,
 	securityv1alpha1.SourceKindHTTPRoute,
 	securityv1alpha1.SourceKindTLSRoute,
+	securityv1alpha1.SourceKindGRPCRoute,
 	securityv1alpha1.SourceKindGateway,
 }
 

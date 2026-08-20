@@ -154,7 +154,7 @@ failure. This prevents transient network issues from failing CI pipelines.
 - **Services** — ClusterIP, ExternalName, NodePort, and LoadBalancer endpoints
 - **Ingresses** — all TLS hosts
 - **Routes** (OpenShift) — edge/reencrypt/passthrough TLS
-- **Gateway API** — HTTPRoute, TLSRoute, and Gateway listeners
+- **Gateway API** — HTTPRoute, TLSRoute, GRPCRoute, and Gateway listeners
 - **Pods** — direct pod IP scanning for operand coverage
 - **PQC/ML-KEM** — active probing for X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024
 

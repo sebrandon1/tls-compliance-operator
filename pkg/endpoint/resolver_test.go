@@ -1655,6 +1655,70 @@ func TestExtractFromTLSRoute_SSRF(t *testing.T) {
 	}
 }
 
+func TestExtractFromGRPCRoute(t *testing.T) {
+	route := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "gateway.networking.k8s.io/v1", "kind": "GRPCRoute",
+		"metadata": map[string]interface{}{"name": "r", "namespace": "default"},
+		"spec":     map[string]interface{}{"hostnames": []interface{}{"grpc.example.com"}},
+	}}
+	eps := ExtractFromGRPCRoute(route)
+	if len(eps) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(eps))
+	}
+	if eps[0].SourceKind != securityv1alpha1.SourceKindGRPCRoute {
+		t.Errorf("sourceKind = %q, want GRPCRoute", eps[0].SourceKind)
+	}
+	if eps[0].Host != "grpc.example.com" {
+		t.Errorf("host = %q, want grpc.example.com", eps[0].Host)
+	}
+	if eps[0].Port != 443 {
+		t.Errorf("port = %d, want 443", eps[0].Port)
+	}
+}
+
+func TestExtractFromGRPCRoute_NoHostnames(t *testing.T) {
+	route := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "gateway.networking.k8s.io/v1", "kind": "GRPCRoute",
+		"metadata": map[string]interface{}{"name": "r", "namespace": "default"},
+		"spec":     map[string]interface{}{},
+	}}
+	eps := ExtractFromGRPCRoute(route)
+	if len(eps) != 0 {
+		t.Errorf("expected 0 endpoints for GRPCRoute without hostnames, got %d", len(eps))
+	}
+}
+
+func TestExtractFromGRPCRoute_SSRF(t *testing.T) {
+	tests := []struct {
+		name      string
+		hostnames []interface{}
+		wantHosts []string
+	}{
+		{"cloud metadata IP", []interface{}{"169.254.169.254"}, nil},
+		{"localhost", []interface{}{"localhost"}, nil},
+		{"mixed unsafe and safe", []interface{}{"localhost", "grpc.example.com", "169.254.169.254"}, []string{"grpc.example.com"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			route := &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "gateway.networking.k8s.io/v1", "kind": "GRPCRoute",
+				"metadata": map[string]interface{}{"name": "r", "namespace": "default"},
+				"spec":     map[string]interface{}{"hostnames": tt.hostnames},
+			}}
+			got := hostsFromEndpoints(ExtractFromGRPCRoute(route))
+			if len(got) != len(tt.wantHosts) {
+				t.Fatalf("hosts = %v, want %v", got, tt.wantHosts)
+			}
+			for i, host := range tt.wantHosts {
+				if got[i] != host {
+					t.Errorf("host[%d] = %q, want %q", i, got[i], host)
+				}
+			}
+		})
+	}
+}
+
 func TestExtractFromGateway(t *testing.T) {
 	gw := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "gateway.networking.k8s.io/v1", "kind": "Gateway",
