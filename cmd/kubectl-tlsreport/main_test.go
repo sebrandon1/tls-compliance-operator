@@ -21,6 +21,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1676,4 +1677,165 @@ func TestUpdateTarget(t *testing.T) {
 			t.Fatalf("error = %v, want updating target", err)
 		}
 	})
+}
+
+func sampleTargets() []securityv1alpha1.TLSComplianceTarget {
+	return []securityv1alpha1.TLSComplianceTarget{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "zeta", Labels: map[string]string{"team": "platform"}},
+			Spec:       securityv1alpha1.TLSComplianceTargetSpec{Host: "zeta.example", Port: 8443},
+			Status:     securityv1alpha1.TLSComplianceTargetStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "alpha", Labels: map[string]string{"team": "edge"}},
+			Spec:       securityv1alpha1.TLSComplianceTargetSpec{Host: "alpha.example", Port: 443},
+			Status:     securityv1alpha1.TLSComplianceTargetStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusNonCompliant},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "beta"},
+			Spec:       securityv1alpha1.TLSComplianceTargetSpec{Host: "beta.example", Port: 6443},
+			Status:     securityv1alpha1.TLSComplianceTargetStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusWarning},
+		},
+	}
+}
+
+func TestFilterTargetsByStatus(t *testing.T) {
+	targets := sampleTargets()
+
+	got := filterTargetsByStatus(targets, "")
+	if len(got) != 3 {
+		t.Fatalf("empty status: got %d, want 3", len(got))
+	}
+
+	got = filterTargetsByStatus(targets, "NonCompliant")
+	if len(got) != 1 || got[0].Name != "alpha" {
+		t.Fatalf("NonCompliant = %v, want alpha", targetNames(got))
+	}
+
+	got = filterTargetsByStatus(targets, "noncompliant")
+	if len(got) != 1 || got[0].Name != "alpha" {
+		t.Fatalf("case-insensitive filter = %v, want alpha", targetNames(got))
+	}
+
+	got = filterTargetsByStatus(targets, "Timeout")
+	if len(got) != 0 {
+		t.Fatalf("Timeout = %v, want none", targetNames(got))
+	}
+}
+
+func TestSortTargets(t *testing.T) {
+	t.Run("host", func(t *testing.T) {
+		targets := sampleTargets()
+		if err := sortTargets(targets, "host"); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"alpha", "beta", "zeta"}
+		if got := targetNames(targets); !slices.Equal(got, want) {
+			t.Errorf("names = %v, want %v", got, want)
+		}
+	})
+	t.Run("port", func(t *testing.T) {
+		targets := sampleTargets()
+		if err := sortTargets(targets, "port"); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"alpha", "beta", "zeta"}
+		if got := targetNames(targets); !slices.Equal(got, want) {
+			t.Errorf("names = %v, want %v", got, want)
+		}
+	})
+	t.Run("compliance", func(t *testing.T) {
+		targets := sampleTargets()
+		if err := sortTargets(targets, "compliance"); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"zeta", "alpha", "beta"} // Compliant, NonCompliant, Warning
+		if got := targetNames(targets); !slices.Equal(got, want) {
+			t.Errorf("names = %v, want %v", got, want)
+		}
+	})
+	t.Run("status alias", func(t *testing.T) {
+		targets := sampleTargets()
+		if err := sortTargets(targets, "status"); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"zeta", "alpha", "beta"}
+		if got := targetNames(targets); !slices.Equal(got, want) {
+			t.Errorf("names = %v, want %v", got, want)
+		}
+	})
+	t.Run("empty is no-op", func(t *testing.T) {
+		targets := sampleTargets()
+		if err := sortTargets(targets, ""); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"zeta", "alpha", "beta"}
+		if got := targetNames(targets); !slices.Equal(got, want) {
+			t.Errorf("names = %v, want %v", got, want)
+		}
+	})
+	t.Run("unsupported report keys", func(t *testing.T) {
+		for _, key := range []string{"expiry", "grade", "pqc"} {
+			err := sortTargets(sampleTargets(), key)
+			if err == nil || !strings.Contains(err.Error(), "unsupported --sort-by") {
+				t.Errorf("sortTargets(%q) error = %v", key, err)
+			}
+		}
+	})
+	t.Run("unknown key", func(t *testing.T) {
+		err := sortTargets(sampleTargets(), "namespace")
+		if err == nil || !strings.Contains(err.Error(), "unknown --sort-by") {
+			t.Errorf("error = %v", err)
+		}
+	})
+}
+
+func TestFetchTargetsWithClient(t *testing.T) {
+	ctx := context.Background()
+	targets := sampleTargets()
+	objs := []client.Object{&targets[0], &targets[1], &targets[2]}
+
+	t.Run("lists all", func(t *testing.T) {
+		labelSelector = ""
+		defer func() { labelSelector = "" }()
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+		got, err := fetchTargetsWithClient(ctx, c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 3 {
+			t.Fatalf("got %d targets, want 3", len(got))
+		}
+	})
+
+	t.Run("label selector", func(t *testing.T) {
+		labelSelector = "team=platform"
+		defer func() { labelSelector = "" }()
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+		got, err := fetchTargetsWithClient(ctx, c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 || got[0].Name != "zeta" {
+			t.Fatalf("got %v, want zeta", targetNames(got))
+		}
+	})
+
+	t.Run("invalid selector", func(t *testing.T) {
+		labelSelector = "!!invalid"
+		defer func() { labelSelector = "" }()
+		c := fake.NewClientBuilder().WithScheme(scheme).Build()
+		_, err := fetchTargetsWithClient(ctx, c)
+		if err == nil || !strings.Contains(err.Error(), "parsing label selector") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+}
+
+func targetNames(targets []securityv1alpha1.TLSComplianceTarget) []string {
+	names := make([]string, len(targets))
+	for i := range targets {
+		names[i] = targets[i].Name
+	}
+	return names
 }

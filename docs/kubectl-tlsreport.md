@@ -243,11 +243,20 @@ endpoints (external services, partner APIs, etc.).
 #### target list
 
 ```bash
-kubectl tlsreport target list [-o table|wide|json|yaml]
+kubectl tlsreport target list [-o table|wide|json|yaml] [--status status] [--sort-by field] [-l selector]
 ```
 
-Lists all targets with their host, port, status, associated report name,
+Lists targets with their host, port, status, associated report name,
 last scan time, and age.
+
+`--status`, `--sort-by`, and `-l` are the same global flags used by `get`.
+`--sort-by` supports `host`, `port`, and `compliance` (alias: `status`).
+Report-only keys (`expiry`, `grade`, `pqc`) are rejected.
+
+```bash
+kubectl tlsreport target list --status NonCompliant --sort-by host
+kubectl tlsreport target list -l team=platform
+```
 
 #### target get
 
