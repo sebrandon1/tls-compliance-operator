@@ -27,7 +27,6 @@ import (
 
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -250,7 +249,7 @@ func printConditions(w *os.File, conditions []metav1.Condition) {
 	_ = tw.Flush()
 }
 
-func buildClient() (client.Client, error) {
+func buildClient() (client.WithWatch, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if kubeconfig != "" {
 		loadingRules.ExplicitPath = kubeconfig
@@ -266,7 +265,7 @@ func buildClient() (client.Client, error) {
 		return nil, fmt.Errorf("building kubeconfig: %w", err)
 	}
 
-	c, err := client.New(restConfig, client.Options{Scheme: scheme})
+	c, err := client.NewWithWatch(restConfig, client.Options{Scheme: scheme})
 	if err != nil {
 		return nil, fmt.Errorf("creating client: %w", err)
 	}
@@ -282,13 +281,9 @@ func fetchReports(ctx context.Context) ([]securityv1alpha1.TLSComplianceReport, 
 }
 
 func fetchReportsWithClient(ctx context.Context, c client.Client) ([]securityv1alpha1.TLSComplianceReport, error) {
-	listOpts := []client.ListOption{}
-	if labelSelector != "" {
-		sel, err := labels.Parse(labelSelector)
-		if err != nil {
-			return nil, fmt.Errorf("parsing label selector: %w", err)
-		}
-		listOpts = append(listOpts, client.MatchingLabelsSelector{Selector: sel})
+	listOpts, err := reportListOptions("")
+	if err != nil {
+		return nil, err
 	}
 
 	var reportList securityv1alpha1.TLSComplianceReportList
