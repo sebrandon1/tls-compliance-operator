@@ -179,7 +179,7 @@ func parseFlags() *operatorConfig {
 	flag.BoolVar(&cfg.runOnce, "run-once", false,
 		"Perform a single scan of all endpoints and exit (0=compliant, 1=non-compliant, 2=error)")
 	flag.StringVar(&cfg.outputFormat, "output-format", "",
-		"Write scan results in this format (csv, json, yaml, junit, markdown); defaults to stdout")
+		"Write scan results in this format (csv, json, yaml, junit, markdown, html); defaults to stdout")
 	flag.StringVar(&cfg.outputFile, "output-file", "",
 		"Path to write scan results (requires --output-format)")
 
@@ -247,9 +247,9 @@ func checkConfig(cfg *operatorConfig) (warnings []string, _ error) {
 
 	if cfg.outputFormat != "" {
 		switch cfg.outputFormat {
-		case "csv", "json", "yaml", "junit", "markdown":
+		case "csv", "json", "yaml", "junit", "markdown", "html":
 		default:
-			return nil, fmt.Errorf("invalid --output-format value %q, must be csv, json, yaml, junit, or markdown", cfg.outputFormat)
+			return nil, fmt.Errorf("invalid --output-format value %q, must be csv, json, yaml, junit, markdown, or html", cfg.outputFormat)
 		}
 	}
 	if cfg.outputFile != "" && cfg.outputFormat == "" {
@@ -614,6 +614,8 @@ func writeRunOnceOutput(reports []securityv1alpha1.TLSComplianceReport, cfg *ope
 		return export.WriteJUnit(w, reports)
 	case "markdown":
 		return export.WriteMarkdown(w, reports)
+	case "html":
+		return export.WriteHTML(w, reports)
 	default:
 		return fmt.Errorf("unknown output format: %s", cfg.outputFormat)
 	}
@@ -735,9 +737,9 @@ func validateEnvValue(flagName, value string) error {
 		return validateIntRange(value, 0, 3650)
 	case "output-format":
 		switch value {
-		case "csv", "json", "yaml", "junit", "markdown":
+		case "csv", "json", "yaml", "junit", "markdown", "html":
 		default:
-			return fmt.Errorf("must be csv, json, yaml, junit, or markdown, got %q", value)
+			return fmt.Errorf("must be csv, json, yaml, junit, markdown, or html, got %q", value)
 		}
 	}
 	return nil

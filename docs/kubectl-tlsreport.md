@@ -66,10 +66,10 @@ These flags are available on all subcommands:
 
 ### Export (root command)
 
-Export reports in CSV, JSON, YAML, JUnit XML, or Markdown format.
+Export reports in CSV, JSON, YAML, JUnit XML, Markdown, or HTML format.
 
 ```bash
-kubectl tlsreport [csv|json|yaml|junit|markdown|md]
+kubectl tlsreport [csv|json|yaml|junit|markdown|md|html]
 ```
 
 CSV is the default format when no argument is given.
@@ -86,6 +86,9 @@ kubectl tlsreport junit
 
 # Export as Markdown
 kubectl tlsreport markdown
+
+# Export as a self-contained HTML page
+kubectl tlsreport html > tls-compliance.html
 
 # Export non-compliant endpoints as JSON
 kubectl tlsreport json --status NonCompliant

@@ -268,6 +268,7 @@ func TestValidateEnvValue(t *testing.T) {
 		{"invalid metrics-per-endpoint", "metrics-per-endpoint", "maybe", true},
 		{"valid output-format csv", "output-format", "csv", false},
 		{"valid output-format junit", "output-format", "junit", false},
+		{"valid output-format html", "output-format", "html", false},
 		{"invalid output-format", "output-format", "xml", true},
 		{"valid retention-days", "report-retention-days", "30", false},
 		{"retention-days zero", "report-retention-days", "0", false},
@@ -854,6 +855,39 @@ func TestWriteRunOnceOutput_Markdown(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "md.example") {
 		t.Error("expected output file to contain host")
+	}
+}
+
+func TestWriteRunOnceOutput_HTML(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:       "html.example",
+				Port:       443,
+				SourceKind: securityv1alpha1.SourceKindService,
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+			},
+		},
+	}
+
+	tmpFile := filepath.Join(t.TempDir(), "results.html")
+	cfg := &operatorConfig{outputFormat: "html", outputFile: tmpFile}
+
+	if err := writeRunOnceOutput(reports, cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(tmpFile)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
+	if !strings.Contains(string(data), "html.example") {
+		t.Error("expected output file to contain host")
+	}
+	if !strings.Contains(string(data), "<html") {
+		t.Error("expected HTML document")
 	}
 }
 
