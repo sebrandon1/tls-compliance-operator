@@ -32,9 +32,9 @@ func runExport(cmd *cobra.Command, args []string) error {
 	}
 
 	switch format {
-	case "csv", "json", "yaml", "junit", "markdown", "md":
+	case "csv", "json", "yaml", "junit", "markdown", "md", "html":
 	default:
-		return fmt.Errorf("unknown format: %s (supported: csv, json, yaml, junit, markdown, md)", format)
+		return fmt.Errorf("unknown format: %s (supported: csv, json, yaml, junit, markdown, md, html)", format)
 	}
 
 	reports, err := fetchReports(cmd.Context())
@@ -61,6 +61,8 @@ func runExport(cmd *cobra.Command, args []string) error {
 		writeErr = export.WriteJUnit(os.Stdout, reports)
 	case "markdown", "md":
 		writeErr = export.WriteMarkdown(os.Stdout, reports)
+	case "html":
+		writeErr = export.WriteHTML(os.Stdout, reports)
 	}
 	if writeErr != nil {
 		return writeErr

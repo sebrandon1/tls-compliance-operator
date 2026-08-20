@@ -1,7 +1,7 @@
 # Exporting Reports
 
 The `kubectl-tlsreport` plugin exports TLS compliance data in CSV, JSON, YAML,
-JUnit XML, and Markdown formats for CI/CD pipelines, auditing, and dashboards.
+JUnit XML, Markdown, and HTML formats for CI/CD pipelines, auditing, and dashboards.
 
 ## Install the Plugin
 
@@ -81,6 +81,15 @@ Produces a Markdown table matching `kubectl tlsreport get` columns:
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | my-service.default | 443 | Service | Compliant | A | true | true | true | false | PQCReady | true | 364 | 5m |
 ```
+
+**HTML** (self-contained page for dashboards and email):
+
+```bash
+kubectl tlsreport html > tls-compliance.html
+```
+
+Inline CSS, a summary strip (compliant / warning / non-compliant / expired certs),
+and the same per-endpoint columns as Markdown. Status and grade are color-coded.
 
 ## Querying Reports
 

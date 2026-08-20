@@ -89,11 +89,11 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:   "kubectl-tlsreport [csv|json|yaml|junit|markdown|md]",
+		Use:   "kubectl-tlsreport [csv|json|yaml|junit|markdown|md|html]",
 		Short: "Export TLS compliance reports from the cluster",
 		Long: `Export TLS compliance reports from the cluster in various formats.
 
-Supported formats: csv (default), json, yaml, junit, markdown (or md)
+Supported formats: csv (default), json, yaml, junit, markdown (or md), html
 
 Use --kubeconfig and --context to target a specific cluster.`,
 		Args:          cobra.MaximumNArgs(1),

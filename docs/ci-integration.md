@@ -37,7 +37,7 @@ bin/manager --run-once \
 | Flag | Env Var | Description |
 |------|---------|-------------|
 | `--run-once` | `TLS_COMPLIANCE_RUN_ONCE` | Perform a single scan and exit |
-| `--output-format` | `TLS_COMPLIANCE_OUTPUT_FORMAT` | Output format: `csv`, `json`, `yaml`, `junit`, `markdown` |
+| `--output-format` | `TLS_COMPLIANCE_OUTPUT_FORMAT` | Output format: `csv`, `json`, `yaml`, `junit`, `markdown`, `html` |
 | `--output-file` | `TLS_COMPLIANCE_OUTPUT_FILE` | Path to write results (defaults to stdout) |
 | `--scan-all-ports` | `TLS_COMPLIANCE_SCAN_ALL_PORTS` | Scan all declared TCP container ports on pods, not just known TLS ports |
 
@@ -105,7 +105,7 @@ make deploy-run-once-scan IMG=quay.io/bapalm/tls-compliance-operator:v1.1.4 \
 
 | Variable | Default | Options |
 |----------|---------|---------|
-| `SCAN_FORMAT` | `junit` | `csv`, `json`, `yaml`, `junit`, `markdown` |
+| `SCAN_FORMAT` | `junit` | `csv`, `json`, `yaml`, `junit`, `markdown`, `html` |
 | `SCAN_FILE` | `results.xml` | Any file path |
 | `SCAN_NAMESPACES` | *(all)* | Comma-separated namespace list |
 | `IMG` | `quay.io/bapalm/tls-compliance-operator:latest` | Any container image (`deploy-run-once-scan` only) |
