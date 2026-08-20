@@ -38,7 +38,7 @@ import (
 func TestNewRootCmd_Structure(t *testing.T) {
 	cmd := newRootCmd()
 
-	if cmd.Use != "kubectl-tlsreport [csv|json|yaml|junit|markdown|md|html]" {
+	if cmd.Use != "kubectl-tlsreport [csv|json|yaml|junit|markdown|md|html|sarif]" {
 		t.Errorf("unexpected Use: %s", cmd.Use)
 	}
 
@@ -95,13 +95,13 @@ func TestRunExport_InvalidFormat(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid format")
 	}
-	if err.Error() != "unknown format: xml (supported: csv, json, yaml, junit, markdown, md, html)" {
+	if err.Error() != "unknown format: xml (supported: csv, json, yaml, junit, markdown, md, html, sarif)" {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
 
 func TestRunExport_ValidFormats(t *testing.T) {
-	for _, format := range []string{"csv", "json", "yaml", "junit", "markdown", "md", "html"} {
+	for _, format := range []string{"csv", "json", "yaml", "junit", "markdown", "md", "html", "sarif"} {
 		cmd := newRootCmd()
 		cmd.SetArgs([]string{format})
 

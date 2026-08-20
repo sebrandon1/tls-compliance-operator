@@ -1,7 +1,7 @@
 # Exporting Reports
 
 The `kubectl-tlsreport` plugin exports TLS compliance data in CSV, JSON, YAML,
-JUnit XML, Markdown, and HTML formats for CI/CD pipelines, auditing, and dashboards.
+JUnit XML, Markdown, HTML, and SARIF formats for CI/CD pipelines, auditing, and dashboards.
 
 ## Install the Plugin
 
@@ -90,6 +90,16 @@ kubectl tlsreport html > tls-compliance.html
 
 Inline CSS, a summary strip (compliant / warning / non-compliant / expired certs),
 and the same per-endpoint columns as Markdown. Status and grade are color-coded.
+
+**SARIF** (for GitHub Code Scanning):
+
+```bash
+kubectl tlsreport sarif > tls-compliance.sarif
+```
+
+SARIF 2.1.0 with one result per NonCompliant, NoTLS, PlaintextHTTP (error),
+or Warning (warning) endpoint. Compliant and infrastructure statuses are omitted.
+Upload with `github/codeql-action/upload-sarif`.
 
 ## Querying Reports
 

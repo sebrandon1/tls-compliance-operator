@@ -32,7 +32,7 @@ The [openshift/tls-scanner](https://github.com/openshift/tls-scanner) is a batch
 | OpenShift TLSSecurityProfile compliance | Checks against APIServer, IngressController, and KubeletConfig profiles |
 | Arbitrary target scanning | `TLSComplianceTarget` CRD for scanning any host:port |
 | Configurable worker pool | `--workers` flag for concurrent periodic scan throughput |
-| CSV, JSON, YAML, JUnit, Markdown, HTML export | `kubectl-tlsreport` plugin for CI/CD integration, including snapshot diff |
+| CSV, JSON, YAML, JUnit, Markdown, HTML, SARIF export | `kubectl-tlsreport` plugin for CI/CD integration, including snapshot diff |
 | Post-quantum readiness detection | Reports negotiated key exchange curves and PQC status |
 | Active ML-KEM probing | Dedicated TLS 1.3 handshake to confirm post-quantum key exchange support |
 | Gateway API support | Auto-detects and monitors HTTPRoute, TLSRoute, and Gateway resources |
