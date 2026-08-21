@@ -19,11 +19,28 @@ package export
 import (
 	"fmt"
 	"io"
+	"net"
+	"sort"
+	"strconv"
 	"text/tabwriter"
 	"time"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 )
+
+const topOffenderLimit = 5
+
+// knownTLSVersions defines the deterministic order for TLS version counts.
+var knownTLSVersions = []string{"SSL 3.0", "TLS 1.0", "TLS 1.1", "TLS 1.2", "TLS 1.3"}
+
+// SummaryOffender is one endpoint in a top-offenders list.
+type SummaryOffender struct {
+	Host      string
+	Port      int32
+	Namespace string
+	Grade     string
+	NotAfter  *time.Time
+}
 
 // knownStatuses defines the deterministic order for status output.
 var knownStatuses = []securityv1alpha1.ComplianceStatus{
@@ -90,6 +107,13 @@ type Summary struct {
 	CertExpiring7d        int
 	CertExpiring30d       int
 	CertExpiring90d       int
+	ByTLSVersion          map[string]int
+	ByNamespace           map[string]int
+	HostnameMatch         int
+	HostnameMismatch      int
+	HostnameUnknown       int
+	WorstGrades           []SummaryOffender
+	SoonestExpiry         []SummaryOffender
 }
 
 // ComputeSummary calculates summary statistics from a slice of reports.
@@ -101,7 +125,12 @@ func ComputeSummary(reports []securityv1alpha1.TLSComplianceReport, now time.Tim
 		BySourceKind:   make(map[securityv1alpha1.SourceKind]int),
 		ByPQCReadiness: make(map[securityv1alpha1.PQCReadiness]int),
 		ByGrade:        make(map[string]int),
+		ByTLSVersion:   make(map[string]int),
+		ByNamespace:    make(map[string]int),
 	}
+
+	var worst []SummaryOffender
+	var soonest []SummaryOffender
 
 	for i := range reports {
 		r := &reports[i]
@@ -110,6 +139,8 @@ func ComputeSummary(reports []securityv1alpha1.TLSComplianceReport, now time.Tim
 			s.TLSCapable++
 		}
 		s.BySourceKind[r.Spec.SourceKind]++
+		s.ByNamespace[r.Spec.SourceNamespace]++
+		countTLSVersions(s.ByTLSVersion, r.Status.TLSVersions)
 		if r.Status.ForwardSecrecy {
 			s.ForwardSecrecyCount++
 		}
@@ -127,24 +158,34 @@ func ComputeSummary(reports []securityv1alpha1.TLSComplianceReport, now time.Tim
 		}
 		if r.Status.OverallCipherGrade != "" {
 			s.ByGrade[r.Status.OverallCipherGrade]++
+			if gradeRank[r.Status.OverallCipherGrade] > gradeRank["A"] {
+				worst = append(worst, offenderFromReport(r, r.Status.OverallCipherGrade, nil))
+			}
 		}
 
-		if r.Status.CertificateInfo != nil && r.Status.CertificateInfo.NotAfter != nil {
-			expiry := r.Status.CertificateInfo.NotAfter.Time
-			daysUntil := expiry.Sub(now).Hours() / 24
+		if r.Status.CertificateInfo != nil {
+			countHostnameMatch(&s, r.Status.CertificateInfo.HostnameMatch)
+			if r.Status.CertificateInfo.NotAfter != nil {
+				expiry := r.Status.CertificateInfo.NotAfter.Time
+				daysUntil := expiry.Sub(now).Hours() / 24
 
-			switch {
-			case daysUntil < 0:
-				s.CertExpired++
-			case daysUntil < 7:
-				s.CertExpiring7d++
-			case daysUntil < 30:
-				s.CertExpiring30d++
-			case daysUntil < 90:
-				s.CertExpiring90d++
+				switch {
+				case daysUntil < 0:
+					s.CertExpired++
+				case daysUntil < 7:
+					s.CertExpiring7d++
+				case daysUntil < 30:
+					s.CertExpiring30d++
+				case daysUntil < 90:
+					s.CertExpiring90d++
+				}
+				soonest = append(soonest, offenderFromReport(r, r.Status.OverallCipherGrade, &expiry))
 			}
 		}
 	}
+
+	s.WorstGrades = topWorstGrades(worst, topOffenderLimit)
+	s.SoonestExpiry = topSoonestExpiry(soonest, topOffenderLimit)
 
 	if s.TLSCapable > 0 {
 		compliant := s.ByStatus[securityv1alpha1.ComplianceStatusCompliant]
@@ -255,9 +296,167 @@ func WriteSummary(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) e
 		}
 	}
 
+	if hasTLSVersionCounts(s.ByTLSVersion) {
+		ew.printf("\nTLS Version Support\n")
+		ew.printf("-------------------\n")
+		for _, label := range knownTLSVersions {
+			count := s.ByTLSVersion[label]
+			if count > 0 {
+				ew.printf("  %s:\t%d\n", label, count)
+			}
+		}
+	}
+
+	if len(s.ByNamespace) > 0 {
+		ew.printf("\nNamespace Breakdown\n")
+		ew.printf("-------------------\n")
+		for _, ns := range sortedNamespaceKeys(s.ByNamespace) {
+			ew.printf("  %s:\t%d\n", namespaceLabel(ns), s.ByNamespace[ns])
+		}
+	}
+
+	if s.HostnameMatch > 0 || s.HostnameMismatch > 0 || s.HostnameUnknown > 0 {
+		ew.printf("\nHostname Match\n")
+		ew.printf("--------------\n")
+		if s.HostnameMatch > 0 {
+			ew.printf("  Match:\t%d\n", s.HostnameMatch)
+		}
+		if s.HostnameMismatch > 0 {
+			ew.printf("  Mismatch:\t%d\n", s.HostnameMismatch)
+		}
+		if s.HostnameUnknown > 0 {
+			ew.printf("  Unknown:\t%d\n", s.HostnameUnknown)
+		}
+	}
+
+	if len(s.WorstGrades) > 0 || len(s.SoonestExpiry) > 0 {
+		ew.printf("\nTop Offenders\n")
+		ew.printf("-------------\n")
+		if len(s.WorstGrades) > 0 {
+			ew.printf("Worst cipher grades:\n")
+			for _, o := range s.WorstGrades {
+				ew.printf("  %s\t%s\t%s\n", o.Grade, offenderEndpoint(o), namespaceLabel(o.Namespace))
+			}
+		}
+		if len(s.SoonestExpiry) > 0 {
+			ew.printf("Soonest cert expiry:\n")
+			for _, o := range s.SoonestExpiry {
+				expiry := "-"
+				if o.NotAfter != nil {
+					expiry = o.NotAfter.Format("2006-01-02")
+				}
+				ew.printf("  %s\t%s\t%s\n", expiry, offenderEndpoint(o), namespaceLabel(o.Namespace))
+			}
+		}
+	}
+
 	if ew.err != nil {
 		return ew.err
 	}
 
 	return tw.Flush()
+}
+
+func countTLSVersions(dst map[string]int, v securityv1alpha1.TLSVersionSupport) {
+	if v.SSL30 {
+		dst["SSL 3.0"]++
+	}
+	if v.TLS10 {
+		dst["TLS 1.0"]++
+	}
+	if v.TLS11 {
+		dst["TLS 1.1"]++
+	}
+	if v.TLS12 {
+		dst["TLS 1.2"]++
+	}
+	if v.TLS13 {
+		dst["TLS 1.3"]++
+	}
+}
+
+func hasTLSVersionCounts(byVersion map[string]int) bool {
+	for _, count := range byVersion {
+		if count > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func countHostnameMatch(s *Summary, match *bool) {
+	if match == nil {
+		s.HostnameUnknown++
+		return
+	}
+	if *match {
+		s.HostnameMatch++
+		return
+	}
+	s.HostnameMismatch++
+}
+
+func offenderFromReport(r *securityv1alpha1.TLSComplianceReport, grade string, notAfter *time.Time) SummaryOffender {
+	return SummaryOffender{
+		Host:      r.Spec.Host,
+		Port:      r.Spec.Port,
+		Namespace: r.Spec.SourceNamespace,
+		Grade:     grade,
+		NotAfter:  notAfter,
+	}
+}
+
+func topWorstGrades(items []SummaryOffender, n int) []SummaryOffender {
+	sort.SliceStable(items, func(i, j int) bool {
+		ri, rj := gradeRank[items[i].Grade], gradeRank[items[j].Grade]
+		if ri != rj {
+			return ri > rj
+		}
+		return offenderEndpoint(items[i]) < offenderEndpoint(items[j])
+	})
+	return truncateOffenders(items, n)
+}
+
+func topSoonestExpiry(items []SummaryOffender, n int) []SummaryOffender {
+	sort.SliceStable(items, func(i, j int) bool {
+		ti, tj := distantFuture, distantFuture
+		if items[i].NotAfter != nil {
+			ti = *items[i].NotAfter
+		}
+		if items[j].NotAfter != nil {
+			tj = *items[j].NotAfter
+		}
+		if !ti.Equal(tj) {
+			return ti.Before(tj)
+		}
+		return offenderEndpoint(items[i]) < offenderEndpoint(items[j])
+	})
+	return truncateOffenders(items, n)
+}
+
+func truncateOffenders(items []SummaryOffender, n int) []SummaryOffender {
+	if n <= 0 || len(items) <= n {
+		return items
+	}
+	return items[:n]
+}
+
+func sortedNamespaceKeys(byNamespace map[string]int) []string {
+	keys := make([]string, 0, len(byNamespace))
+	for ns := range byNamespace {
+		keys = append(keys, ns)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func offenderEndpoint(o SummaryOffender) string {
+	return net.JoinHostPort(o.Host, strconv.Itoa(int(o.Port)))
+}
+
+func namespaceLabel(ns string) string {
+	if ns == "" {
+		return "(none)"
+	}
+	return ns
 }

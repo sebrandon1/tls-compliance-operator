@@ -159,8 +159,10 @@ kubectl tlsreport describe google-com-443-01d44386
 
 ### summary
 
-Show an at-a-glance compliance summary with counts by status, PQC readiness
-breakdown, and certificate expiry buckets.
+Show an at-a-glance compliance summary with counts by status, source kind, PQC
+readiness, cipher grade, TLS version support, namespace, hostname match, top
+offenders (worst grades and soonest cert expiry), and certificate expiry
+buckets.
 
 ```bash
 kubectl tlsreport summary
