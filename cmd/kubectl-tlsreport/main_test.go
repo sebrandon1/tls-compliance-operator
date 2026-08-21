@@ -818,7 +818,7 @@ func TestRescanReports_WaitProgressMultiple(t *testing.T) {
 				}
 				var r securityv1alpha1.TLSComplianceReport
 				if err := cl.Get(ctx, client.ObjectKeyFromObject(obj), &r); err != nil {
-					return nil
+					return err
 				}
 				if _, ok := r.Annotations[securityv1alpha1.RescanAnnotation]; !ok {
 					return nil
