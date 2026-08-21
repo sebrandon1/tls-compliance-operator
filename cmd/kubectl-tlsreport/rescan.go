@@ -119,8 +119,7 @@ func runRescanAll(ctx context.Context, wait bool, timeout time.Duration) error {
 
 func rescanReports(ctx context.Context, c client.Client, reports []securityv1alpha1.TLSComplianceReport, wait bool, timeout time.Duration) error {
 	if len(reports) == 0 {
-		fmt.Fprintln(os.Stderr, "No reports match the specified filters.")
-		return nil
+		return printNoMatchingReports()
 	}
 
 	var triggered []string

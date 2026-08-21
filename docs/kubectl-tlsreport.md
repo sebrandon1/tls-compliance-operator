@@ -62,6 +62,11 @@ These flags are available on all subcommands:
 | `--kubeconfig` | | Path to kubeconfig file |
 | `--context` | | Kubeconfig context to use |
 
+When a filter matches nothing, `get`, `summary`, export, `rescan --all`, and
+`target list` print a single stderr message (`No reports match the specified
+filters.` or `No targets match the specified filters.`) and skip table headers.
+JSON/YAML still emit an empty array so pipelines keep working.
+
 ## Subcommands
 
 ### Export (root command)

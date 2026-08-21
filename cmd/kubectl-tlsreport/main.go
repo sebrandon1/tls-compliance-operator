@@ -143,12 +143,13 @@ func newVersionCmd() *cobra.Command {
 	}
 }
 
-func printNoResourcesFound() error {
-	if filterOpts.Namespace != "" {
-		fmt.Fprintf(os.Stderr, "No resources found in namespace %q.\n", filterOpts.Namespace)
-	} else {
-		fmt.Fprintln(os.Stderr, "No resources found.")
-	}
+func printNoMatchingReports() error {
+	fmt.Fprintln(os.Stderr, "No reports match the specified filters.")
+	return nil
+}
+
+func printNoMatchingTargets() error {
+	fmt.Fprintln(os.Stderr, "No targets match the specified filters.")
 	return nil
 }
 

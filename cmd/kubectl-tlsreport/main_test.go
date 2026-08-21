@@ -339,8 +339,8 @@ func TestPrintTable_Empty(t *testing.T) {
 						t.Fatalf("unexpected error: %v", err)
 					}
 				})
-				if !strings.Contains(stderr, "No resources found.") {
-					t.Errorf("expected 'No resources found.' on stderr, got: %q", stderr)
+				if !strings.Contains(stderr, "No reports match the specified filters.") {
+					t.Errorf("expected standardized empty-result message on stderr, got: %q", stderr)
 				}
 			})
 			if strings.Contains(stdout, "NAME") {
@@ -394,31 +394,118 @@ func TestPrintTable_EmptyWithNamespace(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
-		if !strings.Contains(stderr, `No resources found in namespace "production".`) {
-			t.Errorf("expected namespace-specific message on stderr, got: %q", stderr)
+		if stderr != "No reports match the specified filters.\n" {
+			t.Errorf("expected the same empty-result message with a namespace filter, got: %q", stderr)
 		}
 	})
 }
 
-func TestPrintNoResourcesFound(t *testing.T) {
-	tests := []struct {
-		name      string
-		namespace string
-		expected  string
-	}{
-		{"no namespace", "", "No resources found.\n"},
-		{"with namespace", "kube-system", "No resources found in namespace \"kube-system\".\n"},
+func TestPrintNoMatchingReports(t *testing.T) {
+	stderr := captureStderr(t, func() {
+		if err := printNoMatchingReports(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	if stderr != "No reports match the specified filters.\n" {
+		t.Errorf("expected standardized reports message, got %q", stderr)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			filterOpts.Namespace = tt.namespace
-			defer func() { filterOpts.Namespace = "" }()
+}
 
-			stderr := captureStderr(t, func() {
-				_ = printNoResourcesFound()
+func TestPrintNoMatchingTargets(t *testing.T) {
+	stderr := captureStderr(t, func() {
+		if err := printNoMatchingTargets(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	if stderr != "No targets match the specified filters.\n" {
+		t.Errorf("expected standardized targets message, got %q", stderr)
+	}
+}
+
+func TestOutputReports_EmptyFormats(t *testing.T) {
+	origFormat := outputFormat
+	t.Cleanup(func() { outputFormat = origFormat })
+
+	for _, format := range []string{"table", "wide", "json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			outputFormat = format
+			var stdout, stderr string
+			stdout = captureStdout(t, func() {
+				stderr = captureStderr(t, func() {
+					if err := outputReports(nil); err != nil {
+						t.Fatalf("outputReports(%s) error = %v", format, err)
+					}
+				})
 			})
-			if stderr != tt.expected {
-				t.Errorf("expected %q, got %q", tt.expected, stderr)
+			if !strings.Contains(stderr, "No reports match the specified filters.") {
+				t.Errorf("%s: expected empty-result message on stderr, got %q", format, stderr)
+			}
+			if strings.Contains(stdout, "NAME") {
+				t.Errorf("%s: expected no table header on stdout, got %q", format, stdout)
+			}
+			if format == "json" && strings.TrimSpace(stdout) != "[]" {
+				t.Errorf("json: expected empty array on stdout, got %q", stdout)
+			}
+			if format == "yaml" && strings.TrimSpace(stdout) != "[]" {
+				t.Errorf("yaml: expected empty array on stdout, got %q", stdout)
+			}
+		})
+	}
+}
+
+func TestWriteFilteredReports_Empty(t *testing.T) {
+	for _, format := range []string{"json", "yaml", "csv"} {
+		t.Run(format, func(t *testing.T) {
+			var stdout, stderr string
+			stdout = captureStdout(t, func() {
+				stderr = captureStderr(t, func() {
+					if err := writeFilteredReports(format, nil); err != nil {
+						t.Fatalf("writeFilteredReports(%s) error = %v", format, err)
+					}
+				})
+			})
+			if !strings.Contains(stderr, "No reports match the specified filters.") {
+				t.Errorf("%s: expected empty-result message on stderr, got %q", format, stderr)
+			}
+			if format == "json" && strings.TrimSpace(stdout) != "[]" {
+				t.Errorf("json: expected empty array, got %q", stdout)
+			}
+			if format == "yaml" && strings.TrimSpace(stdout) != "[]" {
+				t.Errorf("yaml: expected empty array, got %q", stdout)
+			}
+			if format == "csv" && !strings.Contains(stdout, "Host") {
+				t.Errorf("csv: expected header row on stdout, got %q", stdout)
+			}
+		})
+	}
+}
+
+func TestWriteTargetList_Empty(t *testing.T) {
+	orig := targetOutputFormat
+	t.Cleanup(func() { targetOutputFormat = orig })
+
+	for _, format := range []string{"table", "json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			targetOutputFormat = format
+			var stdout, stderr string
+			stdout = captureStdout(t, func() {
+				stderr = captureStderr(t, func() {
+					if err := writeTargetList(nil); err != nil {
+						t.Fatalf("writeTargetList(%s) error = %v", format, err)
+					}
+				})
+			})
+			if !strings.Contains(stderr, "No targets match the specified filters.") {
+				t.Errorf("%s: expected empty-result message on stderr, got %q", format, stderr)
+			}
+			if strings.Contains(stdout, "NAME") {
+				t.Errorf("%s: expected no table header, got %q", format, stdout)
+			}
+			if format == "json" && strings.TrimSpace(stdout) != "[]" {
+				t.Errorf("json: expected empty array, got %q", stdout)
+			}
+			if format == "yaml" && strings.TrimSpace(stdout) != "[]" {
+				t.Errorf("yaml: expected empty array, got %q", stdout)
 			}
 		})
 	}

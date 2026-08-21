@@ -49,7 +49,7 @@ func runSummary(cmd *cobra.Command, _ []string) error {
 	}
 
 	if len(reports) == 0 {
-		return printNoResourcesFound()
+		return printNoMatchingReports()
 	}
 
 	export.SortReports(reports, sortBy)
