@@ -143,17 +143,7 @@ func rescanReports(ctx context.Context, c client.Client, reports []securityv1alp
 		return nil
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	completed := 0
-	for _, name := range triggered {
-		if err := waitForRescan(timeoutCtx, c, name, 0); err != nil {
-			fmt.Fprintf(os.Stderr, "Timeout waiting for %s\n", name)
-			continue
-		}
-		completed++
-	}
+	completed := waitForRescans(ctx, c, triggered, timeout)
 	fmt.Fprintf(os.Stderr, "Rescan completed for %d/%d reports\n", completed, len(triggered))
 	if triggerFailed > 0 || completed < len(triggered) {
 		return exitCodeError{code: 1}
@@ -195,4 +185,70 @@ func waitForRescan(ctx context.Context, c client.Client, name string, timeout ti
 			}
 		}
 	}
+}
+
+const rescanWaitPollInterval = 2 * time.Second
+
+func waitForRescans(ctx context.Context, c client.Client, names []string, timeout time.Duration) int {
+	waitCtx := ctx
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		waitCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	pending := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		pending[name] = struct{}{}
+	}
+	total := len(names)
+	completed := 0
+
+	printProgress := func() {
+		fmt.Fprintf(os.Stderr, "\rscanned %d/%d", completed, total)
+	}
+
+	check := func() error {
+		for name := range pending {
+			var updated securityv1alpha1.TLSComplianceReport
+			if err := c.Get(waitCtx, client.ObjectKey{Name: name}, &updated); err != nil {
+				return fmt.Errorf("checking rescan status: %w", err)
+			}
+			if _, has := updated.Annotations[securityv1alpha1.RescanAnnotation]; !has {
+				delete(pending, name)
+				completed++
+			}
+		}
+		printProgress()
+		return nil
+	}
+
+	if err := check(); err != nil {
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		return completed
+	}
+
+	ticker := time.NewTicker(rescanWaitPollInterval)
+	defer ticker.Stop()
+
+	for len(pending) > 0 {
+		select {
+		case <-waitCtx.Done():
+			fmt.Fprintln(os.Stderr)
+			for name := range pending {
+				fmt.Fprintf(os.Stderr, "Timeout waiting for %s\n", name)
+			}
+			return completed
+		case <-ticker.C:
+			if err := check(); err != nil {
+				fmt.Fprintln(os.Stderr)
+				fmt.Fprintf(os.Stderr, "%v\n", err)
+				return completed
+			}
+		}
+	}
+
+	fmt.Fprintln(os.Stderr)
+	return completed
 }
