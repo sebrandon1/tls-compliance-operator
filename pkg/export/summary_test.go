@@ -18,6 +18,7 @@ package export
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -909,5 +910,221 @@ func TestWriteSummary_NoGradeSection(t *testing.T) {
 
 	if strings.Contains(buf.String(), "Cipher Grade Distribution") {
 		t.Error("expected no grade section when no grades are present")
+	}
+}
+
+func boolPtr(v bool) *bool { return &v }
+
+func TestComputeSummary_TLSVersionsNamespacesHostnameAndOffenders(t *testing.T) {
+	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	soon := metav1.NewTime(now.Add(2 * 24 * time.Hour))
+	later := metav1.NewTime(now.Add(40 * 24 * time.Hour))
+	far := metav1.NewTime(now.Add(200 * 24 * time.Hour))
+
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host: "legacy.example", Port: 443, SourceKind: securityv1alpha1.SourceKindService, SourceNamespace: "prod",
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus:   securityv1alpha1.ComplianceStatusNonCompliant,
+				OverallCipherGrade: "F",
+				TLSVersions:        securityv1alpha1.TLSVersionSupport{SSL30: true, TLS10: true, TLS11: true, TLS12: true},
+				CertificateInfo:    &securityv1alpha1.CertificateInfo{NotAfter: &soon, HostnameMatch: boolPtr(false)},
+			},
+		},
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host: "ok.example", Port: 443, SourceKind: securityv1alpha1.SourceKindIngress, SourceNamespace: "prod",
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus:   securityv1alpha1.ComplianceStatusCompliant,
+				OverallCipherGrade: "A",
+				TLSVersions:        securityv1alpha1.TLSVersionSupport{TLS12: true, TLS13: true},
+				CertificateInfo:    &securityv1alpha1.CertificateInfo{NotAfter: &far, HostnameMatch: boolPtr(true)},
+			},
+		},
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host: "warn.example", Port: 8443, SourceKind: securityv1alpha1.SourceKindRoute, SourceNamespace: "dev",
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus:   securityv1alpha1.ComplianceStatusWarning,
+				OverallCipherGrade: "C",
+				TLSVersions:        securityv1alpha1.TLSVersionSupport{TLS12: true},
+				CertificateInfo:    &securityv1alpha1.CertificateInfo{NotAfter: &later},
+			},
+		},
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host: "plain.example", Port: 80, SourceKind: securityv1alpha1.SourceKindService, SourceNamespace: "dev",
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusNoTLS,
+			},
+		},
+	}
+
+	s := ComputeSummary(reports, now)
+
+	if s.ByTLSVersion["SSL 3.0"] != 1 {
+		t.Errorf("SSL 3.0: got %d, want 1", s.ByTLSVersion["SSL 3.0"])
+	}
+	if s.ByTLSVersion["TLS 1.0"] != 1 {
+		t.Errorf("TLS 1.0: got %d, want 1", s.ByTLSVersion["TLS 1.0"])
+	}
+	if s.ByTLSVersion["TLS 1.1"] != 1 {
+		t.Errorf("TLS 1.1: got %d, want 1", s.ByTLSVersion["TLS 1.1"])
+	}
+	if s.ByTLSVersion["TLS 1.2"] != 3 {
+		t.Errorf("TLS 1.2: got %d, want 3", s.ByTLSVersion["TLS 1.2"])
+	}
+	if s.ByTLSVersion["TLS 1.3"] != 1 {
+		t.Errorf("TLS 1.3: got %d, want 1", s.ByTLSVersion["TLS 1.3"])
+	}
+	if s.ByNamespace["prod"] != 2 {
+		t.Errorf("prod namespace: got %d, want 2", s.ByNamespace["prod"])
+	}
+	if s.ByNamespace["dev"] != 2 {
+		t.Errorf("dev namespace: got %d, want 2", s.ByNamespace["dev"])
+	}
+	if s.HostnameMatch != 1 {
+		t.Errorf("HostnameMatch: got %d, want 1", s.HostnameMatch)
+	}
+	if s.HostnameMismatch != 1 {
+		t.Errorf("HostnameMismatch: got %d, want 1", s.HostnameMismatch)
+	}
+	if s.HostnameUnknown != 1 {
+		t.Errorf("HostnameUnknown: got %d, want 1", s.HostnameUnknown)
+	}
+	if len(s.WorstGrades) != 2 {
+		t.Fatalf("WorstGrades: got %d, want 2", len(s.WorstGrades))
+	}
+	if s.WorstGrades[0].Grade != "F" || s.WorstGrades[0].Host != "legacy.example" {
+		t.Errorf("expected worst grade F on legacy.example, got %+v", s.WorstGrades[0])
+	}
+	if s.WorstGrades[1].Grade != "C" {
+		t.Errorf("expected second worst grade C, got %s", s.WorstGrades[1].Grade)
+	}
+	if len(s.SoonestExpiry) != 3 {
+		t.Fatalf("SoonestExpiry: got %d, want 3", len(s.SoonestExpiry))
+	}
+	if s.SoonestExpiry[0].Host != "legacy.example" {
+		t.Errorf("expected soonest expiry on legacy.example, got %s", s.SoonestExpiry[0].Host)
+	}
+}
+
+func TestComputeSummary_TopOffendersLimitAndEmpty(t *testing.T) {
+	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	reports := make([]securityv1alpha1.TLSComplianceReport, 0, 8)
+	for i := range 8 {
+		expiry := metav1.NewTime(now.Add(time.Duration(i+1) * 24 * time.Hour))
+		reports = append(reports, securityv1alpha1.TLSComplianceReport{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:            fmt.Sprintf("host-%d.example", i),
+				Port:            443,
+				SourceNamespace: "ns",
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				OverallCipherGrade: "F",
+				CertificateInfo:    &securityv1alpha1.CertificateInfo{NotAfter: &expiry},
+			},
+		})
+	}
+
+	s := ComputeSummary(reports, now)
+	if len(s.WorstGrades) != topOffenderLimit {
+		t.Errorf("WorstGrades len: got %d, want %d", len(s.WorstGrades), topOffenderLimit)
+	}
+	if len(s.SoonestExpiry) != topOffenderLimit {
+		t.Errorf("SoonestExpiry len: got %d, want %d", len(s.SoonestExpiry), topOffenderLimit)
+	}
+	if s.SoonestExpiry[0].Host != "host-0.example" {
+		t.Errorf("expected soonest host-0.example, got %s", s.SoonestExpiry[0].Host)
+	}
+
+	empty := ComputeSummary(nil, now)
+	if len(empty.WorstGrades) != 0 || len(empty.SoonestExpiry) != 0 {
+		t.Error("expected no offenders for empty input")
+	}
+	if empty.HostnameMatch != 0 || empty.HostnameMismatch != 0 || empty.HostnameUnknown != 0 {
+		t.Error("expected zero hostname stats for empty input")
+	}
+}
+
+func TestWriteSummary_NewSections(t *testing.T) {
+	now := time.Now()
+	soon := metav1.NewTime(now.Add(3 * 24 * time.Hour))
+	matchFalse := false
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host: "bad.example", Port: 443, SourceKind: securityv1alpha1.SourceKindService, SourceNamespace: "prod",
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus:   securityv1alpha1.ComplianceStatusNonCompliant,
+				OverallCipherGrade: "D",
+				TLSVersions:        securityv1alpha1.TLSVersionSupport{TLS10: true, TLS12: true},
+				CertificateInfo:    &securityv1alpha1.CertificateInfo{NotAfter: &soon, HostnameMatch: &matchFalse},
+			},
+		},
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host: "ok.example", Port: 443, SourceKind: securityv1alpha1.SourceKindService, SourceNamespace: "dev",
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus:   securityv1alpha1.ComplianceStatusCompliant,
+				OverallCipherGrade: "A",
+				TLSVersions:        securityv1alpha1.TLSVersionSupport{TLS13: true},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteSummary(&buf, reports); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	output := buf.String()
+	for _, want := range []string{
+		"TLS Version Support",
+		"TLS 1.0:",
+		"TLS 1.2:",
+		"TLS 1.3:",
+		"Namespace Breakdown",
+		"prod:",
+		"dev:",
+		"Hostname Match",
+		"Mismatch:",
+		"Top Offenders",
+		"Worst cipher grades:",
+		"Soonest cert expiry:",
+		"bad.example:443",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("expected output to contain %q", want)
+		}
+	}
+}
+
+func TestWriteSummary_OmitsEmptyNewSections(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService, SourceNamespace: "ns"},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusNoTLS},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteSummary(&buf, reports); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	output := buf.String()
+	for _, skip := range []string{"TLS Version Support", "Hostname Match", "Top Offenders"} {
+		if strings.Contains(output, skip) {
+			t.Errorf("expected output to omit empty section %q", skip)
+		}
+	}
+	if !strings.Contains(output, "Namespace Breakdown") {
+		t.Error("expected namespace breakdown even when other new sections are empty")
 	}
 }
