@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -432,5 +433,93 @@ func TestEndpointKey(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("EndpointKey(%q, %q) = %q, want %q", tt.host, tt.port, got, tt.want)
 		}
+	}
+}
+
+func rawExportFixture() []securityv1alpha1.TLSComplianceReport {
+	return []securityv1alpha1.TLSComplianceReport{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "app-443-abcd1234"},
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:            "app.example.com",
+				Port:            443,
+				SourceKind:      securityv1alpha1.SourceKindService,
+				SourceNamespace: "prod",
+				SourceName:      "app",
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				TLSVersions:      securityv1alpha1.TLSVersionSupport{TLS13: true, TLS12: true},
+				CipherSuites:     map[string][]string{"TLS 1.3": {"TLS_AES_128_GCM_SHA256"}},
+				NegotiatedCurves: map[string]string{"TLS 1.3": "X25519"},
+				LastError:        "probe timeout",
+				CertificateInfo: &securityv1alpha1.CertificateInfo{
+					DNSNames: []string{"app.example.com", "*.example.com"},
+				},
+			},
+		},
+	}
+}
+
+func assertRawReportRoundTrip(t *testing.T, reports []securityv1alpha1.TLSComplianceReport) {
+	t.Helper()
+	if len(reports) != 1 {
+		t.Fatalf("expected 1 report, got %d", len(reports))
+	}
+	r := reports[0]
+	if r.Kind != "TLSComplianceReport" {
+		t.Errorf("Kind = %q, want TLSComplianceReport", r.Kind)
+	}
+	if r.APIVersion != securityv1alpha1.GroupVersion.String() {
+		t.Errorf("APIVersion = %q, want %s", r.APIVersion, securityv1alpha1.GroupVersion.String())
+	}
+	if !r.Status.TLSVersions.TLS13 || !r.Status.TLSVersions.TLS12 {
+		t.Errorf("tlsVersions = %+v, want TLS 1.2 and 1.3", r.Status.TLSVersions)
+	}
+	if r.Status.CertificateInfo == nil {
+		t.Fatal("expected certificateInfo to be preserved")
+	}
+	if len(r.Status.CertificateInfo.DNSNames) != 2 {
+		t.Errorf("cert SANs = %v, want 2 names", r.Status.CertificateInfo.DNSNames)
+	}
+	if len(r.Status.CipherSuites["TLS 1.3"]) == 0 || r.Status.CipherSuites["TLS 1.3"][0] != "TLS_AES_128_GCM_SHA256" {
+		t.Errorf("cipherSuites not preserved: %v", r.Status.CipherSuites)
+	}
+	if r.Status.NegotiatedCurves["TLS 1.3"] != "X25519" {
+		t.Errorf("negotiatedCurves not preserved: %v", r.Status.NegotiatedCurves)
+	}
+	if r.Status.LastError != "probe timeout" {
+		t.Errorf("lastError = %q, want probe timeout", r.Status.LastError)
+	}
+}
+
+func TestWriteRawJSON_RoundTrip(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WriteRawJSON(&buf, rawExportFixture()); err != nil {
+		t.Fatalf("WriteRawJSON: %v", err)
+	}
+
+	var reports []securityv1alpha1.TLSComplianceReport
+	if err := json.Unmarshal(buf.Bytes(), &reports); err != nil {
+		t.Fatalf("unmarshal raw JSON: %v\n%s", err, buf.String())
+	}
+	assertRawReportRoundTrip(t, reports)
+
+	if strings.Contains(buf.String(), `"crName"`) {
+		t.Error("raw JSON should not use the flattened JSONReport schema")
+	}
+}
+
+func TestWriteRawJSON_Empty(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WriteRawJSON(&buf, nil); err != nil {
+		t.Fatalf("WriteRawJSON: %v", err)
+	}
+	var reports []securityv1alpha1.TLSComplianceReport
+	if err := json.Unmarshal(buf.Bytes(), &reports); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(reports) != 0 {
+		t.Errorf("expected empty list, got %d", len(reports))
 	}
 }

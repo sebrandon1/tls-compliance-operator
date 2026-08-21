@@ -86,6 +86,27 @@ func WriteJSON(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) erro
 	return nil
 }
 
+// WriteRawJSON writes the full TLSComplianceReport objects as pretty-printed JSON.
+func WriteRawJSON(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(withReportTypeMeta(reports)); err != nil {
+		return fmt.Errorf("encoding raw JSON: %w", err)
+	}
+	return nil
+}
+
+func withReportTypeMeta(reports []securityv1alpha1.TLSComplianceReport) []securityv1alpha1.TLSComplianceReport {
+	out := make([]securityv1alpha1.TLSComplianceReport, len(reports))
+	copy(out, reports)
+	gv := securityv1alpha1.GroupVersion.String()
+	for i := range out {
+		out[i].APIVersion = gv
+		out[i].Kind = "TLSComplianceReport"
+	}
+	return out
+}
+
 func reportToJSON(r *securityv1alpha1.TLSComplianceReport) JSONReport {
 	certExpiry, certIssuer := extractCertInfo(r)
 

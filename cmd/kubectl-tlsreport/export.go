@@ -38,6 +38,10 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("unknown format: %s (supported: csv, json, yaml, junit, markdown, md, html, sarif)", format)
 	}
 
+	if rawExport && format != "json" && format != "yaml" {
+		return fmt.Errorf("--raw is only supported with json and yaml formats")
+	}
+
 	reports, err := fetchReports(cmd.Context())
 	if err != nil {
 		return err
@@ -65,9 +69,17 @@ func writeFilteredReports(format string, reports []securityv1alpha1.TLSComplianc
 	case "csv":
 		writeErr = export.WriteCSV(os.Stdout, reports)
 	case "json":
-		writeErr = export.WriteJSON(os.Stdout, reports)
+		if rawExport {
+			writeErr = export.WriteRawJSON(os.Stdout, reports)
+		} else {
+			writeErr = export.WriteJSON(os.Stdout, reports)
+		}
 	case "yaml":
-		writeErr = export.WriteYAML(os.Stdout, reports)
+		if rawExport {
+			writeErr = export.WriteRawYAML(os.Stdout, reports)
+		} else {
+			writeErr = export.WriteYAML(os.Stdout, reports)
+		}
 	case "junit":
 		writeErr = export.WriteJUnit(os.Stdout, reports)
 	case "markdown", "md":

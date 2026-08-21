@@ -23,6 +23,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	sigsyaml "sigs.k8s.io/yaml"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 )
@@ -189,4 +190,17 @@ func TestWriteYAML_MultipleReports(t *testing.T) {
 	if result[1].Source != "Route" {
 		t.Errorf("expected second source Route, got %s", result[1].Source)
 	}
+}
+
+func TestWriteRawYAML_RoundTrip(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WriteRawYAML(&buf, rawExportFixture()); err != nil {
+		t.Fatalf("WriteRawYAML: %v", err)
+	}
+
+	var reports []securityv1alpha1.TLSComplianceReport
+	if err := sigsyaml.Unmarshal(buf.Bytes(), &reports); err != nil {
+		t.Fatalf("unmarshal raw YAML: %v\n%s", err, buf.String())
+	}
+	assertRawReportRoundTrip(t, reports)
 }

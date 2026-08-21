@@ -72,6 +72,9 @@ JSON/YAML still emit an empty array so pipelines keep working.
 ### Export (root command)
 
 Export reports in CSV, JSON, YAML, JUnit XML, Markdown, HTML, or SARIF format.
+JSON and YAML default to a flattened snapshot schema; pass `--raw` to write
+full `TLSComplianceReport` objects (ciphers, curves, profile compliance,
+timestamps, errors, and certificate SANs).
 
 ```bash
 kubectl tlsreport [csv|json|yaml|junit|markdown|md|html|sarif]
@@ -100,6 +103,10 @@ kubectl tlsreport sarif > tls-compliance.sarif
 
 # Export non-compliant endpoints as JSON
 kubectl tlsreport json --status NonCompliant
+
+# Export full TLSComplianceReport objects (status.tlsVersions, SANs, ciphers, errors)
+kubectl tlsreport json --raw > reports.json
+kubectl tlsreport yaml --raw > reports.yaml
 
 # Export with CI gating (exit 1 on non-compliance)
 kubectl tlsreport junit --fail-on-non-compliant > results.xml
