@@ -767,9 +767,14 @@ func TestRescanReports_AllSucceed(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).
 		WithObjects(&reports[0], &reports[1]).Build()
 
-	err := rescanReports(ctx, c, reports, false, 0)
-	if err != nil {
-		t.Fatalf("expected nil error, got: %v", err)
+	stderr := captureStderr(t, func() {
+		err := rescanReports(ctx, c, reports, false, 0)
+		if err != nil {
+			t.Fatalf("expected nil error, got: %v", err)
+		}
+	})
+	if strings.Contains(stderr, "scanned") {
+		t.Errorf("--wait=false should not print progress, got %q", stderr)
 	}
 }
 
@@ -845,13 +850,21 @@ func TestRescanReports_WaitTimeout(t *testing.T) {
 
 	reports := []securityv1alpha1.TLSComplianceReport{report}
 
-	err := rescanReports(ctx, c, reports, true, 2*time.Second)
-	if err == nil {
-		t.Fatal("expected exit code error on wait timeout")
+	stderr := captureStderr(t, func() {
+		err := rescanReports(ctx, c, reports, true, 2*time.Second)
+		if err == nil {
+			t.Fatal("expected exit code error on wait timeout")
+		}
+		var ece exitCodeError
+		if !errors.As(err, &ece) || ece.code != 1 {
+			t.Errorf("expected exitCodeError{code:1}, got: %v", err)
+		}
+	})
+	if !strings.Contains(stderr, "scanned 0/1") {
+		t.Errorf("expected progress line scanned 0/1, got %q", stderr)
 	}
-	var ece exitCodeError
-	if !errors.As(err, &ece) || ece.code != 1 {
-		t.Errorf("expected exitCodeError{code:1}, got: %v", err)
+	if !strings.Contains(stderr, "Timeout waiting for report-pending") {
+		t.Errorf("expected timeout line, got %q", stderr)
 	}
 }
 
@@ -889,9 +902,60 @@ func TestRescanReports_WaitSuccess(t *testing.T) {
 
 	reports := []securityv1alpha1.TLSComplianceReport{report}
 
-	err := rescanReports(ctx, c, reports, true, 10*time.Second)
-	if err != nil {
-		t.Fatalf("expected nil error, got: %v", err)
+	stderr := captureStderr(t, func() {
+		err := rescanReports(ctx, c, reports, true, 10*time.Second)
+		if err != nil {
+			t.Fatalf("expected nil error, got: %v", err)
+		}
+	})
+	if !strings.Contains(stderr, "scanned 1/1") {
+		t.Errorf("expected progress line scanned 1/1, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "Rescan completed for 1/1 reports") {
+		t.Errorf("expected final completion line, got %q", stderr)
+	}
+}
+
+func TestRescanReports_WaitProgressMultiple(t *testing.T) {
+	ctx := context.Background()
+
+	r1 := securityv1alpha1.TLSComplianceReport{ObjectMeta: metav1.ObjectMeta{Name: "report-a"}}
+	r2 := securityv1alpha1.TLSComplianceReport{ObjectMeta: metav1.ObjectMeta{Name: "report-b"}}
+	clearing := false
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(&r1, &r2).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Update: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+				if err := cl.Update(ctx, obj, opts...); err != nil {
+					return err
+				}
+				if clearing {
+					return nil
+				}
+				var r securityv1alpha1.TLSComplianceReport
+				if err := cl.Get(ctx, client.ObjectKeyFromObject(obj), &r); err != nil {
+					return err
+				}
+				if _, ok := r.Annotations[securityv1alpha1.RescanAnnotation]; !ok {
+					return nil
+				}
+				clearing = true
+				delete(r.Annotations, securityv1alpha1.RescanAnnotation)
+				err := cl.Update(ctx, &r, opts...)
+				clearing = false
+				return err
+			},
+		}).
+		Build()
+
+	stderr := captureStderr(t, func() {
+		err := rescanReports(ctx, c, []securityv1alpha1.TLSComplianceReport{r1, r2}, true, 5*time.Second)
+		if err != nil {
+			t.Fatalf("expected nil error, got: %v", err)
+		}
+	})
+	if !strings.Contains(stderr, "scanned 2/2") {
+		t.Errorf("expected scanned 2/2 progress, got %q", stderr)
 	}
 }
 

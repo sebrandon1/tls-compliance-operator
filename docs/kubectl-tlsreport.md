@@ -266,6 +266,11 @@ kubectl tlsreport rescan --all -l host-network=true
 kubectl tlsreport rescan --all -n production --wait --timeout 120s
 ```
 
+With `--all --wait`, progress is printed to stderr as a running count
+(`scanned 42/120`) so a long wait does not look hung. The final
+`Rescan completed for x/y reports` line is unchanged. `--wait=false`
+prints only the trigger counts.
+
 ### target
 
 Manage `TLSComplianceTarget` resources for scanning arbitrary host:port
