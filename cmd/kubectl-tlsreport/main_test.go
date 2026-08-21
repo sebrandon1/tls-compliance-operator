@@ -90,6 +90,35 @@ func TestNewRootCmd_Flags(t *testing.T) {
 	}
 }
 
+func TestRunExport_RawRequiresJSONOrYAML(t *testing.T) {
+	t.Cleanup(func() { rawExport = false })
+	rawExport = false
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"csv", "--raw"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for --raw with csv")
+	}
+	if !strings.Contains(err.Error(), "--raw is only supported with json and yaml") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestNewRootCmd_RawFlag(t *testing.T) {
+	cmd := newRootCmd()
+	f := cmd.Flags().Lookup("raw")
+	if f == nil {
+		t.Fatal("expected --raw flag on the root export command")
+	}
+	if f.DefValue != "false" {
+		t.Errorf("expected --raw default=false, got %s", f.DefValue)
+	}
+	if cmd.PersistentFlags().Lookup("raw") != nil {
+		t.Error("--raw should not be a persistent flag on subcommands")
+	}
+}
+
 func TestRunExport_InvalidFormat(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{"xml"})

@@ -21,6 +21,7 @@ import (
 	"io"
 
 	"gopkg.in/yaml.v3"
+	sigsyaml "sigs.k8s.io/yaml"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 )
@@ -38,5 +39,17 @@ func WriteYAML(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) erro
 		return fmt.Errorf("closing YAML encoder: %w", err)
 	}
 
+	return nil
+}
+
+// WriteRawYAML writes the full TLSComplianceReport objects as YAML.
+func WriteRawYAML(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) error {
+	data, err := sigsyaml.Marshal(withReportTypeMeta(reports))
+	if err != nil {
+		return fmt.Errorf("encoding raw YAML: %w", err)
+	}
+	if _, err := w.Write(data); err != nil {
+		return fmt.Errorf("writing raw YAML: %w", err)
+	}
 	return nil
 }

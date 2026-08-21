@@ -55,6 +55,7 @@ var (
 	outputFormat       string
 	targetOutputFormat string
 	failOnNonCompliant bool
+	rawExport          bool
 )
 
 type exitCodeError struct {
@@ -118,6 +119,7 @@ Use --kubeconfig and --context to target a specific cluster.`,
 	rootCmd.PersistentFlags().StringVarP(&labelSelector, "selector", "l", "", "Label selector to filter reports (e.g. host-network=true)")
 	rootCmd.PersistentFlags().BoolVar(&failOnNonCompliant, "fail-on-non-compliant", false,
 		"Exit with code 1 if any non-compliant endpoints are found (NonCompliant, NoTLS, PlaintextHTTP)")
+	rootCmd.Flags().BoolVar(&rawExport, "raw", false, "Export full TLSComplianceReport objects instead of the flattened schema (json and yaml only)")
 
 	rootCmd.AddCommand(newSummaryCmd())
 	rootCmd.AddCommand(newGetCmd())
