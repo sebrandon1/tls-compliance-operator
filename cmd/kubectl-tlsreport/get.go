@@ -300,6 +300,22 @@ const reportTableHeader = "NAME\tHOST\tPORT\tSOURCE\tCOMPLIANCE\tGRADE\tFS\tTLS 
 const reportTableWideHeader = "NAME\tHOST\tPORT\tSOURCE\tNAMESPACE\tCOMPLIANCE\tGRADE\tFS\tTLS 1.3\tTLS 1.2\tTLS 1.0\tSSL 3.0\tPQC\tMLKEM\tISSUER\tCERT EXPIRY"
 
 func outputReports(reports []securityv1alpha1.TLSComplianceReport) error {
+	if len(reports) == 0 {
+		if err := printNoMatchingReports(); err != nil {
+			return err
+		}
+		switch outputFormat {
+		case "json":
+			return export.WriteJSON(os.Stdout, reports)
+		case "yaml":
+			return export.WriteYAML(os.Stdout, reports)
+		case "wide", "table", "":
+			return nil
+		default:
+			return fmt.Errorf("unknown output format: %s (supported: table, wide, json, yaml)", outputFormat)
+		}
+	}
+
 	switch outputFormat {
 	case "json":
 		return export.WriteJSON(os.Stdout, reports)
@@ -316,7 +332,7 @@ func outputReports(reports []securityv1alpha1.TLSComplianceReport) error {
 
 func printReportTable(reports []securityv1alpha1.TLSComplianceReport) error {
 	if len(reports) == 0 {
-		return printNoResourcesFound()
+		return printNoMatchingReports()
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, reportTableHeader)
@@ -328,7 +344,7 @@ func printReportTable(reports []securityv1alpha1.TLSComplianceReport) error {
 
 func printReportTableWide(reports []securityv1alpha1.TLSComplianceReport) error {
 	if len(reports) == 0 {
-		return printNoResourcesFound()
+		return printNoMatchingReports()
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, reportTableWideHeader)

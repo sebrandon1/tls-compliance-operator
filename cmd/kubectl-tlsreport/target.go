@@ -191,9 +191,20 @@ func runTargetList(cmd *cobra.Command, _ []string) error {
 	if err := sortTargets(targets, sortBy); err != nil {
 		return err
 	}
+	return writeTargetList(targets)
+}
+
+func writeTargetList(targets []securityv1alpha1.TLSComplianceTarget) error {
 	if len(targets) == 0 {
-		fmt.Fprintln(os.Stderr, "No targets found.")
-		return nil
+		if err := printNoMatchingTargets(); err != nil {
+			return err
+		}
+		switch targetOutputFormat {
+		case "json", "yaml":
+			return outputTargets(targets)
+		default:
+			return nil
+		}
 	}
 	return outputTargets(targets)
 }
@@ -201,10 +212,17 @@ func runTargetList(cmd *cobra.Command, _ []string) error {
 func outputTargets(targets []securityv1alpha1.TLSComplianceTarget) error {
 	switch targetOutputFormat {
 	case "json":
+		if targets == nil {
+			targets = []securityv1alpha1.TLSComplianceTarget{}
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(targets)
 	case "yaml":
+		if len(targets) == 0 {
+			_, err := fmt.Fprintln(os.Stdout, "[]")
+			return err
+		}
 		for i := range targets {
 			ydata, err := sigsyaml.Marshal(targets[i])
 			if err != nil {

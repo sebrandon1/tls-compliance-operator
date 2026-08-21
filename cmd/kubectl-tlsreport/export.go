@@ -22,6 +22,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/export"
 )
 
@@ -48,6 +49,16 @@ func runExport(cmd *cobra.Command, args []string) error {
 	}
 
 	export.SortReports(reports, sortBy)
+
+	return writeFilteredReports(format, reports)
+}
+
+func writeFilteredReports(format string, reports []securityv1alpha1.TLSComplianceReport) error {
+	if len(reports) == 0 {
+		if err := printNoMatchingReports(); err != nil {
+			return err
+		}
+	}
 
 	var writeErr error
 	switch format {
