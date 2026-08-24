@@ -317,10 +317,10 @@ func TestWriteJUnit_AllStatusTypes(t *testing.T) {
 
 func TestWriteJUnit_TimeAttributes(t *testing.T) {
 	tests := []struct {
-		name             string
-		reports          []securityv1alpha1.TLSComplianceReport
-		expectCaseTime   string
-		expectSuiteTime  string
+		name              string
+		reports           []securityv1alpha1.TLSComplianceReport
+		expectCaseTime    string
+		expectSuiteTime   string
 		expectNoSuiteTime bool
 	}{
 		{

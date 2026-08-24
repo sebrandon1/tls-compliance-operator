@@ -107,6 +107,7 @@ type operatorConfig struct {
 	runOnce                bool
 	outputFormat           string
 	outputFile             string
+	shutdownDrainTimeout   time.Duration
 
 	zapOpts zap.Options
 }
@@ -182,6 +183,8 @@ func parseFlags() *operatorConfig {
 		"Write scan results in this format (csv, json, yaml, junit, markdown, html, sarif); defaults to stdout")
 	flag.StringVar(&cfg.outputFile, "output-file", "",
 		"Path to write scan results (requires --output-format)")
+	flag.DurationVar(&cfg.shutdownDrainTimeout, "shutdown-drain-timeout", 30*time.Second,
+		"How long to wait for in-flight TLS checks to complete on shutdown before forcing exit")
 
 	cfg.zapOpts = zap.Options{Development: true}
 	cfg.zapOpts.BindFlags(flag.CommandLine)
@@ -547,6 +550,15 @@ func main() {
 		cancel()
 		os.Exit(1)
 	}
+
+	drainWorkers(reconciler, cfg.shutdownDrainTimeout)
+}
+
+func drainWorkers(reconciler *controller.EndpointReconciler, timeout time.Duration) {
+	setupLog.Info("draining in-flight TLS checks", "timeout", timeout)
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), timeout)
+	defer drainCancel()
+	reconciler.DrainInFlightChecks(drainCtx)
 }
 
 func runOnceAndExit(ctx context.Context, cancel context.CancelFunc, mgr ctrl.Manager, reconciler *controller.EndpointReconciler, cfg *operatorConfig) {
@@ -589,6 +601,7 @@ func runOnceAndExit(ctx context.Context, cancel context.CancelFunc, mgr ctrl.Man
 	}
 
 	cancel()
+	drainWorkers(reconciler, cfg.shutdownDrainTimeout)
 	os.Exit(exitCode)
 }
 
@@ -654,6 +667,7 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_RUN_ONCE", "run-once"},
 	{"TLS_COMPLIANCE_OUTPUT_FORMAT", "output-format"},
 	{"TLS_COMPLIANCE_OUTPUT_FILE", "output-file"},
+	{"TLS_COMPLIANCE_SHUTDOWN_DRAIN_TIMEOUT", "shutdown-drain-timeout"},
 }
 
 // resolveEnvConfig applies environment variable overrides to flags that were not

@@ -263,3 +263,84 @@ func TestManagerCtx_NilFallsBackToBackground(t *testing.T) {
 		t.Fatal("managerCtx() should return ManagerCtx when set")
 	}
 }
+
+func TestDrainInFlightChecks_NoWorkers(t *testing.T) {
+	r := &EndpointReconciler{}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	// Should return immediately when no goroutines are tracked.
+	done := make(chan struct{})
+	go func() {
+		r.DrainInFlightChecks(ctx)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("DrainInFlightChecks did not return immediately with no workers")
+	}
+}
+
+func TestDrainInFlightChecks_WaitsForWorker(t *testing.T) {
+	managerCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	checker := newBlockingChecker()
+	r := newAsyncCheckReconciler(t, checker, managerCtx, time.Minute)
+
+	if err := r.tryAsyncCheck("async-test", "example.com", 443, "default"); err != nil {
+		t.Fatalf("tryAsyncCheck() error = %v", err)
+	}
+	waitStarted(t, checker.started)
+
+	drainDone := make(chan struct{})
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer drainCancel()
+	go func() {
+		r.DrainInFlightChecks(drainCtx)
+		close(drainDone)
+	}()
+
+	// Drain should be blocked while the checker is running.
+	select {
+	case <-drainDone:
+		t.Fatal("DrainInFlightChecks returned before worker finished")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// Release the checker and verify drain unblocks.
+	close(checker.release)
+	select {
+	case <-drainDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("DrainInFlightChecks did not return after worker finished")
+	}
+}
+
+func TestDrainInFlightChecks_TimesOutIfWorkerBlocked(t *testing.T) {
+	managerCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	checker := newBlockingChecker()
+	r := newAsyncCheckReconciler(t, checker, managerCtx, time.Minute)
+
+	if err := r.tryAsyncCheck("async-test", "example.com", 443, "default"); err != nil {
+		t.Fatalf("tryAsyncCheck() error = %v", err)
+	}
+	waitStarted(t, checker.started)
+
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer drainCancel()
+
+	start := time.Now()
+	r.DrainInFlightChecks(drainCtx)
+	elapsed := time.Since(start)
+
+	if elapsed < 90*time.Millisecond {
+		t.Errorf("DrainInFlightChecks returned too early: %v", elapsed)
+	}
+
+	// Unblock the goroutine so the test can clean up.
+	cancel()
+	waitWorkerIdle(t, r)
+}

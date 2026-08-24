@@ -127,8 +127,10 @@ func (r *EndpointReconciler) tryAsyncCheck(crName, host string, port int, namesp
 	select {
 	case r.checkSem <- struct{}{}:
 		metrics.RecordWorkerAcquire()
+		r.checkWg.Add(1)
 		go func() {
 			defer func() {
+				r.checkWg.Done()
 				<-r.checkSem
 				metrics.RecordWorkerRelease()
 			}()
@@ -150,6 +152,24 @@ func (r *EndpointReconciler) managerCtx() context.Context {
 		return r.ManagerCtx
 	}
 	return context.Background()
+}
+
+// DrainInFlightChecks waits for all in-flight async TLS-check goroutines to
+// finish before shutdown, preventing mid-write cancellations that leave reports
+// stuck in Pending. It returns once all workers exit or ctx is cancelled.
+func (r *EndpointReconciler) DrainInFlightChecks(ctx context.Context) {
+	logger := log.FromContext(ctx)
+	done := make(chan struct{})
+	go func() {
+		r.checkWg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		logger.V(1).Info("all in-flight TLS checks drained")
+	case <-ctx.Done():
+		logger.Info("shutdown drain timed out; some in-flight checks may have been abandoned")
+	}
 }
 
 func (r *EndpointReconciler) asyncCheckTimeout() time.Duration {
