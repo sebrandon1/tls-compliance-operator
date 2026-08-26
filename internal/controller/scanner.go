@@ -105,7 +105,7 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep *endpoint.E
 		}
 
 		// Enrich with image certification data if imagecertinfo-operator is present
-		go r.enrichWithImageCertInfo(context.Background(), ep, crName)
+		go r.enrichWithImageCertInfo(ctx, ep, crName)
 
 		return nil
 	} else if err != nil {
@@ -224,7 +224,7 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	if outcome != nil {
 		r.recordCheckMetrics(ctx, crName, host, port, result, outcome)
 		// Refresh image certification data from imagecertinfo-operator after each successful TLS check
-		go r.enrichWithImageCertInfoByCRName(context.Background(), crName)
+		go r.enrichWithImageCertInfoByCRName(ctx, crName)
 	}
 }
 
@@ -673,11 +673,13 @@ func (r *EndpointReconciler) updateEndpointMetrics(statusCounts map[string]float
 }
 
 const (
-	iciGroup       = "security.telco.openshift.io"
-	iciVersion     = "v1alpha1"
-	iciKind        = "ImageCertificationInfo"
-	iciListKind    = "ImageCertificationInfoList"
-	iciDigestLabel = "imagecertinfo.security.telco.openshift.io/digest"
+	iciGroup          = "security.telco.openshift.io"
+	iciVersion        = "v1alpha1"
+	iciKind           = "ImageCertificationInfo"
+	iciListKind       = "ImageCertificationInfoList"
+	iciDigestLabel    = "imagecertinfo.security.telco.openshift.io/digest"
+	iciVersionLabel   = "imagecertinfo.security.telco.openshift.io/operator-version"
+	iciCVEsAnnotation = "security.telco.openshift.io/cves"
 )
 
 // enrichWithImageCertInfoByCRName looks up the TLSComplianceReport by name, then delegates to
@@ -715,7 +717,8 @@ func (r *EndpointReconciler) enrichWithImageCertInfo(ctx context.Context, ep *en
 	}
 
 	var certInfos []securityv1alpha1.ContainerImageCertInfo
-	for _, cs := range pod.Status.ContainerStatuses {
+	for i := range pod.Status.ContainerStatuses {
+		cs := &pod.Status.ContainerStatuses[i]
 		if cs.ImageID == "" {
 			continue
 		}
@@ -754,23 +757,32 @@ func (r *EndpointReconciler) enrichWithImageCertInfo(ctx context.Context, ep *en
 			ICIName:       ici.GetName(),
 		}
 
-		status, _, _ := nestedStringField(ici.Object, "status", "certificationStatus")
-		info.CertificationStatus = status
+		info.CertificationStatus = nestedStringField(ici.Object, "status", "certificationStatus")
+		info.RegistryType = nestedStringField(ici.Object, "status", "registryType")
+		info.HealthIndex = nestedStringField(ici.Object, "status", "pyxisData", "healthIndex")
 
-		registryType, _, _ := nestedStringField(ici.Object, "status", "registryType")
-		info.RegistryType = registryType
+		info.CriticalCVECount = intPtrFromNested(ici.Object, "status", "pyxisData", "vulnerabilities", "critical")
+		info.ImportantCVECount = intPtrFromNested(ici.Object, "status", "pyxisData", "vulnerabilities", "important")
+		info.ModerateCVECount = intPtrFromNested(ici.Object, "status", "pyxisData", "vulnerabilities", "moderate")
+		info.LowCVECount = intPtrFromNested(ici.Object, "status", "pyxisData", "vulnerabilities", "low")
+		info.DaysUntilEOL = intPtrFromNested(ici.Object, "status", "daysUntilEol")
 
-		healthIndex, _, _ := nestedStringField(ici.Object, "status", "pyxisData", "healthIndex")
-		info.HealthIndex = healthIndex
+		info.Publisher = nestedStringField(ici.Object, "status", "pyxisData", "publisher")
+		info.ReleaseCategory = nestedStringField(ici.Object, "status", "pyxisData", "releaseCategory")
 
-		if critical, found, _ := nestedInt64Field(ici.Object, "status", "pyxisData", "vulnerabilities", "critical"); found {
-			v := int(critical)
-			info.CriticalCVECount = &v
+		if autoRebuildVal, found := nestedField(ici.Object, "status", "pyxisData", "autoRebuildEnabled"); found {
+			if b, ok := autoRebuildVal.(bool); ok {
+				info.AutoRebuildEnabled = &b
+			}
 		}
 
-		if days, found, _ := nestedInt64Field(ici.Object, "status", "daysUntilEol"); found {
-			v := int(days)
-			info.DaysUntilEOL = &v
+		info.ImageAge = nestedStringField(ici.Object, "status", "imageAge")
+		info.LastCheckedAt = nestedStringField(ici.Object, "status", "lastPyxisCheckAt")
+
+		info.ICIOperatorVersion = ici.GetLabels()[iciVersionLabel]
+
+		if cveAnnotation := ici.GetAnnotations()[iciCVEsAnnotation]; cveAnnotation != "" {
+			info.CVEIDs = strings.Split(cveAnnotation, ",")
 		}
 
 		certInfos = append(certInfos, info)
@@ -806,44 +818,53 @@ func buildDigestLabel(imageID string) string {
 }
 
 // nestedStringField extracts a string from a nested map path in an unstructured object.
-func nestedStringField(obj map[string]interface{}, fields ...string) (string, bool, error) {
-	val, found, err := nestedField(obj, fields...)
-	if !found || err != nil {
-		return "", found, err
+func nestedStringField(obj map[string]interface{}, fields ...string) string {
+	val, found := nestedField(obj, fields...)
+	if !found {
+		return ""
 	}
-	s, ok := val.(string)
-	return s, ok, nil
+	s, _ := val.(string)
+	return s
 }
 
 // nestedInt64Field extracts an int64 from a nested map path in an unstructured object.
-func nestedInt64Field(obj map[string]interface{}, fields ...string) (int64, bool, error) {
-	val, found, err := nestedField(obj, fields...)
-	if !found || err != nil {
-		return 0, found, err
+func nestedInt64Field(obj map[string]interface{}, fields ...string) (int64, bool) {
+	val, found := nestedField(obj, fields...)
+	if !found {
+		return 0, false
 	}
 	switch v := val.(type) {
 	case int64:
-		return v, true, nil
+		return v, true
 	case float64:
-		return int64(v), true, nil
+		return int64(v), true
 	case int:
-		return int64(v), true, nil
+		return int64(v), true
 	}
-	return 0, false, nil
+	return 0, false
+}
+
+// intPtrFromNested extracts an int64 from a nested map path and returns it as *int.
+func intPtrFromNested(obj map[string]interface{}, fields ...string) *int {
+	if v, found := nestedInt64Field(obj, fields...); found {
+		i := int(v)
+		return &i
+	}
+	return nil
 }
 
 // nestedField walks a map path and returns the value at the final key.
-func nestedField(obj map[string]interface{}, fields ...string) (interface{}, bool, error) {
+func nestedField(obj map[string]interface{}, fields ...string) (interface{}, bool) {
 	var val interface{} = obj
 	for _, field := range fields {
 		m, ok := val.(map[string]interface{})
 		if !ok {
-			return nil, false, nil
+			return nil, false
 		}
 		val, ok = m[field]
 		if !ok {
-			return nil, false, nil
+			return nil, false
 		}
 	}
-	return val, true, nil
+	return val, true
 }

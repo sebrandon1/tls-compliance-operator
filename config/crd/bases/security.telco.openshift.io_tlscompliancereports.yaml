@@ -367,6 +367,10 @@ spec:
                     ContainerImageCertInfo holds certification data for one container image,
                     sourced from a corresponding ImageCertificationInfo CR (imagecertinfo-operator).
                   properties:
+                    autoRebuildEnabled:
+                      description: AutoRebuildEnabled indicates whether the image
+                        has automatic CVE rebuilds enabled
+                      type: boolean
                     certificationStatus:
                       description: |-
                         CertificationStatus is the certification status from imagecertinfo-operator
@@ -380,6 +384,12 @@ spec:
                       description: CriticalCVECount is the number of critical vulnerabilities
                         reported by Pyxis
                       type: integer
+                    cveIds:
+                      description: CVEIDs is the list of CVE identifiers found for
+                        this image
+                      items:
+                        type: string
+                      type: array
                     daysUntilEol:
                       description: DaysUntilEOL is the number of days until end-of-life
                         (negative if past EOL)
@@ -392,12 +402,43 @@ spec:
                       description: ICIName is the name of the ImageCertificationInfo
                         CR that was cross-referenced
                       type: string
+                    iciOperatorVersion:
+                      description: ICIOperatorVersion is the version of imagecertinfo-operator
+                        that produced this data
+                      type: string
+                    imageAge:
+                      description: ImageAge is how old the image is (e.g. "45 days")
+                      type: string
                     imageRef:
                       description: ImageRef is the full image reference (registry/repository@sha256:...)
+                      type: string
+                    importantCveCount:
+                      description: ImportantCVECount is the number of important-severity
+                        vulnerabilities from Pyxis
+                      type: integer
+                    lastCheckedAt:
+                      description: LastCheckedAt is when the certification data was
+                        last verified against Pyxis
+                      type: string
+                    lowCveCount:
+                      description: LowCVECount is the number of low-severity vulnerabilities
+                        from Pyxis
+                      type: integer
+                    moderateCveCount:
+                      description: ModerateCVECount is the number of moderate-severity
+                        vulnerabilities from Pyxis
+                      type: integer
+                    publisher:
+                      description: Publisher is the image publisher from Pyxis (e.g.
+                        "Red Hat, Inc.")
                       type: string
                     registryType:
                       description: RegistryType is the registry type (RedHat, Partner,
                         Community, Private, Unknown)
+                      type: string
+                    releaseCategory:
+                      description: ReleaseCategory is the Pyxis release category (e.g.
+                        "Generally Available", "Tech Preview", "Deprecated")
                       type: string
                   required:
                   - containerName
