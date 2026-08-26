@@ -357,6 +357,53 @@ spec:
                   ForwardSecrecy indicates whether all negotiated cipher suites use
                   ephemeral key exchange (ECDHE/DHE), providing perfect forward secrecy
                 type: boolean
+              imageCertificationInfo:
+                description: |-
+                  ImageCertificationInfo contains image certification data cross-referenced from
+                  imagecertinfo-operator. Only populated when sourceKind=Pod and imagecertinfo-operator
+                  is installed in the cluster.
+                items:
+                  description: |-
+                    ContainerImageCertInfo holds certification data for one container image,
+                    sourced from a corresponding ImageCertificationInfo CR (imagecertinfo-operator).
+                  properties:
+                    certificationStatus:
+                      description: |-
+                        CertificationStatus is the certification status from imagecertinfo-operator
+                        (e.g. Certified, NotCertified, Unknown, Error)
+                      type: string
+                    containerName:
+                      description: ContainerName is the name of the container within
+                        the pod
+                      type: string
+                    criticalCveCount:
+                      description: CriticalCVECount is the number of critical vulnerabilities
+                        reported by Pyxis
+                      type: integer
+                    daysUntilEol:
+                      description: DaysUntilEOL is the number of days until end-of-life
+                        (negative if past EOL)
+                      type: integer
+                    healthIndex:
+                      description: HealthIndex is the image health grade (A-F) from
+                        Red Hat Pyxis
+                      type: string
+                    iciName:
+                      description: ICIName is the name of the ImageCertificationInfo
+                        CR that was cross-referenced
+                      type: string
+                    imageRef:
+                      description: ImageRef is the full image reference (registry/repository@sha256:...)
+                      type: string
+                    registryType:
+                      description: RegistryType is the registry type (RedHat, Partner,
+                        Community, Private, Unknown)
+                      type: string
+                  required:
+                  - containerName
+                  - imageRef
+                  type: object
+                type: array
               ingressProfileCompliance:
                 description: |-
                   IngressProfileCompliance contains the compliance result against the

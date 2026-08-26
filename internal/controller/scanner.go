@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +28,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	"github.com/go-logr/logr"
@@ -38,6 +41,9 @@ import (
 	"github.com/sebrandon1/tls-compliance-operator/pkg/endpoint"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlscheck"
 )
+
+// unstructuredList is a type alias for unstructured.UnstructuredList for clarity.
+type unstructuredList = unstructured.UnstructuredList
 
 // processEndpoint creates or updates a TLSComplianceReport CR for an endpoint
 func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep *endpoint.Endpoint) error {
@@ -97,6 +103,9 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep *endpoint.E
 			logger.V(1).Info("TLS check deferred, requeuing", "host", ep.Host, "port", ep.Port)
 			return err
 		}
+
+		// Enrich with image certification data if imagecertinfo-operator is present
+		go r.enrichWithImageCertInfo(context.Background(), ep, crName)
 
 		return nil
 	} else if err != nil {
@@ -214,6 +223,8 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	outcome := r.applyCheckResult(ctx, crName, host, port, result, checkErr)
 	if outcome != nil {
 		r.recordCheckMetrics(ctx, crName, host, port, result, outcome)
+		// Refresh image certification data from imagecertinfo-operator after each successful TLS check
+		go r.enrichWithImageCertInfoByCRName(context.Background(), crName)
 	}
 }
 
@@ -659,4 +670,180 @@ func (r *EndpointReconciler) updateEndpointMetrics(statusCounts map[string]float
 	for status, count := range statusCounts {
 		metrics.EndpointsTotal.WithLabelValues(status).Set(count)
 	}
+}
+
+const (
+	iciGroup       = "security.telco.openshift.io"
+	iciVersion     = "v1alpha1"
+	iciKind        = "ImageCertificationInfo"
+	iciListKind    = "ImageCertificationInfoList"
+	iciDigestLabel = "imagecertinfo.security.telco.openshift.io/digest"
+)
+
+// enrichWithImageCertInfoByCRName looks up the TLSComplianceReport by name, then delegates to
+// enrichWithImageCertInfo. Used when only the CR name is available (e.g., after a TLS check).
+func (r *EndpointReconciler) enrichWithImageCertInfoByCRName(ctx context.Context, crName string) {
+	var cr securityv1alpha1.TLSComplianceReport
+	if err := r.Get(ctx, client.ObjectKey{Name: crName}, &cr); err != nil {
+		return
+	}
+	if cr.Spec.SourceKind != securityv1alpha1.SourceKindPod {
+		return
+	}
+	r.enrichWithImageCertInfo(ctx, &endpoint.Endpoint{
+		SourceKind:      cr.Spec.SourceKind,
+		SourceNamespace: cr.Spec.SourceNamespace,
+		SourceName:      cr.Spec.SourceName,
+	}, crName)
+}
+
+// enrichWithImageCertInfo cross-references ImageCertificationInfo CRs from imagecertinfo-operator
+// and populates status.imageCertificationInfo for Pod sources. Silently skips if the ICI CRD is
+// not installed or if no matching CRs are found.
+func (r *EndpointReconciler) enrichWithImageCertInfo(ctx context.Context, ep *endpoint.Endpoint, crName string) {
+	if ep.SourceKind != securityv1alpha1.SourceKindPod {
+		return
+	}
+
+	logger := log.FromContext(ctx).WithValues("crName", crName)
+
+	// Look up the Pod to get its container image IDs.
+	var pod corev1.Pod
+	if err := r.Get(ctx, client.ObjectKey{Namespace: ep.SourceNamespace, Name: ep.SourceName}, &pod); err != nil {
+		logger.V(1).Info("enrichWithImageCertInfo: pod not found", "pod", ep.SourceName, "namespace", ep.SourceNamespace)
+		return
+	}
+
+	var certInfos []securityv1alpha1.ContainerImageCertInfo
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.ImageID == "" {
+			continue
+		}
+
+		digestLabel := buildDigestLabel(cs.ImageID)
+		if digestLabel == "" {
+			continue
+		}
+
+		iciList := &unstructuredList{}
+		iciList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   iciGroup,
+			Version: iciVersion,
+			Kind:    iciListKind,
+		})
+
+		if err := r.List(ctx, iciList, client.MatchingLabels{iciDigestLabel: digestLabel}); err != nil {
+			if apimeta.IsNoMatchError(err) {
+				// imagecertinfo-operator CRD not installed — skip gracefully
+				logger.V(1).Info("enrichWithImageCertInfo: ICI CRD not installed, skipping")
+				return
+			}
+			logger.V(1).Info("enrichWithImageCertInfo: failed to list ICI CRs", "error", err)
+			return
+		}
+
+		items := iciList.Items
+		if len(items) == 0 {
+			continue
+		}
+
+		ici := items[0]
+		info := securityv1alpha1.ContainerImageCertInfo{
+			ContainerName: cs.Name,
+			ImageRef:      cs.ImageID,
+			ICIName:       ici.GetName(),
+		}
+
+		status, _, _ := nestedStringField(ici.Object, "status", "certificationStatus")
+		info.CertificationStatus = status
+
+		registryType, _, _ := nestedStringField(ici.Object, "status", "registryType")
+		info.RegistryType = registryType
+
+		healthIndex, _, _ := nestedStringField(ici.Object, "status", "pyxisData", "healthIndex")
+		info.HealthIndex = healthIndex
+
+		if critical, found, _ := nestedInt64Field(ici.Object, "status", "pyxisData", "vulnerabilities", "critical"); found {
+			v := int(critical)
+			info.CriticalCVECount = &v
+		}
+
+		if days, found, _ := nestedInt64Field(ici.Object, "status", "daysUntilEol"); found {
+			v := int(days)
+			info.DaysUntilEOL = &v
+		}
+
+		certInfos = append(certInfos, info)
+	}
+
+	if len(certInfos) == 0 {
+		return
+	}
+
+	if err := r.updateStatusWithRetry(ctx, crName, func(cr *securityv1alpha1.TLSComplianceReport) {
+		cr.Status.ImageCertificationInfo = certInfos
+	}); err != nil {
+		logger.V(1).Info("enrichWithImageCertInfo: failed to update status", "error", err)
+	}
+}
+
+// buildDigestLabel converts a container imageID to the label value used by imagecertinfo-operator.
+// imageID may be "registry/repo@sha256:hexhex" or "sha256:hexhex".
+func buildDigestLabel(imageID string) string {
+	const prefix = "sha256:"
+	idx := strings.LastIndex(imageID, prefix)
+	if idx < 0 {
+		return ""
+	}
+	hex := imageID[idx+len(prefix):]
+	if len(hex) > 16 {
+		hex = hex[:16]
+	}
+	if len(hex) == 0 {
+		return ""
+	}
+	return "sha256-" + hex
+}
+
+// nestedStringField extracts a string from a nested map path in an unstructured object.
+func nestedStringField(obj map[string]interface{}, fields ...string) (string, bool, error) {
+	val, found, err := nestedField(obj, fields...)
+	if !found || err != nil {
+		return "", found, err
+	}
+	s, ok := val.(string)
+	return s, ok, nil
+}
+
+// nestedInt64Field extracts an int64 from a nested map path in an unstructured object.
+func nestedInt64Field(obj map[string]interface{}, fields ...string) (int64, bool, error) {
+	val, found, err := nestedField(obj, fields...)
+	if !found || err != nil {
+		return 0, found, err
+	}
+	switch v := val.(type) {
+	case int64:
+		return v, true, nil
+	case float64:
+		return int64(v), true, nil
+	case int:
+		return int64(v), true, nil
+	}
+	return 0, false, nil
+}
+
+// nestedField walks a map path and returns the value at the final key.
+func nestedField(obj map[string]interface{}, fields ...string) (interface{}, bool, error) {
+	var val interface{} = obj
+	for _, field := range fields {
+		m, ok := val.(map[string]interface{})
+		if !ok {
+			return nil, false, nil
+		}
+		val, ok = m[field]
+		if !ok {
+			return nil, false, nil
+		}
+	}
+	return val, true, nil
 }
