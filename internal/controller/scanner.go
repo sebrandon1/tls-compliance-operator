@@ -105,7 +105,7 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep *endpoint.E
 		}
 
 		// Enrich with image certification data if imagecertinfo-operator is present
-		go r.enrichWithImageCertInfo(context.Background(), ep, crName)
+		go r.enrichWithImageCertInfo(ctx, ep, crName)
 
 		return nil
 	} else if err != nil {
@@ -224,7 +224,7 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 	if outcome != nil {
 		r.recordCheckMetrics(ctx, crName, host, port, result, outcome)
 		// Refresh image certification data from imagecertinfo-operator after each successful TLS check
-		go r.enrichWithImageCertInfoByCRName(context.Background(), crName)
+		go r.enrichWithImageCertInfoByCRName(ctx, crName)
 	}
 }
 
@@ -715,7 +715,8 @@ func (r *EndpointReconciler) enrichWithImageCertInfo(ctx context.Context, ep *en
 	}
 
 	var certInfos []securityv1alpha1.ContainerImageCertInfo
-	for _, cs := range pod.Status.ContainerStatuses {
+	for i := range pod.Status.ContainerStatuses {
+		cs := &pod.Status.ContainerStatuses[i]
 		if cs.ImageID == "" {
 			continue
 		}
@@ -754,21 +755,21 @@ func (r *EndpointReconciler) enrichWithImageCertInfo(ctx context.Context, ep *en
 			ICIName:       ici.GetName(),
 		}
 
-		status, _, _ := nestedStringField(ici.Object, "status", "certificationStatus")
+		status, _ := nestedStringField(ici.Object, "status", "certificationStatus")
 		info.CertificationStatus = status
 
-		registryType, _, _ := nestedStringField(ici.Object, "status", "registryType")
+		registryType, _ := nestedStringField(ici.Object, "status", "registryType")
 		info.RegistryType = registryType
 
-		healthIndex, _, _ := nestedStringField(ici.Object, "status", "pyxisData", "healthIndex")
+		healthIndex, _ := nestedStringField(ici.Object, "status", "pyxisData", "healthIndex")
 		info.HealthIndex = healthIndex
 
-		if critical, found, _ := nestedInt64Field(ici.Object, "status", "pyxisData", "vulnerabilities", "critical"); found {
+		if critical, found := nestedInt64Field(ici.Object, "status", "pyxisData", "vulnerabilities", "critical"); found {
 			v := int(critical)
 			info.CriticalCVECount = &v
 		}
 
-		if days, found, _ := nestedInt64Field(ici.Object, "status", "daysUntilEol"); found {
+		if days, found := nestedInt64Field(ici.Object, "status", "daysUntilEol"); found {
 			v := int(days)
 			info.DaysUntilEOL = &v
 		}
@@ -806,44 +807,44 @@ func buildDigestLabel(imageID string) string {
 }
 
 // nestedStringField extracts a string from a nested map path in an unstructured object.
-func nestedStringField(obj map[string]interface{}, fields ...string) (string, bool, error) {
-	val, found, err := nestedField(obj, fields...)
-	if !found || err != nil {
-		return "", found, err
+func nestedStringField(obj map[string]interface{}, fields ...string) (string, bool) {
+	val, found := nestedField(obj, fields...)
+	if !found {
+		return "", false
 	}
 	s, ok := val.(string)
-	return s, ok, nil
+	return s, ok
 }
 
 // nestedInt64Field extracts an int64 from a nested map path in an unstructured object.
-func nestedInt64Field(obj map[string]interface{}, fields ...string) (int64, bool, error) {
-	val, found, err := nestedField(obj, fields...)
-	if !found || err != nil {
-		return 0, found, err
+func nestedInt64Field(obj map[string]interface{}, fields ...string) (int64, bool) {
+	val, found := nestedField(obj, fields...)
+	if !found {
+		return 0, false
 	}
 	switch v := val.(type) {
 	case int64:
-		return v, true, nil
+		return v, true
 	case float64:
-		return int64(v), true, nil
+		return int64(v), true
 	case int:
-		return int64(v), true, nil
+		return int64(v), true
 	}
-	return 0, false, nil
+	return 0, false
 }
 
 // nestedField walks a map path and returns the value at the final key.
-func nestedField(obj map[string]interface{}, fields ...string) (interface{}, bool, error) {
+func nestedField(obj map[string]interface{}, fields ...string) (interface{}, bool) {
 	var val interface{} = obj
 	for _, field := range fields {
 		m, ok := val.(map[string]interface{})
 		if !ok {
-			return nil, false, nil
+			return nil, false
 		}
 		val, ok = m[field]
 		if !ok {
-			return nil, false, nil
+			return nil, false
 		}
 	}
-	return val, true, nil
+	return val, true
 }
