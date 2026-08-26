@@ -66,6 +66,8 @@ jobs:
             label: "scan-all-ports"
           - name: run-once
             label: "run-once"
+          - name: ici-integration
+            label: "ici-integration"
     steps:
       - name: Clone the code
         uses: actions/checkout@v7
