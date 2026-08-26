@@ -332,6 +332,47 @@ type TLSComplianceReportStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// ImageCertificationInfo contains image certification data cross-referenced from
+	// imagecertinfo-operator. Only populated when sourceKind=Pod and imagecertinfo-operator
+	// is installed in the cluster.
+	// +optional
+	ImageCertificationInfo []ContainerImageCertInfo `json:"imageCertificationInfo,omitempty"`
+}
+
+// ContainerImageCertInfo holds certification data for one container image,
+// sourced from a corresponding ImageCertificationInfo CR (imagecertinfo-operator).
+type ContainerImageCertInfo struct {
+	// ContainerName is the name of the container within the pod
+	ContainerName string `json:"containerName"`
+
+	// ImageRef is the full image reference (registry/repository@sha256:...)
+	ImageRef string `json:"imageRef"`
+
+	// ICIName is the name of the ImageCertificationInfo CR that was cross-referenced
+	// +optional
+	ICIName string `json:"iciName,omitempty"`
+
+	// CertificationStatus is the certification status from imagecertinfo-operator
+	// (e.g. Certified, NotCertified, Unknown, Error)
+	// +optional
+	CertificationStatus string `json:"certificationStatus,omitempty"`
+
+	// HealthIndex is the image health grade (A-F) from Red Hat Pyxis
+	// +optional
+	HealthIndex string `json:"healthIndex,omitempty"`
+
+	// CriticalCVECount is the number of critical vulnerabilities reported by Pyxis
+	// +optional
+	CriticalCVECount *int `json:"criticalCveCount,omitempty"`
+
+	// DaysUntilEOL is the number of days until end-of-life (negative if past EOL)
+	// +optional
+	DaysUntilEOL *int `json:"daysUntilEol,omitempty"`
+
+	// RegistryType is the registry type (RedHat, Partner, Community, Private, Unknown)
+	// +optional
+	RegistryType string `json:"registryType,omitempty"`
 }
 
 // +kubebuilder:object:root=true
