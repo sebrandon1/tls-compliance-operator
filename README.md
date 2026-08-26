@@ -69,6 +69,7 @@ kubectl delete -f https://github.com/sebrandon1/tls-compliance-operator/releases
 | [CI/CD Integration](docs/ci-integration.md) | Pipeline gating with GitHub Actions, Jenkins, Prow, Tekton |
 | [Comparison](docs/comparison.md) | Feature comparison with openshift/tls-scanner |
 | [Troubleshooting](docs/troubleshooting.md) | Common issues and fixes |
+| [Interoperability](docs/interoperability.md) | Enrich TLS reports with image cert data from imagecertinfo-operator |
 
 ## Prerequisites
 

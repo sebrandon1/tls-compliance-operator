@@ -373,6 +373,46 @@ type ContainerImageCertInfo struct {
 	// RegistryType is the registry type (RedHat, Partner, Community, Private, Unknown)
 	// +optional
 	RegistryType string `json:"registryType,omitempty"`
+
+	// ICIOperatorVersion is the version of imagecertinfo-operator that produced this data
+	// +optional
+	ICIOperatorVersion string `json:"iciOperatorVersion,omitempty"`
+
+	// ImportantCVECount is the number of important-severity vulnerabilities from Pyxis
+	// +optional
+	ImportantCVECount *int `json:"importantCveCount,omitempty"`
+
+	// ModerateCVECount is the number of moderate-severity vulnerabilities from Pyxis
+	// +optional
+	ModerateCVECount *int `json:"moderateCveCount,omitempty"`
+
+	// LowCVECount is the number of low-severity vulnerabilities from Pyxis
+	// +optional
+	LowCVECount *int `json:"lowCveCount,omitempty"`
+
+	// Publisher is the image publisher from Pyxis (e.g. "Red Hat, Inc.")
+	// +optional
+	Publisher string `json:"publisher,omitempty"`
+
+	// ReleaseCategory is the Pyxis release category (e.g. "Generally Available", "Tech Preview", "Deprecated")
+	// +optional
+	ReleaseCategory string `json:"releaseCategory,omitempty"`
+
+	// AutoRebuildEnabled indicates whether the image has automatic CVE rebuilds enabled
+	// +optional
+	AutoRebuildEnabled *bool `json:"autoRebuildEnabled,omitempty"`
+
+	// ImageAge is how old the image is (e.g. "45 days")
+	// +optional
+	ImageAge string `json:"imageAge,omitempty"`
+
+	// LastCheckedAt is when the certification data was last verified against Pyxis
+	// +optional
+	LastCheckedAt string `json:"lastCheckedAt,omitempty"`
+
+	// CVEIDs is the list of CVE identifiers found for this image
+	// +optional
+	CVEIDs []string `json:"cveIds,omitempty"`
 }
 
 // +kubebuilder:object:root=true
