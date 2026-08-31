@@ -354,6 +354,7 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 			cr.Status.ComplianceStatus = failureReasonToComplianceStatus(failReason)
 			cr.Status.ConsecutiveErrors++
 			cr.Status.LastError = checkErr.Error()
+			r.recordHistory(cr, &now, true)
 		}); err != nil {
 			logger.Error(err, "failed to update TLSComplianceReport after check error")
 		}
@@ -448,6 +449,7 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 		r.checkProfileCompliance(cr, result)
 		cr.Status.ComplianceStatus = complianceStatus
 		r.updateConditions(cr, complianceStatus, result)
+		r.recordHistory(cr, &now, false)
 	}); err != nil {
 		logger.Error(err, "failed to update TLSComplianceReport with check results")
 		return nil
@@ -867,4 +869,50 @@ func nestedField(obj map[string]interface{}, fields ...string) (interface{}, boo
 		}
 	}
 	return val, true
+}
+
+// recordHistory adds a new entry to the compliance history if state has changed,
+// and prunes old entries. Failed checks record status and TLS versions only.
+func (r *EndpointReconciler) recordHistory(cr *securityv1alpha1.TLSComplianceReport, now *metav1.Time, fromFailedCheck bool) {
+	entry := securityv1alpha1.ComplianceHistoryEntry{
+		Timestamp:        now,
+		ComplianceStatus: cr.Status.ComplianceStatus,
+		TLSVersions:      cr.Status.TLSVersions,
+	}
+
+	if !fromFailedCheck {
+		entry.OverallCipherGrade = cr.Status.OverallCipherGrade
+		if cr.Status.CertificateInfo != nil {
+			entry.CertFingerprint = cr.Status.CertificateInfo.Fingerprint
+		}
+	}
+
+	if len(cr.Status.History) > 0 && historyEntrySame(cr.Status.History[0], entry) {
+		return
+	}
+
+	cr.Status.History = prependHistory(cr.Status.History, entry, r.effectiveMaxHistoryEntries())
+}
+
+func historyEntrySame(a, b securityv1alpha1.ComplianceHistoryEntry) bool {
+	return a.ComplianceStatus == b.ComplianceStatus &&
+		a.OverallCipherGrade == b.OverallCipherGrade &&
+		a.CertFingerprint == b.CertFingerprint &&
+		a.TLSVersions == b.TLSVersions
+}
+
+func prependHistory(history []securityv1alpha1.ComplianceHistoryEntry, entry securityv1alpha1.ComplianceHistoryEntry, maxEntries int) []securityv1alpha1.ComplianceHistoryEntry {
+	if len(history) >= maxEntries {
+		copy(history[1:], history[:maxEntries-1])
+		history[0] = entry
+		return history[:maxEntries]
+	}
+	return append([]securityv1alpha1.ComplianceHistoryEntry{entry}, history...)
+}
+
+func (r *EndpointReconciler) effectiveMaxHistoryEntries() int {
+	if r.MaxHistoryEntries > 0 {
+		return r.MaxHistoryEntries
+	}
+	return 10
 }

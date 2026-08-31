@@ -275,6 +275,10 @@ func TestValidateEnvValue(t *testing.T) {
 		{"retention-days zero", "report-retention-days", "0", false},
 		{"retention-days negative", "report-retention-days", "-1", true},
 		{"retention-days non-integer", "report-retention-days", "abc", true},
+		{"valid max-history-entries", "max-history-entries", "10", false},
+		{"max-history-entries zero", "max-history-entries", "0", true},
+		{"max-history-entries too high", "max-history-entries", "101", true},
+		{"max-history-entries non-integer", "max-history-entries", "abc", true},
 	}
 
 	for _, tc := range tests {
@@ -569,13 +573,14 @@ func TestResolveEnvConfig_NamespaceRateLimits(t *testing.T) {
 func TestCheckConfig(t *testing.T) {
 	validCfg := func() *operatorConfig {
 		return &operatorConfig{
-			workers:         5,
-			maxRetries:      3,
-			rateLimit:       10.0,
-			rateBurst:       20,
-			scanInterval:    1 * time.Hour,
-			cleanupInterval: 5 * time.Minute,
-			tlsCheckTimeout: 5 * time.Second,
+			workers:           5,
+			maxRetries:        3,
+			rateLimit:         10.0,
+			rateBurst:         20,
+			scanInterval:      1 * time.Hour,
+			cleanupInterval:   5 * time.Minute,
+			tlsCheckTimeout:   5 * time.Second,
+			maxHistoryEntries: 10,
 		}
 	}
 
@@ -704,13 +709,14 @@ func TestCheckConfig(t *testing.T) {
 func TestCheckConfig_ReportRetentionDays(t *testing.T) {
 	validCfg := func() *operatorConfig {
 		return &operatorConfig{
-			workers:         5,
-			maxRetries:      3,
-			rateLimit:       10.0,
-			rateBurst:       20,
-			scanInterval:    1 * time.Hour,
-			cleanupInterval: 5 * time.Minute,
-			tlsCheckTimeout: 5 * time.Second,
+			workers:           5,
+			maxRetries:        3,
+			rateLimit:         10.0,
+			rateBurst:         20,
+			scanInterval:      1 * time.Hour,
+			cleanupInterval:   5 * time.Minute,
+			tlsCheckTimeout:   5 * time.Second,
+			maxHistoryEntries: 10,
 		}
 	}
 
@@ -733,16 +739,50 @@ func TestCheckConfig_ReportRetentionDays(t *testing.T) {
 	})
 }
 
+func TestCheckConfig_InvalidMaxHistoryEntries(t *testing.T) {
+	validCfg := func() *operatorConfig {
+		return &operatorConfig{
+			workers:           5,
+			maxRetries:        3,
+			rateLimit:         10.0,
+			rateBurst:         20,
+			scanInterval:      1 * time.Hour,
+			cleanupInterval:   5 * time.Minute,
+			tlsCheckTimeout:   5 * time.Second,
+			maxHistoryEntries: 10,
+		}
+	}
+
+	t.Run("zero max history entries", func(t *testing.T) {
+		cfg := validCfg()
+		cfg.maxHistoryEntries = 0
+		_, err := checkConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "max-history-entries") {
+			t.Errorf("expected max-history-entries error, got: %v", err)
+		}
+	})
+
+	t.Run("max history entries too high", func(t *testing.T) {
+		cfg := validCfg()
+		cfg.maxHistoryEntries = 101
+		_, err := checkConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "max-history-entries") {
+			t.Errorf("expected max-history-entries error, got: %v", err)
+		}
+	})
+}
+
 func TestCheckConfig_MaxRetries(t *testing.T) {
 	validCfg := func() *operatorConfig {
 		return &operatorConfig{
-			workers:         5,
-			maxRetries:      3,
-			rateLimit:       10.0,
-			rateBurst:       20,
-			scanInterval:    1 * time.Hour,
-			cleanupInterval: 5 * time.Minute,
-			tlsCheckTimeout: 5 * time.Second,
+			workers:           5,
+			maxRetries:        3,
+			rateLimit:         10.0,
+			rateBurst:         20,
+			scanInterval:      1 * time.Hour,
+			cleanupInterval:   5 * time.Minute,
+			tlsCheckTimeout:   5 * time.Second,
+			maxHistoryEntries: 10,
 		}
 	}
 
@@ -777,13 +817,14 @@ func TestCheckConfig_MaxRetries(t *testing.T) {
 func TestCheckConfig_OutputFormat(t *testing.T) {
 	validCfg := func() *operatorConfig {
 		return &operatorConfig{
-			workers:         5,
-			maxRetries:      3,
-			rateLimit:       10.0,
-			rateBurst:       20,
-			scanInterval:    1 * time.Hour,
-			cleanupInterval: 5 * time.Minute,
-			tlsCheckTimeout: 5 * time.Second,
+			workers:           5,
+			maxRetries:        3,
+			rateLimit:         10.0,
+			rateBurst:         20,
+			scanInterval:      1 * time.Hour,
+			cleanupInterval:   5 * time.Minute,
+			tlsCheckTimeout:   5 * time.Second,
+			maxHistoryEntries: 10,
 		}
 	}
 

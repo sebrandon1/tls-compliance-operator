@@ -165,6 +165,7 @@ func printReportDetail(r *securityv1alpha1.TLSComplianceReport) error {
 	printProfileCompliance(w, "Kubelet", r.Status.KubeletProfileCompliance)
 
 	printConditions(w, r.Status.Conditions)
+	printComplianceHistory(w, r.Status.History)
 
 	_, _ = fmt.Fprintf(w, "\nScan Info:\n")
 	if r.Status.FirstSeenAt != nil {
@@ -192,6 +193,64 @@ func printReportDetail(r *securityv1alpha1.TLSComplianceReport) error {
 	}
 
 	return nil
+}
+
+func printComplianceHistory(w *os.File, history []securityv1alpha1.ComplianceHistoryEntry) {
+	if len(history) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "\nCompliance History:\n")
+	for _, entry := range history {
+		_, _ = fmt.Fprintf(w, "  %s\n", formatHistoryEntry(entry))
+	}
+}
+
+func formatHistoryEntry(entry securityv1alpha1.ComplianceHistoryEntry) string {
+	timestamp := "unknown time"
+	if entry.Timestamp != nil {
+		timestamp = entry.Timestamp.Format("2006-01-02 15:04:05 UTC")
+	}
+
+	grade := entry.OverallCipherGrade
+	if grade == "" {
+		grade = "-"
+	}
+
+	cert := entry.CertFingerprint
+	if cert == "" {
+		cert = "-"
+	}
+
+	return fmt.Sprintf("[%s] %s  Grade:%s  TLS:%s  Cert:%s",
+		timestamp,
+		entry.ComplianceStatus,
+		grade,
+		formatHistoryTLSVersions(entry.TLSVersions),
+		cert,
+	)
+}
+
+func formatHistoryTLSVersions(versions securityv1alpha1.TLSVersionSupport) string {
+	var supported []string
+	if versions.SSL30 {
+		supported = append(supported, "3.0")
+	}
+	if versions.TLS10 {
+		supported = append(supported, "1.0")
+	}
+	if versions.TLS11 {
+		supported = append(supported, "1.1")
+	}
+	if versions.TLS12 {
+		supported = append(supported, "1.2")
+	}
+	if versions.TLS13 {
+		supported = append(supported, "1.3")
+	}
+	if len(supported) == 0 {
+		return "-"
+	}
+	return strings.Join(supported, ",")
 }
 
 func printProfileCompliance(w *os.File, name string, result *securityv1alpha1.TLSProfileComplianceResult) {

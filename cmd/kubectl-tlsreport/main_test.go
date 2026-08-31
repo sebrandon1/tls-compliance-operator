@@ -271,6 +271,76 @@ func TestPrintReportDetail_FIPSNotDetected(t *testing.T) {
 	}
 }
 
+func TestPrintReportDetail_History(t *testing.T) {
+	ts := metav1.NewTime(time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC))
+	report := securityv1alpha1.TLSComplianceReport{}
+	report.Name = "test-report"
+	report.Spec.Host = "example.com"
+	report.Spec.Port = 443
+	report.Spec.SourceKind = securityv1alpha1.SourceKindService
+	report.Status.History = []securityv1alpha1.ComplianceHistoryEntry{
+		{
+			Timestamp:          &ts,
+			ComplianceStatus:   securityv1alpha1.ComplianceStatusCompliant,
+			OverallCipherGrade: "A",
+			TLSVersions: securityv1alpha1.TLSVersionSupport{
+				TLS12: true,
+				TLS13: true,
+			},
+			CertFingerprint: "abc123",
+		},
+	}
+
+	output := captureStdout(t, func() {
+		_ = printReportDetail(&report)
+	})
+
+	for _, want := range []string{
+		"Compliance History:",
+		"[2026-09-01 12:00:00 UTC] Compliant  Grade:A  TLS:1.2,1.3  Cert:abc123",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("expected output to contain %q", want)
+		}
+	}
+}
+
+func TestPrintReportDetail_NoHistory(t *testing.T) {
+	report := securityv1alpha1.TLSComplianceReport{}
+	report.Name = "test-report"
+	report.Spec.Host = "example.com"
+	report.Spec.Port = 443
+	report.Spec.SourceKind = securityv1alpha1.SourceKindService
+
+	output := captureStdout(t, func() {
+		_ = printReportDetail(&report)
+	})
+
+	if strings.Contains(output, "Compliance History:") {
+		t.Error("expected output to NOT contain 'Compliance History:' when history is empty")
+	}
+}
+
+func TestFormatHistoryEntry(t *testing.T) {
+	ts := metav1.NewTime(time.Date(2026, 8, 31, 11, 0, 0, 0, time.UTC))
+	entry := securityv1alpha1.ComplianceHistoryEntry{
+		Timestamp:          &ts,
+		ComplianceStatus:   securityv1alpha1.ComplianceStatusWarning,
+		OverallCipherGrade: "B",
+		TLSVersions: securityv1alpha1.TLSVersionSupport{
+			TLS10: true,
+			TLS12: true,
+		},
+		CertFingerprint: "def456",
+	}
+
+	got := formatHistoryEntry(entry)
+	want := "[2026-08-31 11:00:00 UTC] Warning  Grade:B  TLS:1.0,1.2  Cert:def456"
+	if got != want {
+		t.Errorf("formatHistoryEntry() = %q, want %q", got, want)
+	}
+}
+
 func TestNewRootCmd_FailOnNonCompliantFlag(t *testing.T) {
 	cmd := newRootCmd()
 	f := cmd.PersistentFlags().Lookup("fail-on-non-compliant")

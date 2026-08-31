@@ -103,6 +103,7 @@ type operatorConfig struct {
 	namespaceRateLimitsStr string
 	metricsPerEndpoint     bool
 	reportRetentionDays    int
+	maxHistoryEntries      int
 	logFormat              string
 	runOnce                bool
 	outputFormat           string
@@ -175,6 +176,8 @@ func parseFlags() *operatorConfig {
 		"Emit per-endpoint Prometheus metrics (high cardinality; leave off on large clusters)")
 	flag.IntVar(&cfg.reportRetentionDays, "report-retention-days", 0,
 		"Delete TLSComplianceReport CRs with no activity for this many days (0 = disabled)")
+	flag.IntVar(&cfg.maxHistoryEntries, "max-history-entries", 10,
+		"Maximum number of historical scan results to keep per report (1-100)")
 	flag.StringVar(&cfg.logFormat, "log-format", "text",
 		"Log output format: text or json")
 	flag.BoolVar(&cfg.runOnce, "run-once", false,
@@ -246,6 +249,10 @@ func checkConfig(cfg *operatorConfig) (warnings []string, _ error) {
 
 	if cfg.reportRetentionDays < 0 || cfg.reportRetentionDays > 3650 {
 		return nil, fmt.Errorf("invalid --report-retention-days value, must be between 0 and 3650, got %d", cfg.reportRetentionDays)
+	}
+
+	if cfg.maxHistoryEntries < 1 || cfg.maxHistoryEntries > 100 {
+		return nil, fmt.Errorf("invalid --max-history-entries value, must be between 1 and 100, got %d", cfg.maxHistoryEntries)
 	}
 
 	if cfg.outputFormat != "" {
@@ -479,6 +486,7 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 		MaxBackoff:            cfg.maxBackoff,
 		MetricsPerEndpoint:    cfg.metricsPerEndpoint,
 		ReportRetentionDays:   cfg.reportRetentionDays,
+		MaxHistoryEntries:     cfg.maxHistoryEntries,
 		FIPSEnabled:           fipsEnabled,
 		NamespaceRateLimiters: nsLimiters,
 		DefaultNamespaceRate:  defaultNSLimiter,
@@ -663,6 +671,7 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_CLIENT_CERT", "client-cert"},
 	{"TLS_COMPLIANCE_CLIENT_KEY", "client-key"},
 	{"TLS_COMPLIANCE_REPORT_RETENTION_DAYS", "report-retention-days"},
+	{"TLS_COMPLIANCE_MAX_HISTORY_ENTRIES", "max-history-entries"},
 	{"TLS_COMPLIANCE_LOG_FORMAT", "log-format"},
 	{"TLS_COMPLIANCE_RUN_ONCE", "run-once"},
 	{"TLS_COMPLIANCE_OUTPUT_FORMAT", "output-format"},
@@ -752,6 +761,8 @@ func validateEnvValue(flagName, value string) error {
 		}
 	case "report-retention-days":
 		return validateIntRange(value, 0, 3650)
+	case "max-history-entries":
+		return validateIntRange(value, 1, 100)
 	case "output-format":
 		switch value {
 		case "csv", "json", "yaml", "junit", "markdown", "html", "sarif":
