@@ -102,6 +102,7 @@ type EndpointReconciler struct {
 	RetryBackoff          time.Duration
 	MaxBackoff            time.Duration
 	ReportRetentionDays   int
+	MaxHistoryEntries     int
 	MetricsPerEndpoint    bool
 	FIPSEnabled           bool
 	NamespaceRateLimiters map[string]*rate.Limiter

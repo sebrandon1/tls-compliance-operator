@@ -357,6 +357,72 @@ spec:
                   ForwardSecrecy indicates whether all negotiated cipher suites use
                   ephemeral key exchange (ECDHE/DHE), providing perfect forward secrecy
                 type: boolean
+              history:
+                description: History contains a bounded audit trail of previous scan
+                  results
+                items:
+                  description: ComplianceHistoryEntry represents a single historical
+                    TLS scan result
+                  properties:
+                    certFingerprint:
+                      description: CertFingerprint is the SHA-256 digest of the certificate
+                        fingerprint
+                      type: string
+                    complianceStatus:
+                      description: ComplianceStatus is the TLS compliance status at
+                        that time
+                      enum:
+                      - Compliant
+                      - NonCompliant
+                      - Warning
+                      - Unreachable
+                      - Timeout
+                      - Closed
+                      - Filtered
+                      - NoTLS
+                      - PlaintextHTTP
+                      - MutualTLSRequired
+                      - Pending
+                      - Unknown
+                      type: string
+                    overallCipherGrade:
+                      description: OverallCipherGrade is the worst grade across all
+                        negotiated cipher suites
+                      type: string
+                    timestamp:
+                      description: Timestamp is when the check was performed
+                      format: date-time
+                      type: string
+                    tlsVersions:
+                      description: TLSVersions indicates which TLS versions were supported
+                      properties:
+                        ssl30:
+                          description: SSL30 indicates if the deprecated SSLv3 protocol
+                            is supported
+                          type: boolean
+                        tls10:
+                          description: TLS10 indicates if TLS 1.0 is supported
+                          type: boolean
+                        tls11:
+                          description: TLS11 indicates if TLS 1.1 is supported
+                          type: boolean
+                        tls12:
+                          description: TLS12 indicates if TLS 1.2 is supported
+                          type: boolean
+                        tls13:
+                          description: TLS13 indicates if TLS 1.3 is supported
+                          type: boolean
+                      required:
+                      - tls10
+                      - tls11
+                      - tls12
+                      - tls13
+                      type: object
+                  required:
+                  - complianceStatus
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
               imageCertificationInfo:
                 description: |-
                   ImageCertificationInfo contains image certification data cross-referenced from

@@ -44,6 +44,18 @@
 4. **TLSComplianceReport** CR is created/updated with results
 5. **Events and Metrics** are emitted for observability
 
+## Compliance History
+
+Each `TLSComplianceReport` keeps a bounded `status.history` audit trail of prior scan
+results (default: 10 entries, configurable via `--max-history-entries`). Each history
+entry records the scan timestamp, compliance status, cipher grade, supported TLS
+versions, and certificate fingerprint.
+
+History is appended only when compliance status, cipher grade, or certificate
+fingerprint changes from the previous recorded entry. Entries are stored
+newest-first; when the limit is exceeded, the oldest entries are pruned. View the
+trail with `kubectl tlsreport describe <name>`.
+
 ## Compliance Logic
 
 | Status | Condition |

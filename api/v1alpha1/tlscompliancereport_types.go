@@ -203,6 +203,24 @@ type TLSComplianceReportSpec struct {
 	SourceName string `json:"sourceName"`
 }
 
+// ComplianceHistoryEntry represents a single historical TLS scan result
+type ComplianceHistoryEntry struct {
+	// Timestamp is when the check was performed
+	// +optional
+	Timestamp *metav1.Time `json:"timestamp,omitempty"`
+	// ComplianceStatus is the TLS compliance status at that time
+	ComplianceStatus ComplianceStatus `json:"complianceStatus"`
+	// OverallCipherGrade is the worst grade across all negotiated cipher suites
+	// +optional
+	OverallCipherGrade string `json:"overallCipherGrade,omitempty"`
+	// TLSVersions indicates which TLS versions were supported
+	// +optional
+	TLSVersions TLSVersionSupport `json:"tlsVersions,omitempty"`
+	// CertFingerprint is the SHA-256 digest of the certificate fingerprint
+	// +optional
+	CertFingerprint string `json:"certFingerprint,omitempty"`
+}
+
 // TLSComplianceReportStatus defines the observed state of TLSComplianceReport
 type TLSComplianceReportStatus struct {
 	// ComplianceStatus indicates the overall TLS compliance status
@@ -297,6 +315,11 @@ type TLSComplianceReportStatus struct {
 	// LastError is the last error message from a TLS check
 	// +optional
 	LastError string `json:"lastError,omitempty"`
+
+	// History contains a bounded audit trail of previous scan results
+	// +optional
+	// +listType=atomic
+	History []ComplianceHistoryEntry `json:"history,omitempty"`
 
 	// RetryCount is the current retry attempt number for transient failures
 	// +optional

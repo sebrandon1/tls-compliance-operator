@@ -43,6 +43,7 @@ If neither flag is set, all namespaces are scanned.
 | Flag | Env Var | Type | Default | Description |
 |------|---------|------|---------|-------------|
 | `--report-retention-days` | `TLS_COMPLIANCE_REPORT_RETENTION_DAYS` | int | `0` | Delete TLSComplianceReport CRs with no activity for this many days. Set to `0` (default) to disable retention and keep reports indefinitely. When enabled, the cleanup loop removes stale reports each cycle and increments the `tls_compliance_reports_ttl_deleted_total` metric. |
+| `--max-history-entries` | `TLS_COMPLIANCE_MAX_HISTORY_ENTRIES` | int | `10` | Maximum number of historical scan results to keep per TLSComplianceReport. Range: 1-100. Older entries are pruned when the limit is exceeded. History is only appended when compliance status, cipher grade, or certificate fingerprint changes. |
 
 ### Example
 
