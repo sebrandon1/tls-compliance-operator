@@ -307,6 +307,10 @@ kubectl tlsreport json > after.json
 kubectl tlsreport diff before.json after.json --fail-on-regression
 ```
 
+These snapshots use the flattened JSON schema (current posture per endpoint).
+To archive compliance history (`status.history`), use `kubectl tlsreport json --raw`.
+See [Exporting Reports — Compliance History Export](exporting-reports.md#compliance-history-export).
+
 ### Example: GitHub Actions (upgrade validation)
 
 ```yaml

@@ -169,6 +169,9 @@ kubectl tlsreport describe <name>
 kubectl tlsreport describe google-com-443-01d44386
 ```
 
+When history is present, the output includes a `Compliance History:` section
+(newest entry first). See [Exporting Reports — Compliance History Export](exporting-reports.md#compliance-history-export).
+
 ### summary
 
 Show an at-a-glance compliance summary with counts by status, source kind, PQC
@@ -194,7 +197,9 @@ kubectl tlsreport summary --fail-on-non-compliant
 ### diff
 
 Compare two JSON/YAML snapshots, or a snapshot against the live cluster.
-Endpoints are matched by host:port.
+Endpoints are matched by host:port. Diff uses the **flattened** export schema
+(current posture per endpoint) and does not compare `status.history`; use
+`describe` or `json --raw` when you need the audit trail.
 
 ```bash
 kubectl tlsreport diff <before-file> [after-file] [--fail-on-regression] [-o text|json]

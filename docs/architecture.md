@@ -51,10 +51,10 @@ results (default: 10 entries, configurable via `--max-history-entries`). Each hi
 entry records the scan timestamp, compliance status, cipher grade, supported TLS
 versions, and certificate fingerprint.
 
-History is appended only when compliance status, cipher grade, or certificate
-fingerprint changes from the previous recorded entry. Entries are stored
-newest-first; when the limit is exceeded, the oldest entries are pruned. View the
-trail with `kubectl tlsreport describe <name>`.
+History is appended only when compliance status, cipher grade, certificate
+fingerprint, or TLS version support changes from the previous recorded entry.
+Entries are stored newest-first; when the limit is exceeded, the oldest entries
+are pruned. View the trail with `kubectl tlsreport describe <name>`.
 
 ## Compliance Logic
 

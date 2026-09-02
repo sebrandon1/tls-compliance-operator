@@ -24,11 +24,18 @@ ocp4-cis-rs-openshift-compliance-8443-aab74008                 ocp4-cis-rs.opens
 
 ## Detailed Report
 
-Use `describe` to see the full report for an endpoint:
+Use `kubectl tlsreport describe` for the full plugin output (recommended), or
+`kubectl describe tlsreport` for the native Kubernetes view:
 
 ```bash
-$ kubectl describe tlsreport google-com-443-01d44386
+kubectl tlsreport describe google-com-443-01d44386
+# or
+kubectl describe tlsreport google-com-443-01d44386
 ```
+
+For compliance history (status, grade, TLS version, and certificate fingerprint
+changes over recent scans), use the plugin `describe` command or see
+[Exporting Reports — Compliance History Export](exporting-reports.md#compliance-history-export).
 
 Key sections in the output:
 
@@ -130,6 +137,15 @@ Scan Info:
   Check Count:        12
   Scan Duration:      1.23s
   Consecutive Errors: 0
+```
+
+**Compliance History** (plugin `describe` only) — bounded audit trail of
+recent state changes:
+
+```
+Compliance History:
+  [2026-09-02 10:15:00 UTC] Compliant  Grade:A  TLS:1.2,1.3  Cert:4f01b1f...
+  [2026-09-01 08:00:00 UTC] Warning    Grade:B  TLS:1.2      Cert:def456...
 ```
 
 **OpenShift TLS Profile Compliance** (OpenShift clusters only):

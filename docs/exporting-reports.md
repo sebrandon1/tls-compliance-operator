@@ -61,6 +61,17 @@ kubectl tlsreport json
 kubectl tlsreport yaml
 ```
 
+**Raw JSON/YAML** (full `TLSComplianceReport` objects, includes `status.history`):
+
+```bash
+kubectl tlsreport json --raw > reports.json
+kubectl tlsreport yaml --raw > reports.yaml
+```
+
+The default `json` and `yaml` exports use a flattened schema with one object
+per endpoint and the **current** scan result only. Use `--raw` when you need
+the full CR for archival, automation, or compliance history export.
+
 **JUnit XML** (for CI test result ingestion):
 
 ```bash
@@ -123,11 +134,26 @@ kubectl tlsreport get -o yaml
 
 ### Detailed report (`describe`)
 
-The `describe` subcommand shows the full report for a single endpoint:
+The `describe` subcommand shows the full report for a single endpoint,
+including a bounded compliance history trail (status, grade, TLS versions,
+and certificate fingerprint for each recorded transition):
 
 ```bash
 kubectl tlsreport describe google-com-443-01d44386
 ```
+
+Example history section:
+
+```
+Compliance History:
+  [2026-09-02 10:15:00 UTC] Compliant  Grade:A  TLS:1.2,1.3  Cert:4f01b1f...
+  [2026-09-01 08:00:00 UTC] Warning    Grade:B  TLS:1.2      Cert:def456...
+```
+
+History is stored on the `TLSComplianceReport` CR in `status.history` (newest
+entry first, default limit 10 per report). Entries are recorded only when
+compliance status, cipher grade, certificate fingerprint, or TLS version
+support changes.
 
 ### Summary (`summary`)
 
@@ -141,6 +167,10 @@ kubectl tlsreport summary
 
 Compare two JSON/YAML exports, or a saved snapshot against the live cluster.
 Useful after a cluster upgrade or TLS profile change.
+
+The diff compares the **flattened** export schema (current compliance posture
+per endpoint). It does not diff `status.history`; use `describe` or `--raw`
+exports when you need the audit trail.
 
 ```bash
 # Capture a baseline
@@ -299,6 +329,38 @@ display test results natively.
 
 See [CI/CD Integration](ci-integration.md) for full pipeline examples
 (GitHub Actions, Jenkins, Prow, Tekton, run-once scan mode).
+
+## Compliance History Export
+
+Each `TLSComplianceReport` keeps a bounded audit trail in `status.history`.
+Export behavior by format:
+
+| Format | History included | Notes |
+| --- | --- | --- |
+| `describe` | Yes | Human-readable trail per endpoint |
+| `json --raw` / `yaml --raw` | Yes | Full CR objects with `status.history` |
+| `kubectl get tlsreport -o yaml` | Yes | Native Kubernetes access |
+| Default `json` / `yaml` | No | Flattened current-state snapshot |
+| `csv` | No | One row per endpoint, current state |
+| `junit` / `markdown` / `html` / `sarif` | No | Current posture for CI dashboards |
+| `diff` | No | Compares flattened snapshots only |
+
+For CI pipelines that archive snapshots, use `--raw` when history must be
+preserved:
+
+```bash
+kubectl tlsreport json --raw > tls-reports-with-history.json
+```
+
+For interactive triage of a single endpoint, use `describe`:
+
+```bash
+kubectl tlsreport describe my-service-443-abc12345
+```
+
+Configure how many history entries the operator retains per report with
+`--max-history-entries` (default 10, range 1–100). See
+[Configuration Reference](configuration.md#report-retention).
 
 ---
 

@@ -43,7 +43,7 @@ If neither flag is set, all namespaces are scanned.
 | Flag | Env Var | Type | Default | Description |
 |------|---------|------|---------|-------------|
 | `--report-retention-days` | `TLS_COMPLIANCE_REPORT_RETENTION_DAYS` | int | `0` | Delete TLSComplianceReport CRs with no activity for this many days. Set to `0` (default) to disable retention and keep reports indefinitely. When enabled, the cleanup loop removes stale reports each cycle and increments the `tls_compliance_reports_ttl_deleted_total` metric. |
-| `--max-history-entries` | `TLS_COMPLIANCE_MAX_HISTORY_ENTRIES` | int | `10` | Maximum number of historical scan results to keep per TLSComplianceReport. Range: 1-100. Older entries are pruned when the limit is exceeded. History is only appended when compliance status, cipher grade, or certificate fingerprint changes. |
+| `--max-history-entries` | `TLS_COMPLIANCE_MAX_HISTORY_ENTRIES` | int | `10` | Maximum number of historical scan results to keep per TLSComplianceReport. Range: 1-100. Older entries are pruned when the limit is exceeded. History is only appended when compliance status, cipher grade, certificate fingerprint, or TLS version support changes. |
 
 ### Example
 
@@ -102,6 +102,7 @@ args:
 | `--run-once` | `TLS_COMPLIANCE_RUN_ONCE` | bool | `false` | Perform a single full scan and exit. Exit code 0 = all compliant, 1 = non-compliant found, 2 = scan error. Automatically disables leader election, metrics, and health probes. See [CI Integration Guide](ci-integration.md) for examples. |
 | `--output-format` | `TLS_COMPLIANCE_OUTPUT_FORMAT` | string | `""` | Write scan results in this format when using `--run-once`. Supported: `csv`, `json`, `yaml`, `junit`, `markdown`, `html`, `sarif`. Results go to stdout unless `--output-file` is set. |
 | `--output-file` | `TLS_COMPLIANCE_OUTPUT_FILE` | string | `""` | Path to write scan results. Requires `--output-format`. |
+| `--shutdown-drain-timeout` | `TLS_COMPLIANCE_SHUTDOWN_DRAIN_TIMEOUT` | duration | `30s` | How long to wait for in-flight TLS checks to complete on shutdown before forcing exit. |
 
 ## Infrastructure
 

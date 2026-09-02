@@ -37,6 +37,7 @@ certificate details, and post-quantum readiness.
 - **mTLS Client Certificates** — Optionally provide client certs for probing mTLS-protected endpoints
 - **Per-Namespace Rate Limiting** — Fine-grained rate control for sensitive namespaces
 - **Report Export** — CSV, JSON, YAML, JUnit XML, Markdown, HTML, and SARIF via `kubectl-tlsreport`, plus snapshot diff for upgrade validation
+- **Compliance History** — Bounded audit trail of status, grade, TLS versions, and cert fingerprint changes per endpoint
 
 ## Quick Deploy
 
