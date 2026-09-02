@@ -25,6 +25,9 @@ This project runs automated security scans on every push and pull request:
 - **govulncheck** — Go vulnerability database checks
 - **Trivy** — Filesystem and container image scanning
 
+Run `make security` locally to reproduce the gosec and govulncheck checks before
+pushing. Trivy scans (filesystem and container image) run in CI only.
+
 See `.github/workflows/security.yml` for the full scan configuration.
 
 ## Design Considerations
