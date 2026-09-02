@@ -277,7 +277,7 @@ gosec: golangci-lint ## Run gosec static analysis (via golangci-lint).
 
 .PHONY: govulncheck
 govulncheck: $(GOVULNCHECK) ## Run govulncheck against all packages.
-	"$(GOVULNCHECK)" ./...
+	hack/govulncheck.sh "$(GOVULNCHECK)"
 
 .PHONY: security
 security: ## Run local security checks (gosec + govulncheck).
