@@ -66,7 +66,7 @@ Requires **Go 1.26+**.
 | `internal/controller/` | Watches, periodic scan, cleanup, circuit breaker |
 | `pkg/tlscheck/` | TLS probing (`crypto/tls`, rate-limited) |
 | `pkg/endpoint/` | Endpoint extraction from K8s resources |
-| `pkg/export/` | Filter/sort/summary + CSV/JSON/YAML/JUnit/Markdown |
+| `pkg/export/` | Filter/sort/summary + CSV/JSON/YAML/JUnit/Markdown/HTML/SARIF export |
 | `pkg/tlsprofile/` | OpenShift TLS security profiles |
 | `internal/metrics/` | Prometheus metrics |
 | `test/e2e/`, `test/parity/`, `test/testserver/` | Integration and fixture tests |

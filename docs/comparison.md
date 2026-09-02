@@ -46,6 +46,7 @@ The [openshift/tls-scanner](https://github.com/openshift/tls-scanner) is a batch
 | Pod IP and hostNetwork scanning | Discovers TLS servers on pod IPs even without a Service/Ingress/Route |
 | NodePort and LoadBalancer endpoints | Probes node addresses and load-balancer ingress in addition to ClusterIP |
 | Run-once CI mode | `--run-once` scan with pass/fail exit codes |
+| Compliance history audit trail | Bounded `status.history` on each report; view with `kubectl tlsreport describe` |
 
 ## Architectural Differences
 
