@@ -26,6 +26,7 @@ make test
 make fmt       # Format code
 make vet       # Run go vet
 make lint      # Run golangci-lint
+make security  # Run gosec and govulncheck
 make test      # Run unit tests
 ```
 
@@ -56,7 +57,7 @@ make test-e2e  # Creates a Kind cluster, runs tests, cleans up
 
 1. Fork the repository and create a branch from `main`
 2. Make your changes with tests
-3. Run `make lint` and `make test` locally
+3. Run `make lint`, `make security`, and `make test` locally
 4. Open a pull request against `main`
 5. CI will run tests, linting, and security scans automatically
 

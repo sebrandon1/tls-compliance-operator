@@ -25,6 +25,7 @@ make benchmark                # Go benchmarks
 make check-coverage           # default threshold 70%
 make lint                     # golangci-lint
 make lint-fix
+make security                 # gosec + govulncheck (local CI security checks)
 
 # Run locally (current kubeconfig)
 make run
@@ -88,7 +89,7 @@ skipped on clusters that lack them.
 
 After API/marker changes: `make manifests generate`.
 
-After Go edits: `make fmt && make vet && make test`.
+After Go edits: `make fmt && make vet && make lint && make security && make test`.
 
 Single-package tests:
 
