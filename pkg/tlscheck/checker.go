@@ -50,6 +50,9 @@ type TLSChecker struct {
 	Timeout          time.Duration
 	ClientCert       *tls.Certificate
 	EnumerateCiphers bool
+	// starttlsOverride maps port numbers to STARTTLS protocols; used in tests
+	// to register arbitrary ports without modifying the built-in port map.
+	starttlsOverride map[int]starttlsProtocol
 }
 
 // NewTLSChecker creates a new TLSChecker with the given timeout
@@ -173,6 +176,16 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 		if result.FailureReason == FailureReasonNoTLS && c.probeHTTP(ctx, addr, host) {
 			result.FailureReason = FailureReasonPlaintextHTTP
 			return result, fmt.Errorf("endpoint %s is serving plaintext HTTP without TLS", addr)
+		}
+		// Postgres and LDAP don't send data unsolicited, so the initial TLS probes
+		// may return Unreachable rather than NoTLS. Attempt STARTTLS for both.
+		if result.FailureReason == FailureReasonNoTLS || result.FailureReason == FailureReasonUnreachable {
+			if proto, ok := c.resolveSTARTTLS(port); ok {
+				if starttlsResult := c.probeSTARTTLS(ctx, addr, host, proto); starttlsResult != nil {
+					starttlsResult.CheckDuration = time.Since(start)
+					return starttlsResult, nil
+				}
+			}
 		}
 		return result, fmt.Errorf("could not establish TLS connection to %s on any TLS version", addr)
 	}
