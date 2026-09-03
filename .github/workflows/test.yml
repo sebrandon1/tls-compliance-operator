@@ -9,8 +9,12 @@ permissions: read-all
 
 jobs:
   test:
-    name: Run on Ubuntu
-    runs-on: ubuntu-latest
+    name: Run on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-26.04, ubuntu-24.04-arm, ubuntu-26.04-arm]
     steps:
       - name: Clone the code
         uses: actions/checkout@v7
@@ -27,7 +31,7 @@ jobs:
           path: |
             bin/setup-envtest*
             bin/k8s/
-          key: envtest-${{ runner.os }}-${{ hashFiles('Makefile', 'go.sum') }}
+          key: envtest-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Makefile', 'go.sum') }}
 
       - name: Running Tests
         run: |
