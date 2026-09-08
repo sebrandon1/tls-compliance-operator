@@ -18,6 +18,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -53,7 +54,7 @@ func runDescribe(cmd *cobra.Command, args []string) error {
 }
 
 func printReportDetail(r *securityv1alpha1.TLSComplianceReport) error {
-	w := os.Stdout
+	w := &outputWriter{w: os.Stdout}
 
 	_, _ = fmt.Fprintf(w, "Name:         %s\n", r.Name)
 	_, _ = fmt.Fprintf(w, "Host:         %s\n", r.Spec.Host)
@@ -164,7 +165,9 @@ func printReportDetail(r *securityv1alpha1.TLSComplianceReport) error {
 	printProfileCompliance(w, "API Server", r.Status.APIServerProfileCompliance)
 	printProfileCompliance(w, "Kubelet", r.Status.KubeletProfileCompliance)
 
-	printConditions(w, r.Status.Conditions)
+	if err := printConditions(w, r.Status.Conditions); err != nil {
+		return err
+	}
 	printComplianceHistory(w, r.Status.History)
 
 	_, _ = fmt.Fprintf(w, "\nScan Info:\n")
@@ -192,10 +195,10 @@ func printReportDetail(r *securityv1alpha1.TLSComplianceReport) error {
 		_, _ = fmt.Fprintf(w, "  Last Error:         %s\n", r.Status.LastError)
 	}
 
-	return nil
+	return w.Err()
 }
 
-func printComplianceHistory(w *os.File, history []securityv1alpha1.ComplianceHistoryEntry) {
+func printComplianceHistory(w io.Writer, history []securityv1alpha1.ComplianceHistoryEntry) {
 	if len(history) == 0 {
 		return
 	}
@@ -253,7 +256,7 @@ func formatHistoryTLSVersions(versions securityv1alpha1.TLSVersionSupport) strin
 	return strings.Join(supported, ",")
 }
 
-func printProfileCompliance(w *os.File, name string, result *securityv1alpha1.TLSProfileComplianceResult) {
+func printProfileCompliance(w io.Writer, name string, result *securityv1alpha1.TLSProfileComplianceResult) {
 	if result == nil {
 		return
 	}

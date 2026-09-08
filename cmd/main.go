@@ -484,6 +484,7 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 		MaxRetries:            cfg.maxRetries,
 		RetryBackoff:          cfg.retryBackoff,
 		MaxBackoff:            cfg.maxBackoff,
+		ScanInterval:          cfg.scanInterval,
 		MetricsPerEndpoint:    cfg.metricsPerEndpoint,
 		ReportRetentionDays:   cfg.reportRetentionDays,
 		MaxHistoryEntries:     cfg.maxHistoryEntries,

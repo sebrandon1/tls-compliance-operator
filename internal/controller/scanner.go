@@ -78,6 +78,7 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep *endpoint.E
 			ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
 			FirstSeenAt:      &now,
 			LastSeenAt:       &now,
+			NextScanAt:       r.periodicNextScanAt(&now),
 		}
 		apimeta.SetStatusCondition(&cr.Status.Conditions, metav1.Condition{
 			Type:               "Available",
@@ -100,6 +101,7 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep *endpoint.E
 		metrics.RecordEndpointDiscovered(string(ep.SourceKind), ep.SourceNamespace)
 
 		if err := r.tryAsyncCheck(crName, ep.Host, int(ep.Port), ep.SourceNamespace); err != nil {
+			r.markWorkerBusy(ctx, crName)
 			logger.V(1).Info("TLS check deferred, requeuing", "host", ep.Host, "port", ep.Port)
 			return err
 		}
@@ -114,18 +116,41 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep *endpoint.E
 
 	if err := r.updateStatusWithRetry(ctx, crName, func(cr *securityv1alpha1.TLSComplianceReport) {
 		cr.Status.LastSeenAt = &now
+		cr.Status.NextScanAt = r.periodicNextScanAt(&now)
 	}); err != nil {
 		return fmt.Errorf("failed to update TLSComplianceReport LastSeenAt: %w", err)
 	}
 
 	if existingCR.Status.ComplianceStatus == securityv1alpha1.ComplianceStatusPending && existingCR.Status.CheckCount == 0 {
 		if err := r.tryAsyncCheck(crName, ep.Host, int(ep.Port), ep.SourceNamespace); err != nil {
+			r.markWorkerBusy(ctx, crName)
 			logger.V(1).Info("TLS check deferred for pending CR, requeuing", "host", ep.Host, "port", ep.Port)
 			return err
 		}
 	}
 
 	return nil
+}
+
+func (r *EndpointReconciler) periodicNextScanAt(lastSeenAt *metav1.Time) *metav1.Time {
+	if r.ScanInterval <= 0 {
+		return nil
+	}
+	base := time.Now()
+	if lastSeenAt != nil {
+		base = lastSeenAt.Time
+	}
+	next := metav1.NewTime(base.Add(r.ScanInterval))
+	return &next
+}
+
+func (r *EndpointReconciler) markWorkerBusy(ctx context.Context, crName string) {
+	next := metav1.NewTime(time.Now().Add(workerBusyRequeueDelay))
+	if err := r.updateStatusWithRetry(ctx, crName, func(cr *securityv1alpha1.TLSComplianceReport) {
+		cr.Status.NextScanAt = &next
+	}); err != nil {
+		log.FromContext(ctx).Error(err, "failed to update TLSComplianceReport worker-busy ETA", "crName", crName)
+	}
 }
 
 func (r *EndpointReconciler) tryAsyncCheck(crName, host string, port int, namespace string) error {
@@ -337,6 +362,7 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 			cr.Status.CheckCount++
 			cr.Status.RetryCount = 0
 			cr.Status.NextRetryAt = nil
+			cr.Status.NextScanAt = r.periodicNextScanAt(cr.Status.LastSeenAt)
 
 			if result != nil {
 				cr.Status.TLSVersions = securityv1alpha1.TLSVersionSupport{
@@ -391,6 +417,7 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 		cr.Status.CheckCount++
 		cr.Status.RetryCount = 0
 		cr.Status.NextRetryAt = nil
+		cr.Status.NextScanAt = r.periodicNextScanAt(cr.Status.LastSeenAt)
 		cr.Status.ConsecutiveErrors = 0
 		cr.Status.LastError = ""
 		if result.CheckDuration > 0 {

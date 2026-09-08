@@ -101,6 +101,7 @@ type EndpointReconciler struct {
 	MaxRetries            int
 	RetryBackoff          time.Duration
 	MaxBackoff            time.Duration
+	ScanInterval          time.Duration
 	ReportRetentionDays   int
 	MaxHistoryEntries     int
 	MetricsPerEndpoint    bool

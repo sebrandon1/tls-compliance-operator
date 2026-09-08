@@ -231,6 +231,31 @@ func captureStdout(t *testing.T, fn func()) string {
 	return string(data)
 }
 
+type failingWriter struct {
+	err error
+}
+
+func (w failingWriter) Write([]byte) (int, error) {
+	return 0, w.err
+}
+
+func TestWriteWatchTable_PropagatesWriteError(t *testing.T) {
+	wantErr := errors.New("write failed")
+	err := writeWatchTable(failingWriter{err: wantErr}, nil, false)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("writeWatchTable() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestPrintConditions_PropagatesWriteError(t *testing.T) {
+	wantErr := errors.New("write failed")
+	conditions := []metav1.Condition{{Type: "Ready"}}
+	err := printConditions(failingWriter{err: wantErr}, conditions)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("printConditions() error = %v, want %v", err, wantErr)
+	}
+}
+
 func TestPrintReportDetail_FIPSDetected(t *testing.T) {
 	report := securityv1alpha1.TLSComplianceReport{}
 	report.Name = "test-report"
@@ -688,7 +713,7 @@ func TestPrintReportTable_ColumnAlignment(t *testing.T) {
 	output := captureStdout(t, func() {
 		_ = printReportTable(reports)
 	})
-	for _, col := range []string{"COMPLIANCE", "GRADE", "FS", "TLS 1.3", "TLS 1.2", "PQC", "MLKEM"} {
+	for _, col := range []string{"COMPLIANCE", "GRADE", "FS", "TLS 1.3", "TLS 1.2", "PQC", "MLKEM", "NEXT SCAN"} {
 		if !strings.Contains(output, col) {
 			t.Errorf("expected column %q in table header", col)
 		}
@@ -1046,7 +1071,7 @@ func TestPrintReportTableWide_ColumnAlignment(t *testing.T) {
 	output := captureStdout(t, func() {
 		_ = printReportTableWide(reports)
 	})
-	for _, col := range []string{"NAMESPACE", "COMPLIANCE", "FS", "TLS 1.0", "SSL 3.0", "CERT EXPIRY"} {
+	for _, col := range []string{"NAMESPACE", "COMPLIANCE", "FS", "TLS 1.0", "SSL 3.0", "CERT EXPIRY", "NEXT SCAN"} {
 		if !strings.Contains(output, col) {
 			t.Errorf("expected column %q in wide header", col)
 		}
@@ -1069,6 +1094,29 @@ func TestFormatAge(t *testing.T) {
 			got := formatAge(tt.d)
 			if got != tt.want {
 				t.Errorf("formatAge(%v) = %q, want %q", tt.d, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatNextScanAt(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	future := metav1.NewTime(now.Add(47 * time.Minute))
+	past := metav1.NewTime(now.Add(-time.Second))
+
+	tests := []struct {
+		name string
+		next *metav1.Time
+		want string
+	}{
+		{"unset", nil, "-"},
+		{"future", &future, "in 47m"},
+		{"due", &past, "now"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatNextScanAt(tt.next, now); got != tt.want {
+				t.Errorf("formatNextScanAt() = %q, want %q", got, tt.want)
 			}
 		})
 	}

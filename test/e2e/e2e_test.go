@@ -1011,6 +1011,31 @@ spec:
 			Expect(output).To(ContainSubstring("Compliance Rate:"),
 				"summary should show Compliance Rate")
 		})
+
+		It("should show the next scan ETA in report and table output", func() {
+			By("verifying the report status contains a future next scan time")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					`jsonpath={range .items[?(@.spec.sourceName=="alpha-svc")]}{.status.nextScanAt}{"\n"}{end}`)
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				nextScanAt, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(output))
+				g.Expect(parseErr).NotTo(HaveOccurred(), "nextScanAt should be an RFC3339 timestamp")
+				g.Expect(nextScanAt).To(BeTemporally(">", time.Now()))
+			}).Should(Succeed())
+
+			By("verifying the default table includes the next scan column")
+			cmd := exec.Command(pluginBinary, "get")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to run kubectl-tlsreport get")
+			Expect(output).To(ContainSubstring("NEXT SCAN"))
+
+			By("verifying wide table output includes the next scan column")
+			cmd = exec.Command(pluginBinary, "get", "-o", "wide")
+			output, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to run kubectl-tlsreport get -o wide")
+			Expect(output).To(ContainSubstring("NEXT SCAN"))
+		})
 	})
 
 	Context("Run-Once Mode", Label("run-once"), Ordered, func() {
