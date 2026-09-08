@@ -231,6 +231,31 @@ func captureStdout(t *testing.T, fn func()) string {
 	return string(data)
 }
 
+type failingWriter struct {
+	err error
+}
+
+func (w failingWriter) Write([]byte) (int, error) {
+	return 0, w.err
+}
+
+func TestWriteWatchTable_PropagatesWriteError(t *testing.T) {
+	wantErr := errors.New("write failed")
+	err := writeWatchTable(failingWriter{err: wantErr}, nil, false)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("writeWatchTable() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestPrintConditions_PropagatesWriteError(t *testing.T) {
+	wantErr := errors.New("write failed")
+	conditions := []metav1.Condition{{Type: "Ready"}}
+	err := printConditions(failingWriter{err: wantErr}, conditions)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("printConditions() error = %v, want %v", err, wantErr)
+	}
+}
+
 func TestPrintReportDetail_FIPSDetected(t *testing.T) {
 	report := securityv1alpha1.TLSComplianceReport{}
 	report.Name = "test-report"

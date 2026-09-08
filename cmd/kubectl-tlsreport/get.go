@@ -287,12 +287,18 @@ func writeWatchYAML(w io.Writer, report *securityv1alpha1.TLSComplianceReport, s
 func writeWatchTable(w io.Writer, reports []securityv1alpha1.TLSComplianceReport, wide bool) error {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	if wide {
-		_, _ = fmt.Fprintln(tw, reportTableWideHeader)
+		if _, err := fmt.Fprintln(tw, reportTableWideHeader); err != nil {
+			return err
+		}
 	} else {
-		_, _ = fmt.Fprintln(tw, reportTableHeader)
+		if _, err := fmt.Fprintln(tw, reportTableHeader); err != nil {
+			return err
+		}
 	}
 	for i := range reports {
-		_, _ = fmt.Fprintln(tw, formatReportTableRow(&reports[i], wide, false))
+		if _, err := fmt.Fprintln(tw, formatReportTableRow(&reports[i], wide, false)); err != nil {
+			return err
+		}
 	}
 	return tw.Flush()
 }
@@ -336,9 +342,13 @@ func printReportTable(reports []securityv1alpha1.TLSComplianceReport) error {
 		return printNoMatchingReports()
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, reportTableHeader)
+	if _, err := fmt.Fprintln(w, reportTableHeader); err != nil {
+		return err
+	}
 	for i := range reports {
-		_, _ = fmt.Fprintln(w, formatReportTableRow(&reports[i], false, false))
+		if _, err := fmt.Fprintln(w, formatReportTableRow(&reports[i], false, false)); err != nil {
+			return err
+		}
 	}
 	return w.Flush()
 }
@@ -348,9 +358,13 @@ func printReportTableWide(reports []securityv1alpha1.TLSComplianceReport) error 
 		return printNoMatchingReports()
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, reportTableWideHeader)
+	if _, err := fmt.Fprintln(w, reportTableWideHeader); err != nil {
+		return err
+	}
 	for i := range reports {
-		_, _ = fmt.Fprintln(w, formatReportTableRow(&reports[i], true, false))
+		if _, err := fmt.Fprintln(w, formatReportTableRow(&reports[i], true, false)); err != nil {
+			return err
+		}
 	}
 	return w.Flush()
 }

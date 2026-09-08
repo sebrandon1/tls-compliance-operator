@@ -223,17 +223,18 @@ func outputTargets(targets []securityv1alpha1.TLSComplianceTarget) error {
 			_, err := fmt.Fprintln(os.Stdout, "[]")
 			return err
 		}
+		w := &outputWriter{w: os.Stdout}
 		for i := range targets {
 			ydata, err := sigsyaml.Marshal(targets[i])
 			if err != nil {
 				return fmt.Errorf("marshalling target %s to YAML: %w", targets[i].Name, err)
 			}
 			if i > 0 {
-				fmt.Fprintln(os.Stdout, "---")
+				w.Fprintf("---\n")
 			}
-			fmt.Fprint(os.Stdout, string(ydata))
+			w.Fprintf("%s", ydata)
 		}
-		return nil
+		return w.Err()
 	case "wide":
 		return printTargetTableWide(targets)
 	case "table", "":
@@ -252,13 +253,16 @@ func printTargetTableWide(targets []securityv1alpha1.TLSComplianceTarget) error 
 }
 
 func printTargetTableImpl(targets []securityv1alpha1.TLSComplianceTarget, wide bool) error {
-	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	output := &outputWriter{w: os.Stdout}
+	w := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
 	header := "NAME\tHOST\tPORT\tSTATUS\tREPORT"
 	if wide {
 		header += "\tMESSAGE"
 	}
 	header += "\tLAST SCANNED\tAGE"
-	_, _ = fmt.Fprintln(w, header)
+	if _, err := fmt.Fprintln(w, header); err != nil {
+		return err
+	}
 	for i := range targets {
 		lastScanned := "-"
 		if targets[i].Status.LastScannedAt != nil {
@@ -280,9 +284,14 @@ func printTargetTableImpl(targets []securityv1alpha1.TLSComplianceTarget, wide b
 			row += "\t" + message
 		}
 		row += fmt.Sprintf("\t%s\t%s", lastScanned, age)
-		_, _ = fmt.Fprintln(w, row)
+		if _, err := fmt.Fprintln(w, row); err != nil {
+			return err
+		}
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	return output.Err()
 }
 
 func runTargetGet(cmd *cobra.Command, args []string) error {
@@ -310,7 +319,7 @@ func runTargetDescribe(cmd *cobra.Command, args []string) error {
 }
 
 func printTargetDetail(t *securityv1alpha1.TLSComplianceTarget) error {
-	w := os.Stdout
+	w := &outputWriter{w: os.Stdout}
 
 	_, _ = fmt.Fprintf(w, "Name:         %s\n", t.Name)
 	_, _ = fmt.Fprintf(w, "Host:         %s\n", t.Spec.Host)
@@ -333,9 +342,11 @@ func printTargetDetail(t *securityv1alpha1.TLSComplianceTarget) error {
 		_, _ = fmt.Fprintf(w, "  Last Scanned:  %s\n", t.Status.LastScannedAt.Format("2006-01-02 15:04:05 UTC"))
 	}
 
-	printConditions(w, t.Status.Conditions)
+	if err := printConditions(w, t.Status.Conditions); err != nil {
+		return err
+	}
 
-	return nil
+	return w.Err()
 }
 
 func runTargetCreate(cmd *cobra.Command, args []string, wait bool, timeout time.Duration) error {

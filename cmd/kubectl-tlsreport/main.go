@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -38,6 +39,33 @@ import (
 )
 
 var scheme = runtime.NewScheme()
+
+// outputWriter preserves the first output error while allowing formatted
+// output helpers to keep their existing sequential structure.
+type outputWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (w *outputWriter) Write(p []byte) (int, error) {
+	if w.err != nil {
+		return 0, w.err
+	}
+	written, err := w.w.Write(p)
+	w.err = err
+	return written, err
+}
+
+func (w *outputWriter) Fprintf(format string, args ...any) {
+	if w.err != nil {
+		return
+	}
+	_, w.err = fmt.Fprintf(w.w, format, args...)
+}
+
+func (w *outputWriter) Err() error {
+	return w.err
+}
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -239,17 +267,23 @@ func registerFlagCompletions(rootCmd *cobra.Command) {
 	})
 }
 
-func printConditions(w *os.File, conditions []metav1.Condition) {
+func printConditions(w io.Writer, conditions []metav1.Condition) error {
 	if len(conditions) == 0 {
-		return
+		return nil
 	}
-	_, _ = fmt.Fprintf(w, "\nConditions:\n")
+	if _, err := fmt.Fprintf(w, "\nConditions:\n"); err != nil {
+		return err
+	}
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "  TYPE\tSTATUS\tREASON\tMESSAGE")
-	for _, c := range conditions {
-		_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", c.Type, c.Status, c.Reason, c.Message)
+	if _, err := fmt.Fprintln(tw, "  TYPE\tSTATUS\tREASON\tMESSAGE"); err != nil {
+		return err
 	}
-	_ = tw.Flush()
+	for _, c := range conditions {
+		if _, err := fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", c.Type, c.Status, c.Reason, c.Message); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
 }
 
 func buildClient() (client.WithWatch, error) {
