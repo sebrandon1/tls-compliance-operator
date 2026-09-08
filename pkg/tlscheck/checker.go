@@ -390,15 +390,11 @@ func (c *TLSChecker) detectCipherPreference(ctx context.Context, addr, serverNam
 		dialer := &tls.Dialer{
 			NetDialer: &net.Dialer{Timeout: c.Timeout},
 			Config: &tls.Config{
-				MinVersion: tls.VersionTLS12,
-				MaxVersion: tls.VersionTLS12,
-				// lgtm[go/disabled-certificate-check] The scanner intentionally
-				// probes arbitrary endpoints without trusting their certificates.
-				InsecureSkipVerify: true,
+				MinVersion:         tls.VersionTLS12,
+				MaxVersion:         tls.VersionTLS12,
+				InsecureSkipVerify: true, // lgtm[go/disabled-certificate-check]
 				ServerName:         serverName,
-				// lgtm[go/insecure-tls] Cipher ordering is the subject of this
-				// probe, so the offered suites must be explicitly controlled.
-				CipherSuites: cipherSuites,
+				CipherSuites:       cipherSuites, // lgtm[go/insecure-tls]
 			},
 		}
 		if c.ClientCert != nil {
