@@ -1996,6 +1996,7 @@ func TestEndpointReconciler_RetryThenSuccess(t *testing.T) {
 		CertExpiryDays: 30,
 		MaxRetries:     3,
 		RetryBackoff:   10 * time.Millisecond,
+		ScanInterval:   time.Hour,
 	}
 
 	reconciler.performTLSCheck(ctx, crName, "test.example.com", 443, "default", false)
@@ -2018,6 +2019,40 @@ func TestEndpointReconciler_RetryThenSuccess(t *testing.T) {
 	}
 	if updatedCR.Status.NextRetryAt != nil {
 		t.Error("NextRetryAt should be nil after completion")
+	}
+	if updatedCR.Status.NextScanAt == nil {
+		t.Fatal("NextScanAt should be set after completion")
+	}
+	wantNextScan := updatedCR.Status.LastSeenAt.Add(time.Hour)
+	if !updatedCR.Status.NextScanAt.Time.Equal(wantNextScan) {
+		t.Errorf("NextScanAt = %v, want %v", updatedCR.Status.NextScanAt.Time, wantNextScan)
+	}
+}
+
+func TestEndpointReconciler_UpdateRetryStatus_SetsNextScanAt(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+	now := metav1.Now()
+	cr := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "retry-status-cr"},
+		Status:     securityv1alpha1.TLSComplianceReportStatus{LastSeenAt: &now},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(cr).WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).Build()
+	reconciler := &EndpointReconciler{Client: fakeClient, Scheme: scheme}
+
+	retryDelay := 30 * time.Second
+	reconciler.updateRetryStatus(ctx, cr.Name, 1, retryDelay, tlscheck.FailureReasonTimeout, fmt.Errorf("timeout"))
+
+	var updated securityv1alpha1.TLSComplianceReport
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: cr.Name}, &updated); err != nil {
+		t.Fatalf("failed to get report: %v", err)
+	}
+	if updated.Status.NextRetryAt == nil || updated.Status.NextScanAt == nil {
+		t.Fatal("expected both retry and scan ETAs")
+	}
+	if !updated.Status.NextScanAt.Equal(updated.Status.NextRetryAt) {
+		t.Errorf("NextScanAt = %v, want NextRetryAt %v", updated.Status.NextScanAt, updated.Status.NextRetryAt)
 	}
 }
 
@@ -3721,6 +3756,18 @@ func TestHandleEndpoints_WorkersBusy_Requeues(t *testing.T) {
 	}
 	if result.RequeueAfter != workerBusyRequeueDelay {
 		t.Errorf("expected RequeueAfter=%v, got %v", workerBusyRequeueDelay, result.RequeueAfter)
+	}
+
+	crName := endpoint.GenerateCRName(&endpoints[0])
+	var report securityv1alpha1.TLSComplianceReport
+	if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: crName}, &report); err != nil {
+		t.Fatalf("failed to get deferred report: %v", err)
+	}
+	if report.Status.NextScanAt == nil {
+		t.Fatal("expected NextScanAt for deferred report")
+	}
+	if remaining := time.Until(report.Status.NextScanAt.Time); remaining <= 0 || remaining > workerBusyRequeueDelay {
+		t.Errorf("NextScanAt remaining time = %v, want (0, %v]", remaining, workerBusyRequeueDelay)
 	}
 
 	// Drain the semaphore

@@ -108,6 +108,7 @@ func (r *EndpointReconciler) updateRetryStatus(ctx context.Context, crName strin
 		nextRetry := metav1.NewTime(time.Now().Add(retryDelay))
 		cr.Status.RetryCount = retryCount
 		cr.Status.NextRetryAt = &nextRetry
+		cr.Status.NextScanAt = &nextRetry
 		cr.Status.LastError = checkErr.Error()
 		cr.Status.ConsecutiveErrors++
 		cr.Status.ComplianceStatus = failureReasonToComplianceStatus(reason)

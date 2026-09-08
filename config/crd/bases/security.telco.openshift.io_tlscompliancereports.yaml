@@ -631,6 +631,10 @@ spec:
                 description: NextRetryAt is when the next retry attempt will happen
                 format: date-time
                 type: string
+              nextScanAt:
+                description: NextScanAt is the estimated time of the next TLS check
+                format: date-time
+                type: string
               overallCipherGrade:
                 description: OverallCipherGrade is the worst grade across all negotiated
                   cipher suites

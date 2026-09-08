@@ -23,6 +23,7 @@ import (
 	"io"
 	"os"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -296,8 +297,8 @@ func writeWatchTable(w io.Writer, reports []securityv1alpha1.TLSComplianceReport
 	return tw.Flush()
 }
 
-const reportTableHeader = "NAME\tHOST\tPORT\tSOURCE\tCOMPLIANCE\tGRADE\tFS\tTLS 1.3\tTLS 1.2\tPQC\tMLKEM"
-const reportTableWideHeader = "NAME\tHOST\tPORT\tSOURCE\tNAMESPACE\tCOMPLIANCE\tGRADE\tFS\tTLS 1.3\tTLS 1.2\tTLS 1.0\tSSL 3.0\tPQC\tMLKEM\tISSUER\tCERT EXPIRY"
+const reportTableHeader = "NAME\tHOST\tPORT\tSOURCE\tCOMPLIANCE\tGRADE\tFS\tTLS 1.3\tTLS 1.2\tPQC\tMLKEM\tNEXT SCAN"
+const reportTableWideHeader = "NAME\tHOST\tPORT\tSOURCE\tNAMESPACE\tCOMPLIANCE\tGRADE\tFS\tTLS 1.3\tTLS 1.2\tTLS 1.0\tSSL 3.0\tPQC\tMLKEM\tISSUER\tCERT EXPIRY\tNEXT SCAN"
 
 func outputReports(reports []securityv1alpha1.TLSComplianceReport) error {
 	if len(reports) == 0 {
@@ -360,7 +361,7 @@ func formatReportTableRow(r *securityv1alpha1.TLSComplianceReport, wide, deleted
 		compliance = "Deleted"
 	}
 	if !wide {
-		return fmt.Sprintf("%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s",
+		return fmt.Sprintf("%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s",
 			r.Name,
 			r.Spec.Host,
 			r.Spec.Port,
@@ -372,6 +373,7 @@ func formatReportTableRow(r *securityv1alpha1.TLSComplianceReport, wide, deleted
 			boolDash(r.Status.TLSVersions.TLS12),
 			string(r.Status.PQCReadiness),
 			boolDash(r.Status.MLKEMSupported),
+			formatNextScanAt(r.Status.NextScanAt, time.Now()),
 		)
 	}
 
@@ -385,7 +387,7 @@ func formatReportTableRow(r *securityv1alpha1.TLSComplianceReport, wide, deleted
 			expiry = r.Status.CertificateInfo.NotAfter.Format("2006-01-02")
 		}
 	}
-	return fmt.Sprintf("%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s",
+	return fmt.Sprintf("%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s",
 		r.Name,
 		r.Spec.Host,
 		r.Spec.Port,
@@ -402,7 +404,19 @@ func formatReportTableRow(r *securityv1alpha1.TLSComplianceReport, wide, deleted
 		boolDash(r.Status.MLKEMSupported),
 		issuer,
 		expiry,
+		formatNextScanAt(r.Status.NextScanAt, time.Now()),
 	)
+}
+
+func formatNextScanAt(next *metav1.Time, now time.Time) string {
+	if next == nil {
+		return "-"
+	}
+	remaining := next.Sub(now)
+	if remaining <= 0 {
+		return "now"
+	}
+	return "in " + formatAge(remaining)
 }
 
 func boolDash(b bool) string {

@@ -329,6 +329,10 @@ type TLSComplianceReportStatus struct {
 	// +optional
 	NextRetryAt *metav1.Time `json:"nextRetryAt,omitempty"`
 
+	// NextScanAt is the estimated time of the next TLS check
+	// +optional
+	NextScanAt *metav1.Time `json:"nextScanAt,omitempty"`
+
 	// IngressProfileCompliance contains the compliance result against the
 	// OpenShift IngressController TLS security profile (OpenShift only)
 	// +optional
