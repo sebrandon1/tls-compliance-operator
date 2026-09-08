@@ -27,7 +27,7 @@ import (
 )
 
 var markdownHeader = []string{
-	"Host", "Port", "Source", "Compliance", "Grade", "FS",
+	"Host", "Port", "Source", "Compliance", "Grade", "FS", "ServerPrefersOwnCiphers",
 	"TLS1.3", "TLS1.2", "TLS1.0", "PQC", "MLKEM", "CertExpiry", "Age",
 }
 
@@ -75,6 +75,7 @@ func reportToMarkdownRow(r *securityv1alpha1.TLSComplianceReport, now time.Time)
 		string(r.Status.ComplianceStatus),
 		r.Status.OverallCipherGrade,
 		strconv.FormatBool(r.Status.ForwardSecrecy),
+		boolPointerString(r.Status.ServerPrefersOwnCiphers),
 		strconv.FormatBool(r.Status.TLSVersions.TLS13),
 		strconv.FormatBool(r.Status.TLSVersions.TLS12),
 		strconv.FormatBool(r.Status.TLSVersions.TLS10),

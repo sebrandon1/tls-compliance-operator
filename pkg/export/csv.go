@@ -30,7 +30,7 @@ import (
 // CSVHeader is the header row for CSV exports.
 var CSVHeader = []string{
 	"Host", "Port", "Source", "Namespace", "Name",
-	"Compliance", "Grade", "ForwardSecrecy", "KeyExchange",
+	"Compliance", "Grade", "ForwardSecrecy", "ServerPrefersOwnCiphers", "KeyExchange",
 	"TLS1.3", "TLS1.2", "TLS1.1", "TLS1.0", "SSL3.0",
 	"QuantumReady", "PQCReadiness", "MLKEMSupported",
 	"CertExpiry", "CertIssuer",
@@ -134,6 +134,7 @@ func reportToCSVRow(r *securityv1alpha1.TLSComplianceReport) []string {
 		string(r.Status.ComplianceStatus),
 		r.Status.OverallCipherGrade,
 		strconv.FormatBool(r.Status.ForwardSecrecy),
+		boolPointerString(r.Status.ServerPrefersOwnCiphers),
 		formatKeyExchangeTypes(r.Status.KeyExchangeTypes),
 		strconv.FormatBool(r.Status.TLSVersions.TLS13),
 		strconv.FormatBool(r.Status.TLSVersions.TLS12),
@@ -155,4 +156,11 @@ func reportToCSVRow(r *securityv1alpha1.TLSComplianceReport) []string {
 		fingerprint,
 		ipSANs,
 	}
+}
+
+func boolPointerString(value *bool) string {
+	if value == nil {
+		return ""
+	}
+	return strconv.FormatBool(*value)
 }

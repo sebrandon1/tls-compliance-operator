@@ -100,6 +100,7 @@ type operatorConfig struct {
 	clientCertPath         string
 	clientKeyPath          string
 	enumerateCiphers       bool
+	detectCipherPreference bool
 	namespaceRateLimitsStr string
 	metricsPerEndpoint     bool
 	reportRetentionDays    int
@@ -170,6 +171,8 @@ func parseFlags() *operatorConfig {
 		"Path to a PEM-encoded client private key for mTLS endpoint probing")
 	flag.BoolVar(&cfg.enumerateCiphers, "enumerate-ciphers", true,
 		"Enumerate all supported cipher suites per TLS version (disable for faster scans)")
+	flag.BoolVar(&cfg.detectCipherPreference, "detect-cipher-preference", false,
+		"Detect whether TLS 1.2 endpoints prefer their own cipher order")
 	flag.StringVar(&cfg.namespaceRateLimitsStr, "namespace-rate-limits", "",
 		"Per-namespace TLS check rate limits (e.g., production=2.0,staging=10.0)")
 	flag.BoolVar(&cfg.metricsPerEndpoint, "metrics-per-endpoint", false,
@@ -421,6 +424,7 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 
 	baseChecker := tlscheck.NewTLSChecker(cfg.tlsCheckTimeout)
 	baseChecker.EnumerateCiphers = cfg.enumerateCiphers
+	baseChecker.DetectCipherPreference = cfg.detectCipherPreference
 	if cfg.clientCertPath != "" && cfg.clientKeyPath != "" {
 		clientCert, err := tls.LoadX509KeyPair(cfg.clientCertPath, cfg.clientKeyPath)
 		if err != nil {
@@ -667,6 +671,7 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_EXTRA_TLS_PORTS", "extra-tls-ports"},
 	{"TLS_COMPLIANCE_SCAN_ALL_PORTS", "scan-all-ports"},
 	{"TLS_COMPLIANCE_ENUMERATE_CIPHERS", "enumerate-ciphers"},
+	{"TLS_COMPLIANCE_DETECT_CIPHER_PREFERENCE", "detect-cipher-preference"},
 	{"TLS_COMPLIANCE_NAMESPACE_RATE_LIMITS", "namespace-rate-limits"},
 	{"TLS_COMPLIANCE_METRICS_PER_ENDPOINT", "metrics-per-endpoint"},
 	{"TLS_COMPLIANCE_CLIENT_CERT", "client-cert"},
@@ -756,7 +761,7 @@ func validateEnvValue(flagName, value string) error {
 		if value != "text" && value != "json" {
 			return fmt.Errorf("must be text or json, got %q", value)
 		}
-	case "run-once", "scan-all-ports", "enumerate-ciphers", "metrics-per-endpoint":
+	case "run-once", "scan-all-ports", "enumerate-ciphers", "detect-cipher-preference", "metrics-per-endpoint":
 		if value != "true" && value != "false" && value != "1" && value != "0" {
 			return fmt.Errorf("must be true or false, got %q", value)
 		}

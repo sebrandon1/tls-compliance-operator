@@ -29,35 +29,36 @@ import (
 // JSONReport is the structured representation of a single TLS compliance report,
 // used by both JSON and YAML export (yaml.v3 falls back to json tags).
 type JSONReport struct {
-	CRName             string            `json:"crName"`
-	Host               string            `json:"host"`
-	Port               string            `json:"port"`
-	Source             string            `json:"source"`
-	Namespace          string            `json:"namespace"`
-	Name               string            `json:"name"`
-	Compliance         string            `json:"compliance"`
-	Grade              string            `json:"grade"`
-	ForwardSecrecy     bool              `json:"forwardSecrecy"`
-	KeyExchangeTypes   map[string]string `json:"keyExchangeTypes,omitempty"`
-	TLS13              bool              `json:"tls13"`
-	TLS12              bool              `json:"tls12"`
-	TLS11              bool              `json:"tls11"`
-	TLS10              bool              `json:"tls10"`
-	SSL30              bool              `json:"ssl30"`
-	QuantumReady       bool              `json:"quantumReady"`
-	PQCReadiness       string            `json:"pqcReadiness"`
-	MLKEMSupported     bool              `json:"mlkemSupported"`
-	CertExpiry         string            `json:"certExpiry"`
-	CertIssuer         string            `json:"certIssuer"`
-	PublicKeyAlgorithm string            `json:"publicKeyAlgorithm,omitempty"`
-	PublicKeyBits      int               `json:"publicKeyBits,omitempty"`
-	SignatureAlgorithm string            `json:"signatureAlgorithm,omitempty"`
-	ChainLength        int               `json:"chainLength,omitempty"`
-	CertSerial         string            `json:"certSerial,omitempty"`
-	CertFingerprint    string            `json:"certFingerprint,omitempty"`
-	IPAddresses        []string          `json:"ipAddresses,omitempty"`
-	ALPNProtocols      map[string]string `json:"alpnProtocols,omitempty"`
-	ScanDuration       string            `json:"scanDuration,omitempty"`
+	CRName                  string            `json:"crName"`
+	Host                    string            `json:"host"`
+	Port                    string            `json:"port"`
+	Source                  string            `json:"source"`
+	Namespace               string            `json:"namespace"`
+	Name                    string            `json:"name"`
+	Compliance              string            `json:"compliance"`
+	Grade                   string            `json:"grade"`
+	ForwardSecrecy          bool              `json:"forwardSecrecy"`
+	ServerPrefersOwnCiphers *bool             `json:"serverPrefersOwnCiphers,omitempty"`
+	KeyExchangeTypes        map[string]string `json:"keyExchangeTypes,omitempty"`
+	TLS13                   bool              `json:"tls13"`
+	TLS12                   bool              `json:"tls12"`
+	TLS11                   bool              `json:"tls11"`
+	TLS10                   bool              `json:"tls10"`
+	SSL30                   bool              `json:"ssl30"`
+	QuantumReady            bool              `json:"quantumReady"`
+	PQCReadiness            string            `json:"pqcReadiness"`
+	MLKEMSupported          bool              `json:"mlkemSupported"`
+	CertExpiry              string            `json:"certExpiry"`
+	CertIssuer              string            `json:"certIssuer"`
+	PublicKeyAlgorithm      string            `json:"publicKeyAlgorithm,omitempty"`
+	PublicKeyBits           int               `json:"publicKeyBits,omitempty"`
+	SignatureAlgorithm      string            `json:"signatureAlgorithm,omitempty"`
+	ChainLength             int               `json:"chainLength,omitempty"`
+	CertSerial              string            `json:"certSerial,omitempty"`
+	CertFingerprint         string            `json:"certFingerprint,omitempty"`
+	IPAddresses             []string          `json:"ipAddresses,omitempty"`
+	ALPNProtocols           map[string]string `json:"alpnProtocols,omitempty"`
+	ScanDuration            string            `json:"scanDuration,omitempty"`
 }
 
 // ToJSONReports converts CRs to the flattened snapshot type used by JSON/YAML
@@ -111,26 +112,27 @@ func reportToJSON(r *securityv1alpha1.TLSComplianceReport) JSONReport {
 	certExpiry, certIssuer := extractCertInfo(r)
 
 	jr := JSONReport{
-		CRName:           r.Name,
-		Host:             r.Spec.Host,
-		Port:             strconv.Itoa(int(r.Spec.Port)),
-		Source:           string(r.Spec.SourceKind),
-		Namespace:        r.Spec.SourceNamespace,
-		Name:             r.Spec.SourceName,
-		Compliance:       string(r.Status.ComplianceStatus),
-		Grade:            r.Status.OverallCipherGrade,
-		ForwardSecrecy:   r.Status.ForwardSecrecy,
-		KeyExchangeTypes: r.Status.KeyExchangeTypes,
-		TLS13:            r.Status.TLSVersions.TLS13,
-		TLS12:            r.Status.TLSVersions.TLS12,
-		TLS11:            r.Status.TLSVersions.TLS11,
-		TLS10:            r.Status.TLSVersions.TLS10,
-		SSL30:            r.Status.TLSVersions.SSL30,
-		QuantumReady:     r.Status.QuantumReady,
-		PQCReadiness:     string(r.Status.PQCReadiness),
-		MLKEMSupported:   r.Status.MLKEMSupported,
-		CertExpiry:       certExpiry,
-		CertIssuer:       certIssuer,
+		CRName:                  r.Name,
+		Host:                    r.Spec.Host,
+		Port:                    strconv.Itoa(int(r.Spec.Port)),
+		Source:                  string(r.Spec.SourceKind),
+		Namespace:               r.Spec.SourceNamespace,
+		Name:                    r.Spec.SourceName,
+		Compliance:              string(r.Status.ComplianceStatus),
+		Grade:                   r.Status.OverallCipherGrade,
+		ForwardSecrecy:          r.Status.ForwardSecrecy,
+		ServerPrefersOwnCiphers: r.Status.ServerPrefersOwnCiphers,
+		KeyExchangeTypes:        r.Status.KeyExchangeTypes,
+		TLS13:                   r.Status.TLSVersions.TLS13,
+		TLS12:                   r.Status.TLSVersions.TLS12,
+		TLS11:                   r.Status.TLSVersions.TLS11,
+		TLS10:                   r.Status.TLSVersions.TLS10,
+		SSL30:                   r.Status.TLSVersions.SSL30,
+		QuantumReady:            r.Status.QuantumReady,
+		PQCReadiness:            string(r.Status.PQCReadiness),
+		MLKEMSupported:          r.Status.MLKEMSupported,
+		CertExpiry:              certExpiry,
+		CertIssuer:              certIssuer,
 	}
 
 	if r.Status.CertificateInfo != nil {

@@ -768,6 +768,34 @@ func startTLSServerWithCipherSuites(t *testing.T, cert tls.Certificate, version 
 	return addr.IP.String(), addr.Port, func() { _ = listener.Close() }
 }
 
+func startTLSServerWithCipherPreference(t *testing.T, cert tls.Certificate, cipherSuites []uint16) (string, int, func()) {
+	t.Helper()
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+		MaxVersion:   tls.VersionTLS12,
+		CipherSuites: cipherSuites,
+	}
+	listener, err := tls.Listen("tcp", "127.0.0.1:0", tlsConfig)
+	if err != nil {
+		t.Fatalf("failed to start TLS listener: %v", err)
+	}
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			if tlsConn, ok := conn.(*tls.Conn); ok {
+				_ = tlsConn.Handshake()
+			}
+			_ = conn.Close()
+		}
+	}()
+	addr := listener.Addr().(*net.TCPAddr)
+	return addr.IP.String(), addr.Port, func() { _ = listener.Close() }
+}
+
 func TestTLSChecker_EnumerateCiphers_MultipleSuites(t *testing.T) {
 	cert, _ := generateTestCert(t)
 	host, port, cleanup := startTLSServerWithCipherSuites(t, cert, tls.VersionTLS12, []uint16{
@@ -785,6 +813,89 @@ func TestTLSChecker_EnumerateCiphers_MultipleSuites(t *testing.T) {
 	suites := result.CipherSuites["TLS 1.2"]
 	if len(suites) < 2 {
 		t.Errorf("expected at least 2 cipher suites, got %d: %v", len(suites), suites)
+	}
+}
+
+func TestTLSChecker_DetectCipherPreference_ServerOrder(t *testing.T) {
+	cert, _ := generateTestCert(t)
+	host, port, cleanup := startTLSServerWithCipherPreference(t, cert, []uint16{
+		tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+		tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+	})
+	defer cleanup()
+
+	checker := NewTLSChecker(2 * time.Second)
+	checker.DetectCipherPreference = true
+	result, err := checker.CheckEndpoint(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("CheckEndpoint() error = %v", err)
+	}
+	if result.ServerPrefersOwnCiphers == nil || !*result.ServerPrefersOwnCiphers {
+		t.Errorf("ServerPrefersOwnCiphers = %v, want true", result.ServerPrefersOwnCiphers)
+	}
+}
+
+func TestClassifyCipherPreference(t *testing.T) {
+	const firstID, secondID = 1, 2
+	first := true
+	second := false
+	unknown := (*bool)(nil)
+	tests := []struct {
+		name string
+		got  *bool
+		want *bool
+	}{
+		{name: "server order", got: classifyCipherPreference(firstID, firstID, firstID, secondID), want: &first},
+		{name: "client order", got: classifyCipherPreference(firstID, secondID, firstID, secondID), want: &second},
+		{name: "inconclusive", got: classifyCipherPreference(secondID, firstID, firstID, secondID), want: unknown},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got == nil || tt.want == nil {
+				if tt.got != nil || tt.want != nil {
+					t.Errorf("classifyCipherPreference() = %v, want %v", tt.got, tt.want)
+				}
+				return
+			}
+			if *tt.got != *tt.want {
+				t.Errorf("classifyCipherPreference() = %v, want %v", *tt.got, *tt.want)
+			}
+		})
+	}
+}
+
+func TestTLSChecker_DetectCipherPreference_Disabled(t *testing.T) {
+	cert, _ := generateTestCert(t)
+	host, port, cleanup := startTLSServerWithCipherSuites(t, cert, tls.VersionTLS12, []uint16{
+		tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+		tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+	})
+	defer cleanup()
+
+	result, err := NewTLSChecker(2*time.Second).CheckEndpoint(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("CheckEndpoint() error = %v", err)
+	}
+	if result.ServerPrefersOwnCiphers != nil {
+		t.Errorf("ServerPrefersOwnCiphers = %v, want nil when disabled", result.ServerPrefersOwnCiphers)
+	}
+}
+
+func TestTLSChecker_DetectCipherPreference_InconclusiveWithOneCipher(t *testing.T) {
+	cert, _ := generateTestCert(t)
+	host, port, cleanup := startTLSServerWithCipherSuites(t, cert, tls.VersionTLS12, []uint16{
+		tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+	})
+	defer cleanup()
+
+	checker := NewTLSChecker(2 * time.Second)
+	checker.DetectCipherPreference = true
+	result, err := checker.CheckEndpoint(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("CheckEndpoint() error = %v", err)
+	}
+	if result.ServerPrefersOwnCiphers != nil {
+		t.Errorf("ServerPrefersOwnCiphers = %v, want nil with one cipher", result.ServerPrefersOwnCiphers)
 	}
 }
 

@@ -663,6 +663,12 @@ spec:
                 description: ScanDuration is the wall-clock time taken by the last
                   TLS check (e.g. "1.23s")
                 type: string
+              serverPrefersOwnCiphers:
+                description: |-
+                  ServerPrefersOwnCiphers indicates whether the TLS 1.2 endpoint selects its
+                  own cipher order instead of following the client's offered order. A nil
+                  value means detection was disabled or inconclusive.
+                type: boolean
               tlsAdherence:
                 description: |-
                   TLSAdherence is the OpenShift APIServer TLS adherence mode

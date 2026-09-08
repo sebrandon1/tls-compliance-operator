@@ -243,6 +243,7 @@ func diffFields(before, after *JSONReport) []FieldChange {
 	addChange("pqcReadiness", before.PQCReadiness, after.PQCReadiness, isPQCRegression(before.PQCReadiness, after.PQCReadiness))
 	addChange("mlkemSupported", boolString(before.MLKEMSupported), boolString(after.MLKEMSupported), before.MLKEMSupported && !after.MLKEMSupported)
 	addChange("forwardSecrecy", boolString(before.ForwardSecrecy), boolString(after.ForwardSecrecy), before.ForwardSecrecy && !after.ForwardSecrecy)
+	addChange("serverPrefersOwnCiphers", boolPointerString(before.ServerPrefersOwnCiphers), boolPointerString(after.ServerPrefersOwnCiphers), false)
 	addChange("certExpiry", before.CertExpiry, after.CertExpiry, false)
 	addChange("certIssuer", before.CertIssuer, after.CertIssuer, false)
 

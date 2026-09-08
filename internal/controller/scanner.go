@@ -442,6 +442,7 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 		cr.Status.KeyExchangeTypes = keyExchangeTypes
 		cr.Status.ALPNProtocols = result.ALPNProtocols
 		cr.Status.NegotiatedCurves = result.NegotiatedCurves
+		cr.Status.ServerPrefersOwnCiphers = result.ServerPrefersOwnCiphers
 		cr.Status.PQCReadiness = pqcReadiness
 		cr.Status.QuantumReady = pqcReadiness == securityv1alpha1.PQCReadinessPQCReady
 		cr.Status.MLKEMSupported = result.MLKEMSupported
