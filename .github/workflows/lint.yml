@@ -27,7 +27,7 @@ jobs:
           path: |
             ~/.cache/golangci-lint
             bin/golangci-lint*
-          key: golangci-lint-${{ runner.os }}-${{ hashFiles('Makefile') }}
+          key: golangci-lint-${{ runner.os }}-${{ hashFiles('Makefile', 'go.mod') }}
 
       - name: Run linter
         run: make lint
