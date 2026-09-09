@@ -84,16 +84,24 @@ func printReportDetail(r *securityv1alpha1.TLSComplianceReport) error {
 	if r.Status.CertificateInfo != nil {
 		cert := r.Status.CertificateInfo
 		_, _ = fmt.Fprintf(w, "\nCertificate:\n")
-		_, _ = fmt.Fprintf(w, "  Issuer:           %s\n", cert.Issuer)
-		_, _ = fmt.Fprintf(w, "  Subject:          %s\n", cert.Subject)
+		if cert.Issuer != "" {
+			_, _ = fmt.Fprintf(w, "  Issuer:           %s\n", cert.Issuer)
+		}
+		if cert.Subject != "" {
+			_, _ = fmt.Fprintf(w, "  Subject:          %s\n", cert.Subject)
+		}
 		if cert.NotBefore != nil {
 			_, _ = fmt.Fprintf(w, "  Not Before:       %s\n", cert.NotBefore.Format("2006-01-02 15:04:05 UTC"))
 		}
 		if cert.NotAfter != nil {
 			_, _ = fmt.Fprintf(w, "  Not After:        %s\n", cert.NotAfter.Format("2006-01-02 15:04:05 UTC"))
 		}
-		_, _ = fmt.Fprintf(w, "  Days Until Expiry: %d\n", cert.DaysUntilExpiry)
-		_, _ = fmt.Fprintf(w, "  Is Expired:       %v\n", cert.IsExpired)
+		if cert.NotAfter != nil || cert.DaysUntilExpiry != 0 {
+			_, _ = fmt.Fprintf(w, "  Days Until Expiry: %d\n", cert.DaysUntilExpiry)
+		}
+		if cert.NotAfter != nil || cert.IsExpired {
+			_, _ = fmt.Fprintf(w, "  Is Expired:       %v\n", cert.IsExpired)
+		}
 		if cert.HostnameMatch != nil {
 			_, _ = fmt.Fprintf(w, "  Hostname Match:   %v\n", *cert.HostnameMatch)
 		}

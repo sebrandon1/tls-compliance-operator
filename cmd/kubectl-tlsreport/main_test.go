@@ -1306,6 +1306,87 @@ func TestPrintReportDetail_FullReport(t *testing.T) {
 	}
 }
 
+func TestPrintReportDetail_OptionalCertificateFields(t *testing.T) {
+	report := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "partial-report"},
+		Status: securityv1alpha1.TLSComplianceReportStatus{
+			CertificateInfo: &securityv1alpha1.CertificateInfo{},
+		},
+	}
+
+	output := captureStdout(t, func() {
+		if err := printReportDetail(report); err != nil {
+			t.Fatalf("printReportDetail() error = %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "Certificate:\n") {
+		t.Fatal("expected certificate section")
+	}
+	for _, unwanted := range []string{
+		"Issuer:",
+		"Subject:",
+		"Not Before:",
+		"Not After:",
+		"Days Until Expiry:",
+		"Is Expired:",
+		"Hostname Match:",
+		"Public Key:",
+		"Signature Alg:",
+		"Chain Length:",
+		"DNS Names:",
+		"Serial:",
+		"Fingerprint:",
+		"IP SANs:",
+	} {
+		if strings.Contains(output, unwanted) {
+			t.Errorf("optional certificate field %q should be omitted, output:\n%s", unwanted, output)
+		}
+	}
+}
+
+func TestPrintReportDetail_OptionalCertificateValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		cert     securityv1alpha1.CertificateInfo
+		want     string
+		unwanted string
+	}{
+		{
+			name:     "days until expiry without not after",
+			cert:     securityv1alpha1.CertificateInfo{DaysUntilExpiry: 7},
+			want:     "Days Until Expiry: 7",
+			unwanted: "Is Expired:",
+		},
+		{
+			name:     "expired without not after",
+			cert:     securityv1alpha1.CertificateInfo{IsExpired: true},
+			want:     "Is Expired:       true",
+			unwanted: "Days Until Expiry:",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			report := &securityv1alpha1.TLSComplianceReport{
+				Status: securityv1alpha1.TLSComplianceReportStatus{CertificateInfo: &tt.cert},
+			}
+			output := captureStdout(t, func() {
+				if err := printReportDetail(report); err != nil {
+					t.Fatalf("printReportDetail() error = %v", err)
+				}
+			})
+
+			if !strings.Contains(output, tt.want) {
+				t.Errorf("output missing %q:\n%s", tt.want, output)
+			}
+			if strings.Contains(output, tt.unwanted) {
+				t.Errorf("output contains %q:\n%s", tt.unwanted, output)
+			}
+		})
+	}
+}
+
 func TestPrintProfileCompliance_WithViolations(t *testing.T) {
 	result := &securityv1alpha1.TLSProfileComplianceResult{
 		ProfileType:       "Intermediate",
