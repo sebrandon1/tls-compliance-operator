@@ -78,6 +78,11 @@ type TLSCheckResult struct {
 	// NegotiatedCurves maps TLS version to the negotiated key exchange curve name
 	NegotiatedCurves map[string]string
 
+	// ServerPrefersOwnCiphers indicates whether the TLS 1.2 server selected its
+	// own cipher order instead of following the client's offered order.
+	// A nil value means preference detection was disabled or inconclusive.
+	ServerPrefersOwnCiphers *bool
+
 	// MLKEMSupported indicates whether the endpoint accepted an ML-KEM
 	// key exchange when explicitly offered via active probing
 	MLKEMSupported bool

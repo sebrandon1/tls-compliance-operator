@@ -263,6 +263,12 @@ type TLSComplianceReportStatus struct {
 	// +optional
 	NegotiatedCurves map[string]string `json:"negotiatedCurves,omitempty"`
 
+	// ServerPrefersOwnCiphers indicates whether the TLS 1.2 endpoint selects its
+	// own cipher order instead of following the client's offered order. A nil
+	// value means detection was disabled or inconclusive.
+	// +optional
+	ServerPrefersOwnCiphers *bool `json:"serverPrefersOwnCiphers,omitempty"`
+
 	// QuantumReady indicates whether any TLS connection negotiated a
 	// hybrid ML-KEM key exchange (e.g. X25519MLKEM768, SecP256r1MLKEM768)
 	// +optional

@@ -255,6 +255,11 @@ func (in *TLSComplianceReportStatus) DeepCopyInto(out *TLSComplianceReportStatus
 			(*out)[key] = val
 		}
 	}
+	if in.ServerPrefersOwnCiphers != nil {
+		in, out := &in.ServerPrefersOwnCiphers, &out.ServerPrefersOwnCiphers
+		*out = new(bool)
+		**out = **in
+	}
 	if in.CertificateInfo != nil {
 		in, out := &in.CertificateInfo, &out.CertificateInfo
 		*out = new(CertificateInfo)

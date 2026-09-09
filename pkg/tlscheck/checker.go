@@ -50,6 +50,9 @@ type TLSChecker struct {
 	Timeout          time.Duration
 	ClientCert       *tls.Certificate
 	EnumerateCiphers bool
+	// DetectCipherPreference probes whether a TLS 1.2 server chooses its own
+	// cipher order instead of following the client's offered order.
+	DetectCipherPreference bool
 	// starttlsOverride maps port numbers to STARTTLS protocols; used in tests
 	// to register arbitrary ports without modifying the built-in port map.
 	starttlsOverride map[int]starttlsProtocol
@@ -77,15 +80,16 @@ var tlsVersionInfo = []struct {
 
 // versionProbeResult holds the outcome of a single TLS version probe.
 type versionProbeResult struct {
-	name         string
-	supported    bool
-	cipherID     uint16
-	cipherSuite  string
-	curveName    string
-	alpnProto    string
-	cert         *CertificateDetails
-	err          error
-	cipherSuites []string
+	name                    string
+	supported               bool
+	cipherID                uint16
+	cipherSuite             string
+	curveName               string
+	alpnProto               string
+	cert                    *CertificateDetails
+	err                     error
+	cipherSuites            []string
+	serverPrefersOwnCiphers *bool
 }
 
 // CheckEndpoint checks the TLS configuration of an endpoint.
@@ -107,6 +111,9 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 			pr.supported, pr.cipherID, pr.cipherSuite, pr.curveName, pr.alpnProto, pr.cert, pr.err = c.tryTLSVersion(gctx, addr, host, vi.version)
 			if pr.supported && pr.err == nil && pr.cipherSuite != "" && c.EnumerateCiphers && vi.version < tls.VersionTLS13 {
 				pr.cipherSuites = c.enumerateCiphers(gctx, addr, host, vi.version, pr.cipherID)
+				if c.DetectCipherPreference && vi.version == tls.VersionTLS12 {
+					pr.serverPrefersOwnCiphers = c.detectCipherPreference(gctx, addr, host, pr.cipherSuites)
+				}
 			}
 			return nil
 		})
@@ -149,6 +156,9 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 			}
 			if pr.curveName != "" {
 				result.NegotiatedCurves[pr.name] = pr.curveName
+			}
+			if pr.serverPrefersOwnCiphers != nil {
+				result.ServerPrefersOwnCiphers = pr.serverPrefersOwnCiphers
 			}
 			if pr.cert != nil && result.Certificate == nil {
 				result.Certificate = pr.cert
@@ -352,6 +362,77 @@ func (c *TLSChecker) enumerateCiphers(ctx context.Context, addr, serverName stri
 	}
 
 	return discovered
+}
+
+// detectCipherPreference compares the server's selection when the first two
+// discovered cipher suites are offered in opposite orders. TLS 1.2 servers
+// that prefer their own order select the same suite in both handshakes, while
+// client-order servers select the first offered suite each time.
+func (c *TLSChecker) detectCipherPreference(ctx context.Context, addr, serverName string, cipherNames []string) *bool {
+	if len(cipherNames) < 2 {
+		return nil
+	}
+
+	var firstID, secondID uint16
+	for _, suite := range append(tls.CipherSuites(), tls.InsecureCipherSuites()...) {
+		switch tls.CipherSuiteName(suite.ID) {
+		case cipherNames[0]:
+			firstID = suite.ID
+		case cipherNames[1]:
+			secondID = suite.ID
+		}
+	}
+	if firstID == 0 || secondID == 0 {
+		return nil
+	}
+
+	negotiate := func(cipherSuites []uint16) (uint16, error) {
+		dialer := &tls.Dialer{
+			NetDialer: &net.Dialer{Timeout: c.Timeout},
+			Config: &tls.Config{
+				MinVersion:         tls.VersionTLS12,
+				MaxVersion:         tls.VersionTLS12,
+				InsecureSkipVerify: true, // lgtm[go/disabled-certificate-check]
+				ServerName:         serverName,
+				CipherSuites:       cipherSuites, // lgtm[go/insecure-tls]
+			},
+		}
+		if c.ClientCert != nil {
+			dialer.Config.Certificates = []tls.Certificate{*c.ClientCert}
+		}
+		conn, err := dialer.DialContext(ctx, "tcp", addr)
+		if err != nil {
+			return 0, err
+		}
+		defer conn.Close()
+		tlsConn, ok := conn.(*tls.Conn)
+		if !ok {
+			return 0, fmt.Errorf("unexpected connection type from TLS dialer")
+		}
+		return tlsConn.ConnectionState().CipherSuite, nil
+	}
+
+	first, err := negotiate([]uint16{firstID, secondID})
+	if err != nil {
+		return nil
+	}
+	second, err := negotiate([]uint16{secondID, firstID})
+	if err != nil {
+		return nil
+	}
+	return classifyCipherPreference(first, second, firstID, secondID)
+}
+
+func classifyCipherPreference(first, second, firstID, secondID uint16) *bool {
+	if first == second {
+		value := true
+		return &value
+	}
+	if first == firstID && second == secondID {
+		value := false
+		return &value
+	}
+	return nil
 }
 
 // probeMLKEM performs a TLS 1.3 handshake offering only hybrid ML-KEM key

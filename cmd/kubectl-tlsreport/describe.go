@@ -72,6 +72,7 @@ func printReportDetail(r *securityv1alpha1.TLSComplianceReport) error {
 	}
 	_, _ = fmt.Fprintf(w, "  Cipher Grade:    %s\n", r.Status.OverallCipherGrade)
 	_, _ = fmt.Fprintf(w, "  Forward Secrecy: %v\n", r.Status.ForwardSecrecy)
+	_, _ = fmt.Fprintf(w, "  Server Prefers Own Ciphers: %s\n", optionalBoolString(r.Status.ServerPrefersOwnCiphers))
 
 	_, _ = fmt.Fprintf(w, "\nTLS Versions:\n")
 	_, _ = fmt.Fprintf(w, "  SSL 3.0:  %v\n", r.Status.TLSVersions.SSL30)
@@ -196,6 +197,13 @@ func printReportDetail(r *securityv1alpha1.TLSComplianceReport) error {
 	}
 
 	return w.Err()
+}
+
+func optionalBoolString(value *bool) string {
+	if value == nil {
+		return "unknown"
+	}
+	return fmt.Sprintf("%v", *value)
 }
 
 func printComplianceHistory(w io.Writer, history []securityv1alpha1.ComplianceHistoryEntry) {

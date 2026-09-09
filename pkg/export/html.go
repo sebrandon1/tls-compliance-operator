@@ -61,7 +61,7 @@ th { background: #f0f0f0; }
 <table>
 <thead><tr>
 <th>Host</th><th>Port</th><th>Source</th><th>Compliance</th><th>Grade</th><th>FS</th>
-<th>TLS1.3</th><th>TLS1.2</th><th>TLS1.0</th><th>PQC</th><th>MLKEM</th><th>CertExpiry</th><th>Age</th>
+<th>TLS1.3</th><th>TLS1.2</th><th>TLS1.0</th><th>PQC</th><th>MLKEM</th><th>ServerPrefersOwnCiphers</th><th>CertExpiry</th><th>Age</th>
 </tr></thead>
 <tbody>
 {{range .Rows}}
@@ -70,7 +70,7 @@ th { background: #f0f0f0; }
 <td><span class="pill {{.ComplianceClass}}">{{.Compliance}}</span></td>
 <td><span class="pill {{.GradeClass}}">{{.Grade}}</span></td>
 <td>{{.FS}}</td><td>{{.TLS13}}</td><td>{{.TLS12}}</td><td>{{.TLS10}}</td>
-<td>{{.PQC}}</td><td>{{.MLKEM}}</td><td>{{.CertExpiry}}</td><td>{{.Age}}</td>
+<td>{{.PQC}}</td><td>{{.MLKEM}}</td><td>{{.ServerPrefersOwnCiphers}}</td><td>{{.CertExpiry}}</td><td>{{.Age}}</td>
 </tr>
 {{end}}
 </tbody>
@@ -91,21 +91,22 @@ type htmlReportData struct {
 }
 
 type htmlReportRow struct {
-	Host            string
-	Port            string
-	Source          string
-	Compliance      string
-	ComplianceClass string
-	Grade           string
-	GradeClass      string
-	FS              string
-	TLS13           string
-	TLS12           string
-	TLS10           string
-	PQC             string
-	MLKEM           string
-	CertExpiry      string
-	Age             string
+	Host                    string
+	Port                    string
+	Source                  string
+	Compliance              string
+	ComplianceClass         string
+	Grade                   string
+	GradeClass              string
+	FS                      string
+	TLS13                   string
+	TLS12                   string
+	TLS10                   string
+	PQC                     string
+	MLKEM                   string
+	ServerPrefersOwnCiphers string
+	CertExpiry              string
+	Age                     string
 }
 
 // WriteHTML writes a self-contained HTML report (inline CSS) to w.
@@ -142,21 +143,22 @@ func reportToHTMLRow(r *securityv1alpha1.TLSComplianceReport, now time.Time) htm
 	compliance := string(r.Status.ComplianceStatus)
 	grade := r.Status.OverallCipherGrade
 	return htmlReportRow{
-		Host:            r.Spec.Host,
-		Port:            strconv.Itoa(int(r.Spec.Port)),
-		Source:          string(r.Spec.SourceKind),
-		Compliance:      compliance,
-		ComplianceClass: complianceHTMLClass(r.Status.ComplianceStatus),
-		Grade:           grade,
-		GradeClass:      gradeHTMLClass(grade),
-		FS:              strconv.FormatBool(r.Status.ForwardSecrecy),
-		TLS13:           strconv.FormatBool(r.Status.TLSVersions.TLS13),
-		TLS12:           strconv.FormatBool(r.Status.TLSVersions.TLS12),
-		TLS10:           strconv.FormatBool(r.Status.TLSVersions.TLS10),
-		PQC:             string(r.Status.PQCReadiness),
-		MLKEM:           strconv.FormatBool(r.Status.MLKEMSupported),
-		CertExpiry:      certExpiry,
-		Age:             age,
+		Host:                    r.Spec.Host,
+		Port:                    strconv.Itoa(int(r.Spec.Port)),
+		Source:                  string(r.Spec.SourceKind),
+		Compliance:              compliance,
+		ComplianceClass:         complianceHTMLClass(r.Status.ComplianceStatus),
+		Grade:                   grade,
+		GradeClass:              gradeHTMLClass(grade),
+		FS:                      strconv.FormatBool(r.Status.ForwardSecrecy),
+		TLS13:                   strconv.FormatBool(r.Status.TLSVersions.TLS13),
+		TLS12:                   strconv.FormatBool(r.Status.TLSVersions.TLS12),
+		TLS10:                   strconv.FormatBool(r.Status.TLSVersions.TLS10),
+		PQC:                     string(r.Status.PQCReadiness),
+		MLKEM:                   strconv.FormatBool(r.Status.MLKEMSupported),
+		ServerPrefersOwnCiphers: boolPointerString(r.Status.ServerPrefersOwnCiphers),
+		CertExpiry:              certExpiry,
+		Age:                     age,
 	}
 }
 
