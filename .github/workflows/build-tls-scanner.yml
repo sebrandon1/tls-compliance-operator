@@ -26,7 +26,7 @@ jobs:
 
       - name: Patch Dockerfile.local for Fedora base and correct Go version
         run: |
-          GO_VERSION=$(grep '^go ' go.mod | awk '{print $2}')
+          GO_VERSION=1.27.1
           sed -i "s|golang:1\.[0-9]*|golang:${GO_VERSION}|" Dockerfile.local
           sed -i 's|registry.access.redhat.com/ubi9/ubi:latest|registry.fedoraproject.org/fedora:latest|' Dockerfile.local
           # Add util-linux (provides hexdump, required by testssl.sh)
