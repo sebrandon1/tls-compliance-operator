@@ -75,7 +75,7 @@ func newRescanCmd() *cobra.Command {
 }
 
 func runRescan(ctx context.Context, name string, wait bool, timeout time.Duration) error {
-	c, err := buildClient()
+	c, err := clientBuilder()
 	if err != nil {
 		return err
 	}
@@ -99,7 +99,7 @@ func runRescan(ctx context.Context, name string, wait bool, timeout time.Duratio
 }
 
 func runRescanAll(ctx context.Context, wait bool, timeout time.Duration) error {
-	c, err := buildClient()
+	c, err := clientBuilder()
 	if err != nil {
 		return err
 	}

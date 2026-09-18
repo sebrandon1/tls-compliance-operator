@@ -109,7 +109,7 @@ func runGet(cmd *cobra.Command, args []string, watchFlag bool) error {
 }
 
 func runGetWatch(cmd *cobra.Command, args []string) error {
-	c, err := buildClient()
+	c, err := clientBuilder()
 	if err != nil {
 		return err
 	}

@@ -84,6 +84,7 @@ var (
 	targetOutputFormat string
 	failOnNonCompliant bool
 	rawExport          bool
+	clientBuilder      = buildClient
 )
 
 type exitCodeError struct {
@@ -310,7 +311,7 @@ func buildClient() (client.WithWatch, error) {
 }
 
 func fetchReports(ctx context.Context) ([]securityv1alpha1.TLSComplianceReport, error) {
-	c, err := buildClient()
+	c, err := clientBuilder()
 	if err != nil {
 		return nil, err
 	}
