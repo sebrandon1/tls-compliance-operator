@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -109,6 +110,45 @@ func TestValidateTargetSpec_InvalidDNS(t *testing.T) {
 	errs := validateTargetSpec(target)
 	if len(errs) == 0 {
 		t.Error("expected validation error for invalid DNS name")
+	}
+}
+
+func TestValidateTargetSpec_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name      string
+		host      string
+		wantError string
+	}{
+		{name: "empty host", host: "", wantError: "must be a valid IP address or DNS name"},
+		{name: "whitespace in host", host: "api example.com", wantError: "must be a valid IP address or DNS name"},
+		{name: "uppercase DNS name", host: "API.EXAMPLE.COM", wantError: "must be a valid IP address or DNS name"},
+		{name: "trailing dot", host: "api.example.com.", wantError: "must be a valid IP address or DNS name"},
+		{name: "IPv4 mapped loopback", host: "::ffff:127.0.0.1", wantError: "internal or reserved address"},
+		{name: "IPv4 mapped link local", host: "::ffff:169.254.169.254", wantError: "internal or reserved address"},
+		{name: "internal hostname with uppercase suffix", host: "API.SVC.CLUSTER.LOCAL", wantError: "must be a valid IP address or DNS name"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target := &TLSComplianceTarget{Spec: TLSComplianceTargetSpec{Host: tt.host, Port: 443}}
+			errs := validateTargetSpec(target)
+			if len(errs) == 0 {
+				t.Fatalf("validateTargetSpec(%q) returned no errors", tt.host)
+			}
+			if !strings.Contains(errs.ToAggregate().Error(), tt.wantError) {
+				t.Errorf("errors = %v, want an error containing %q", errs, tt.wantError)
+			}
+			if got := errs[0].Field; got != "spec.host" {
+				t.Errorf("first error field = %q, want spec.host", got)
+			}
+		})
+	}
+}
+
+func TestValidateTargetSpec_AllowsIPv4MappedPublicAddress(t *testing.T) {
+	target := &TLSComplianceTarget{Spec: TLSComplianceTargetSpec{Host: "::ffff:8.8.8.8", Port: 443}}
+	if errs := validateTargetSpec(target); len(errs) != 0 {
+		t.Errorf("validateTargetSpec() = %v, want nil for a public IPv4-mapped address", errs)
 	}
 }
 
@@ -267,6 +307,35 @@ func TestValidateCreate_SSRFBlocked(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "reserved") {
 		t.Errorf("error = %q, want it to contain 'reserved'", err.Error())
+	}
+}
+
+func TestValidateCreate_ReturnsAllHostValidationErrors(t *testing.T) {
+	scheme := newWebhookTestScheme()
+	setTargetClient(t, scheme)
+
+	target := &TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "invalid-target"},
+		Spec:       TLSComplianceTargetSpec{Host: "*.not a host", Port: 443},
+	}
+
+	validator := &TLSComplianceTargetValidator{}
+	_, err := validator.ValidateCreate(context.Background(), target)
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	statusErr, ok := err.(apierrors.APIStatus)
+	if !ok {
+		t.Fatalf("error type = %T, want apierrors.APIStatus", err)
+	}
+	causes := statusErr.Status().Details.Causes
+	if len(causes) < 2 {
+		t.Fatalf("got %d validation causes, want wildcard and DNS errors: %v", len(causes), causes)
+	}
+	for _, cause := range causes {
+		if cause.Field != "spec.host" {
+			t.Errorf("validation cause field = %q, want spec.host", cause.Field)
+		}
 	}
 }
 
