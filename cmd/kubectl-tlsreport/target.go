@@ -295,7 +295,7 @@ func printTargetTableImpl(targets []securityv1alpha1.TLSComplianceTarget, wide b
 }
 
 func runTargetGet(cmd *cobra.Command, args []string) error {
-	c, err := buildClient()
+	c, err := clientBuilder()
 	if err != nil {
 		return err
 	}
@@ -307,7 +307,7 @@ func runTargetGet(cmd *cobra.Command, args []string) error {
 }
 
 func runTargetDescribe(cmd *cobra.Command, args []string) error {
-	c, err := buildClient()
+	c, err := clientBuilder()
 	if err != nil {
 		return err
 	}
@@ -356,7 +356,7 @@ func runTargetCreate(cmd *cobra.Command, args []string, wait bool, timeout time.
 		return fmt.Errorf("invalid port %q: must be 1-65535", args[1])
 	}
 
-	c, err := buildClient()
+	c, err := clientBuilder()
 	if err != nil {
 		return err
 	}
@@ -428,7 +428,7 @@ func runTargetUpdate(ctx context.Context, name, host string, port int, hostSet, 
 		return err
 	}
 
-	c, err := buildClient()
+	c, err := clientBuilder()
 	if err != nil {
 		return err
 	}
@@ -474,7 +474,7 @@ func runTargetDelete(ctx context.Context, args []string, deleteAll bool) error {
 		return fmt.Errorf("target name required (or use --all)")
 	}
 
-	c, err := buildClient()
+	c, err := clientBuilder()
 	if err != nil {
 		return err
 	}
@@ -504,7 +504,7 @@ func runTargetDelete(ctx context.Context, args []string, deleteAll bool) error {
 }
 
 func fetchTargets(ctx context.Context) ([]securityv1alpha1.TLSComplianceTarget, error) {
-	c, err := buildClient()
+	c, err := clientBuilder()
 	if err != nil {
 		return nil, err
 	}
