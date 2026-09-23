@@ -20,6 +20,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const defaultTLSComplianceTargetPort int32 = 443
+
 // TLSComplianceTargetSpec defines the desired state of TLSComplianceTarget
 type TLSComplianceTargetSpec struct {
 	// Host is the hostname or IP to scan
@@ -27,11 +29,19 @@ type TLSComplianceTargetSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	Host string `json:"host"`
 
-	// Port is the port number to scan
+	// Port is the port number to scan. It defaults to 443 when the mutating webhook is enabled.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
-	Port int32 `json:"port"`
+	Port *int32 `json:"port,omitempty"`
+}
+
+// EffectivePort returns the configured port, or the default HTTPS port when unset.
+func (s TLSComplianceTargetSpec) EffectivePort() int32 {
+	if s.Port == nil {
+		return defaultTLSComplianceTargetPort
+	}
+	return *s.Port
 }
 
 // TLSComplianceTargetStatus defines the observed state of TLSComplianceTarget

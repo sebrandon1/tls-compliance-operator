@@ -81,7 +81,7 @@ func TestValidateTargetSpec_SSRF(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			target := &TLSComplianceTarget{}
 			target.Spec.Host = tt.host
-			target.Spec.Port = 443
+			target.Spec.Port = int32PointerForTest(443)
 			errs := validateTargetSpec(target)
 			if tt.wantErr && len(errs) == 0 {
 				t.Errorf("expected validation error for host %q, got none", tt.host)
@@ -96,7 +96,7 @@ func TestValidateTargetSpec_SSRF(t *testing.T) {
 func TestValidateTargetSpec_Wildcard(t *testing.T) {
 	target := &TLSComplianceTarget{}
 	target.Spec.Host = "*.example.com"
-	target.Spec.Port = 443
+	target.Spec.Port = int32PointerForTest(443)
 	errs := validateTargetSpec(target)
 	if len(errs) == 0 {
 		t.Error("expected validation error for wildcard host")
@@ -106,7 +106,7 @@ func TestValidateTargetSpec_Wildcard(t *testing.T) {
 func TestValidateTargetSpec_InvalidDNS(t *testing.T) {
 	target := &TLSComplianceTarget{}
 	target.Spec.Host = "not a valid host!"
-	target.Spec.Port = 443
+	target.Spec.Port = int32PointerForTest(443)
 	errs := validateTargetSpec(target)
 	if len(errs) == 0 {
 		t.Error("expected validation error for invalid DNS name")
@@ -130,7 +130,7 @@ func TestValidateTargetSpec_EdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			target := &TLSComplianceTarget{Spec: TLSComplianceTargetSpec{Host: tt.host, Port: 443}}
+			target := &TLSComplianceTarget{Spec: TLSComplianceTargetSpec{Host: tt.host, Port: int32PointerForTest(443)}}
 			errs := validateTargetSpec(target)
 			if len(errs) == 0 {
 				t.Fatalf("validateTargetSpec(%q) returned no errors", tt.host)
@@ -146,7 +146,7 @@ func TestValidateTargetSpec_EdgeCases(t *testing.T) {
 }
 
 func TestValidateTargetSpec_AllowsIPv4MappedPublicAddress(t *testing.T) {
-	target := &TLSComplianceTarget{Spec: TLSComplianceTargetSpec{Host: "::ffff:8.8.8.8", Port: 443}}
+	target := &TLSComplianceTarget{Spec: TLSComplianceTargetSpec{Host: "::ffff:8.8.8.8", Port: int32PointerForTest(443)}}
 	if errs := validateTargetSpec(target); len(errs) != 0 {
 		t.Errorf("validateTargetSpec() = %v, want nil for a public IPv4-mapped address", errs)
 	}
@@ -171,6 +171,35 @@ func setTargetClient(t *testing.T, scheme *runtime.Scheme, objects ...runtime.Ob
 	})
 }
 
+func int32PointerForTest(value int32) *int32 {
+	return &value
+}
+
+func TestTLSComplianceTargetDefaulter_DefaultsOnlyOmittedPort(t *testing.T) {
+	tests := []struct {
+		name string
+		port *int32
+		want int32
+	}{
+		{name: "omitted", want: 443},
+		{name: "custom port", port: int32PointerForTest(8443), want: 8443},
+		{name: "explicit zero", port: int32PointerForTest(0), want: 0},
+	}
+
+	defaulter := &TLSComplianceTargetDefaulter{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target := &TLSComplianceTarget{Spec: TLSComplianceTargetSpec{Port: tt.port}}
+			if err := defaulter.Default(context.Background(), target); err != nil {
+				t.Fatalf("Default() error = %v", err)
+			}
+			if got := target.Spec.EffectivePort(); got != tt.want {
+				t.Errorf("effective port = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func newWebhookTestScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
 	_ = AddToScheme(scheme)
@@ -181,13 +210,13 @@ func TestValidateNoDuplicate_BlocksDuplicateHostPort(t *testing.T) {
 	scheme := newWebhookTestScheme()
 	existing := &TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: "existing-target"},
-		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: 443},
+		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: int32PointerForTest(443)},
 	}
 	setTargetClient(t, scheme, existing)
 
 	newTarget := &TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: "new-target"},
-		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: 443},
+		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: int32PointerForTest(443)},
 	}
 
 	err := validateNoDuplicate(context.Background(), newTarget, "")
@@ -199,17 +228,37 @@ func TestValidateNoDuplicate_BlocksDuplicateHostPort(t *testing.T) {
 	}
 }
 
+func TestValidateNoDuplicate_DefaultedPort(t *testing.T) {
+	scheme := newWebhookTestScheme()
+	existing := &TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "existing-target"},
+		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: int32PointerForTest(443)},
+	}
+	setTargetClient(t, scheme, existing)
+
+	target := &TLSComplianceTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "new-target"},
+		Spec:       TLSComplianceTargetSpec{Host: "example.com"},
+	}
+	if err := (&TLSComplianceTargetDefaulter{}).Default(context.Background(), target); err != nil {
+		t.Fatalf("Default() error = %v", err)
+	}
+	if err := validateNoDuplicate(context.Background(), target, ""); err == nil {
+		t.Fatal("expected defaulted port 443 to match the existing target")
+	}
+}
+
 func TestValidateNoDuplicate_AllowsSameHostDifferentPort(t *testing.T) {
 	scheme := newWebhookTestScheme()
 	existing := &TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: "existing-target"},
-		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: 443},
+		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: int32PointerForTest(443)},
 	}
 	setTargetClient(t, scheme, existing)
 
 	newTarget := &TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: "new-target"},
-		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: 8443},
+		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: int32PointerForTest(8443)},
 	}
 
 	err := validateNoDuplicate(context.Background(), newTarget, "")
@@ -222,13 +271,13 @@ func TestValidateNoDuplicate_AllowsSelfOnUpdate(t *testing.T) {
 	scheme := newWebhookTestScheme()
 	existing := &TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-target"},
-		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: 443},
+		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: int32PointerForTest(443)},
 	}
 	setTargetClient(t, scheme, existing)
 
 	sameTarget := &TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-target"},
-		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: 443},
+		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: int32PointerForTest(443)},
 	}
 
 	err := validateNoDuplicate(context.Background(), sameTarget, "my-target")
@@ -243,7 +292,7 @@ func TestValidateNoDuplicate_NilClientAllows(t *testing.T) {
 	targetClientMu.Unlock()
 
 	target := &TLSComplianceTarget{
-		Spec: TLSComplianceTargetSpec{Host: "example.com", Port: 443},
+		Spec: TLSComplianceTargetSpec{Host: "example.com", Port: int32PointerForTest(443)},
 	}
 
 	err := validateNoDuplicate(context.Background(), target, "")
@@ -258,7 +307,7 @@ func TestValidateCreate_ValidTarget(t *testing.T) {
 
 	target := &TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: "valid-target"},
-		Spec:       TLSComplianceTargetSpec{Host: "new.example.com", Port: 443},
+		Spec:       TLSComplianceTargetSpec{Host: "new.example.com", Port: int32PointerForTest(443)},
 	}
 
 	validator := &TLSComplianceTargetValidator{}
@@ -272,13 +321,13 @@ func TestValidateCreate_DuplicateTarget(t *testing.T) {
 	scheme := newWebhookTestScheme()
 	existing := &TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: "existing-target"},
-		Spec:       TLSComplianceTargetSpec{Host: "dup.example.com", Port: 443},
+		Spec:       TLSComplianceTargetSpec{Host: "dup.example.com", Port: int32PointerForTest(443)},
 	}
 	setTargetClient(t, scheme, existing)
 
 	target := &TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: "new-target"},
-		Spec:       TLSComplianceTargetSpec{Host: "dup.example.com", Port: 443},
+		Spec:       TLSComplianceTargetSpec{Host: "dup.example.com", Port: int32PointerForTest(443)},
 	}
 
 	validator := &TLSComplianceTargetValidator{}
@@ -297,7 +346,7 @@ func TestValidateCreate_SSRFBlocked(t *testing.T) {
 
 	target := &TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: "ssrf-target"},
-		Spec:       TLSComplianceTargetSpec{Host: "169.254.169.254", Port: 80},
+		Spec:       TLSComplianceTargetSpec{Host: "169.254.169.254", Port: int32PointerForTest(80)},
 	}
 
 	validator := &TLSComplianceTargetValidator{}
@@ -316,7 +365,7 @@ func TestValidateCreate_ReturnsAllHostValidationErrors(t *testing.T) {
 
 	target := &TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: "invalid-target"},
-		Spec:       TLSComplianceTargetSpec{Host: "*.not a host", Port: 443},
+		Spec:       TLSComplianceTargetSpec{Host: "*.not a host", Port: int32PointerForTest(443)},
 	}
 
 	validator := &TLSComplianceTargetValidator{}
@@ -342,7 +391,7 @@ func TestValidateCreate_ReturnsAllHostValidationErrors(t *testing.T) {
 func TestValidateDelete_Allowed(t *testing.T) {
 	target := &TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: "delete-target"},
-		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: 443},
+		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: int32PointerForTest(443)},
 	}
 
 	validator := &TLSComplianceTargetValidator{}
@@ -359,17 +408,17 @@ func TestValidateUpdate_HappyPath(t *testing.T) {
 	scheme := newWebhookTestScheme()
 	existing := &TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: "target-a"},
-		Spec:       TLSComplianceTargetSpec{Host: "a.example.com", Port: 443},
+		Spec:       TLSComplianceTargetSpec{Host: "a.example.com", Port: int32PointerForTest(443)},
 	}
 	setTargetClient(t, scheme, existing)
 
 	oldTarget := &TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: "target-b"},
-		Spec:       TLSComplianceTargetSpec{Host: "b.example.com", Port: 443},
+		Spec:       TLSComplianceTargetSpec{Host: "b.example.com", Port: int32PointerForTest(443)},
 	}
 	newTarget := &TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: "target-b"},
-		Spec:       TLSComplianceTargetSpec{Host: "c.example.com", Port: 443},
+		Spec:       TLSComplianceTargetSpec{Host: "c.example.com", Port: int32PointerForTest(443)},
 	}
 
 	validator := &TLSComplianceTargetValidator{}
@@ -397,7 +446,7 @@ func TestValidateNoDuplicate_ListError(t *testing.T) {
 
 	target := &TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-target"},
-		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: 443},
+		Spec:       TLSComplianceTargetSpec{Host: "example.com", Port: int32PointerForTest(443)},
 	}
 
 	err := validateNoDuplicate(context.Background(), target, "")
@@ -410,17 +459,17 @@ func TestValidateUpdate_BlocksDuplicateOnHostChange(t *testing.T) {
 	scheme := newWebhookTestScheme()
 	existing := &TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: "target-a"},
-		Spec:       TLSComplianceTargetSpec{Host: "a.example.com", Port: 443},
+		Spec:       TLSComplianceTargetSpec{Host: "a.example.com", Port: int32PointerForTest(443)},
 	}
 	setTargetClient(t, scheme, existing)
 
 	oldTarget := &TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: "target-b"},
-		Spec:       TLSComplianceTargetSpec{Host: "b.example.com", Port: 443},
+		Spec:       TLSComplianceTargetSpec{Host: "b.example.com", Port: int32PointerForTest(443)},
 	}
 	newTarget := &TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: "target-b"},
-		Spec:       TLSComplianceTargetSpec{Host: "a.example.com", Port: 443},
+		Spec:       TLSComplianceTargetSpec{Host: "a.example.com", Port: int32PointerForTest(443)},
 	}
 
 	validator := &TLSComplianceTargetValidator{}

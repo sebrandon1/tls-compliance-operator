@@ -13,8 +13,11 @@ metadata:
   name: google-tls
 spec:
   host: google.com
-  port: 443
 ```
+
+When the mutating admission webhook is enabled, an omitted `port` defaults to
+443. Set `port` explicitly for non-HTTPS endpoints or when the webhook is not
+configured.
 
 Apply it:
 
@@ -76,8 +79,8 @@ Status:
 
 ## Validation
 
-A validating admission webhook enforces the following rules on create and
-update:
+Admission webhooks run on create and update. The mutating webhook defaults an
+omitted port to 443. The validating webhook enforces the following rules:
 
 - **Host format** — must be a valid IP address or DNS name (RFC 1123 subdomain).
   Wildcards (`*`) are not allowed.

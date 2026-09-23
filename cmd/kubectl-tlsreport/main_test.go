@@ -1969,7 +1969,7 @@ func TestOutputTargets(t *testing.T) {
 		{
 			Spec: securityv1alpha1.TLSComplianceTargetSpec{
 				Host: "example.com",
-				Port: 443,
+				Port: int32Pointer(443),
 			},
 			Status: securityv1alpha1.TLSComplianceTargetStatus{
 				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
@@ -2025,7 +2025,7 @@ func TestOutputTargets_JSONContent(t *testing.T) {
 		{
 			Spec: securityv1alpha1.TLSComplianceTargetSpec{
 				Host: "test.example",
-				Port: 8443,
+				Port: int32Pointer(8443),
 			},
 		},
 	}
@@ -2052,7 +2052,7 @@ func TestOutputTargets_YAMLContent(t *testing.T) {
 		{
 			Spec: securityv1alpha1.TLSComplianceTargetSpec{
 				Host: "yaml.example",
-				Port: 443,
+				Port: int32Pointer(443),
 			},
 		},
 	}
@@ -2079,7 +2079,7 @@ func TestPrintTargetTableWide_MessageColumn(t *testing.T) {
 		{
 			Spec: securityv1alpha1.TLSComplianceTargetSpec{
 				Host: "wide.example",
-				Port: 443,
+				Port: int32Pointer(443),
 			},
 			Status: securityv1alpha1.TLSComplianceTargetStatus{
 				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
@@ -2157,7 +2157,7 @@ func TestPrintTargetDetail(t *testing.T) {
 	target := securityv1alpha1.TLSComplianceTarget{}
 	target.Name = "my-target"
 	target.Spec.Host = "example.com"
-	target.Spec.Port = 443
+	target.Spec.Port = int32Pointer(443)
 	target.CreationTimestamp = now
 	target.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusCompliant
 	target.Status.ReportName = "example-com-443-abc12345"
@@ -2199,7 +2199,7 @@ func TestPrintTargetDetail_Pending(t *testing.T) {
 	target := securityv1alpha1.TLSComplianceTarget{}
 	target.Name = "pending-target"
 	target.Spec.Host = "pending.example"
-	target.Spec.Port = 8443
+	target.Spec.Port = int32Pointer(8443)
 
 	output := captureStdout(t, func() {
 		if err := printTargetDetail(&target); err != nil {
@@ -2247,7 +2247,7 @@ func TestWaitForTargetScan_AlreadyScanned(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "scanned-target"},
 		Spec: securityv1alpha1.TLSComplianceTargetSpec{
 			Host: "example.com",
-			Port: 443,
+			Port: int32Pointer(443),
 		},
 		Status: securityv1alpha1.TLSComplianceTargetStatus{
 			ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
@@ -2279,7 +2279,7 @@ func TestWaitForTargetScan_Timeout(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "pending-target"},
 		Spec: securityv1alpha1.TLSComplianceTargetSpec{
 			Host: "slow.example",
-			Port: 443,
+			Port: int32Pointer(443),
 		},
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(target).Build()
@@ -2366,7 +2366,7 @@ func TestUpdateTarget(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "google-com-443"},
 		Spec: securityv1alpha1.TLSComplianceTargetSpec{
 			Host: "google.com",
-			Port: 443,
+			Port: int32Pointer(443),
 		},
 	}
 
@@ -2387,8 +2387,8 @@ func TestUpdateTarget(t *testing.T) {
 		if got.Spec.Host != "maps.google.com" {
 			t.Errorf("host = %q, want maps.google.com", got.Spec.Host)
 		}
-		if got.Spec.Port != 443 {
-			t.Errorf("port = %d, want 443", got.Spec.Port)
+		if got.Spec.EffectivePort() != 443 {
+			t.Errorf("port = %d, want 443", got.Spec.EffectivePort())
 		}
 	})
 
@@ -2404,8 +2404,8 @@ func TestUpdateTarget(t *testing.T) {
 		if got.Spec.Host != "google.com" {
 			t.Errorf("host = %q, want google.com", got.Spec.Host)
 		}
-		if got.Spec.Port != 8443 {
-			t.Errorf("port = %d, want 8443", got.Spec.Port)
+		if got.Spec.EffectivePort() != 8443 {
+			t.Errorf("port = %d, want 8443", got.Spec.EffectivePort())
 		}
 	})
 
@@ -2418,8 +2418,8 @@ func TestUpdateTarget(t *testing.T) {
 		if err := c.Get(ctx, client.ObjectKey{Name: "google-com-443"}, &got); err != nil {
 			t.Fatalf("Get after update: %v", err)
 		}
-		if got.Spec.Host != "example.com" || got.Spec.Port != 8443 {
-			t.Errorf("spec = %s:%d, want example.com:8443", got.Spec.Host, got.Spec.Port)
+		if got.Spec.Host != "example.com" || got.Spec.EffectivePort() != 8443 {
+			t.Errorf("spec = %s:%d, want example.com:8443", got.Spec.Host, got.Spec.EffectivePort())
 		}
 	})
 
@@ -2449,17 +2449,17 @@ func sampleTargets() []securityv1alpha1.TLSComplianceTarget {
 	return []securityv1alpha1.TLSComplianceTarget{
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "zeta", Labels: map[string]string{"team": "platform"}},
-			Spec:       securityv1alpha1.TLSComplianceTargetSpec{Host: "zeta.example", Port: 8443},
+			Spec:       securityv1alpha1.TLSComplianceTargetSpec{Host: "zeta.example", Port: int32Pointer(8443)},
 			Status:     securityv1alpha1.TLSComplianceTargetStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant},
 		},
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "alpha", Labels: map[string]string{"team": "edge"}},
-			Spec:       securityv1alpha1.TLSComplianceTargetSpec{Host: "alpha.example", Port: 443},
+			Spec:       securityv1alpha1.TLSComplianceTargetSpec{Host: "alpha.example", Port: int32Pointer(443)},
 			Status:     securityv1alpha1.TLSComplianceTargetStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusNonCompliant},
 		},
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "beta"},
-			Spec:       securityv1alpha1.TLSComplianceTargetSpec{Host: "beta.example", Port: 6443},
+			Spec:       securityv1alpha1.TLSComplianceTargetSpec{Host: "beta.example", Port: int32Pointer(6443)},
 			Status:     securityv1alpha1.TLSComplianceTargetStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusWarning},
 		},
 	}

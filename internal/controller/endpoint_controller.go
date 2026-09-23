@@ -436,7 +436,7 @@ func (r *EndpointReconciler) handleTarget(ctx context.Context, target *securityv
 
 	ep := endpoint.Endpoint{
 		Host:            target.Spec.Host,
-		Port:            target.Spec.Port,
+		Port:            target.Spec.EffectivePort(),
 		SourceKind:      securityv1alpha1.SourceKindTarget,
 		SourceNamespace: "cluster-scoped",
 		SourceName:      target.Name,
