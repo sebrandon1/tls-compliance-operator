@@ -617,21 +617,6 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 		checkCount int64
 	}
 
-	statusCounts := map[string]float64{
-		string(securityv1alpha1.ComplianceStatusCompliant):         0,
-		string(securityv1alpha1.ComplianceStatusNonCompliant):      0,
-		string(securityv1alpha1.ComplianceStatusWarning):           0,
-		string(securityv1alpha1.ComplianceStatusUnreachable):       0,
-		string(securityv1alpha1.ComplianceStatusTimeout):           0,
-		string(securityv1alpha1.ComplianceStatusClosed):            0,
-		string(securityv1alpha1.ComplianceStatusFiltered):          0,
-		string(securityv1alpha1.ComplianceStatusNoTLS):             0,
-		string(securityv1alpha1.ComplianceStatusPlaintextHTTP):     0,
-		string(securityv1alpha1.ComplianceStatusMutualTLSRequired): 0,
-		string(securityv1alpha1.ComplianceStatusPending):           0,
-		string(securityv1alpha1.ComplianceStatusUnknown):           0,
-	}
-
 	var allItems []scanItem
 	var crList securityv1alpha1.TLSComplianceReportList
 	if err := paginatedList(ctx, r.apiReader(), &crList, func() {
@@ -645,9 +630,6 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 				status:     cr.Status.ComplianceStatus,
 				checkCount: cr.Status.CheckCount,
 			})
-			if _, ok := statusCounts[string(cr.Status.ComplianceStatus)]; ok {
-				statusCounts[string(cr.Status.ComplianceStatus)]++
-			}
 		}
 	}); err != nil {
 		return fmt.Errorf("failed to list TLSComplianceReports: %w", err)
@@ -688,6 +670,32 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 		}()
 	}
 	wg.Wait()
+
+	statusCounts := map[string]float64{
+		string(securityv1alpha1.ComplianceStatusCompliant):         0,
+		string(securityv1alpha1.ComplianceStatusNonCompliant):      0,
+		string(securityv1alpha1.ComplianceStatusWarning):           0,
+		string(securityv1alpha1.ComplianceStatusUnreachable):       0,
+		string(securityv1alpha1.ComplianceStatusTimeout):           0,
+		string(securityv1alpha1.ComplianceStatusClosed):            0,
+		string(securityv1alpha1.ComplianceStatusFiltered):          0,
+		string(securityv1alpha1.ComplianceStatusNoTLS):             0,
+		string(securityv1alpha1.ComplianceStatusPlaintextHTTP):     0,
+		string(securityv1alpha1.ComplianceStatusMutualTLSRequired): 0,
+		string(securityv1alpha1.ComplianceStatusPending):           0,
+		string(securityv1alpha1.ComplianceStatusUnknown):           0,
+	}
+	var refreshedCRList securityv1alpha1.TLSComplianceReportList
+	if err := paginatedList(ctx, r.apiReader(), &refreshedCRList, func() {
+		for i := range refreshedCRList.Items {
+			status := string(refreshedCRList.Items[i].Status.ComplianceStatus)
+			if _, ok := statusCounts[status]; ok {
+				statusCounts[status]++
+			}
+		}
+	}); err != nil {
+		return fmt.Errorf("failed to refresh TLSComplianceReports for endpoint metrics: %w", err)
+	}
 
 	r.updateEndpointMetrics(statusCounts)
 

@@ -4359,7 +4359,7 @@ func TestUpdateEndpointMetrics(t *testing.T) {
 	}
 }
 
-func TestScanAllEndpoints_SortPendingFirst(t *testing.T) {
+func TestScanAllEndpoints_SortPendingFirstAndRefreshMetrics(t *testing.T) {
 	scheme := newTestScheme()
 	ctx := context.Background()
 
@@ -4440,6 +4440,27 @@ func TestScanAllEndpoints_SortPendingFirst(t *testing.T) {
 	if checkOrder[0] != "pending.default" {
 		t.Errorf("expected pending item to be checked first, got %s", checkOrder[0])
 	}
+
+	for _, tc := range []struct {
+		status string
+		want   float64
+	}{
+		{status: string(securityv1alpha1.ComplianceStatusCompliant), want: 3},
+		{status: string(securityv1alpha1.ComplianceStatusPending), want: 0},
+		{status: string(securityv1alpha1.ComplianceStatusNoTLS), want: 0},
+	} {
+		gauge, err := metrics.EndpointsTotal.GetMetricWithLabelValues(tc.status)
+		if err != nil {
+			t.Fatalf("GetMetricWithLabelValues(%q) error = %v", tc.status, err)
+		}
+		metric := &dto.Metric{}
+		if err := gauge.Write(metric); err != nil {
+			t.Fatalf("write %q metric: %v", tc.status, err)
+		}
+		if got := metric.GetGauge().GetValue(); got != tc.want {
+			t.Errorf("endpoint metric %q = %v, want %v", tc.status, got, tc.want)
+		}
+	}
 }
 
 type OrderTrackingChecker struct {
@@ -4485,6 +4506,44 @@ func TestScanAllEndpoints_CRListError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "failed to list TLSComplianceReports") {
 		t.Errorf("expected TLSComplianceReports error, got: %v", err)
+	}
+}
+
+func TestScanAllEndpoints_RefreshMetricsListError(t *testing.T) {
+	scheme := newTestScheme()
+	injectedErr := fmt.Errorf("injected metrics refresh list error")
+	crListCalls := 0
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&securityv1alpha1.TLSComplianceReport{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if _, ok := list.(*securityv1alpha1.TLSComplianceReportList); ok {
+					crListCalls++
+					if crListCalls == 2 {
+						return injectedErr
+					}
+				}
+				return cl.List(ctx, list, opts...)
+			},
+		}).
+		Build()
+
+	r := &EndpointReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+	}
+
+	err := r.scanAllEndpoints(context.Background())
+	if !errors.Is(err, injectedErr) {
+		t.Fatalf("scanAllEndpoints() error = %v, want wrapped %v", err, injectedErr)
+	}
+	if !strings.Contains(err.Error(), "failed to refresh TLSComplianceReports for endpoint metrics") {
+		t.Errorf("scanAllEndpoints() error = %v, want contextual metrics refresh error", err)
+	}
+	if crListCalls != 2 {
+		t.Errorf("TLSComplianceReport List calls = %d, want initial and refresh lists", crListCalls)
 	}
 }
 
