@@ -49,6 +49,45 @@ func TestAPIGroupTypesRegisterWithScheme(t *testing.T) {
 	}
 }
 
+func TestTLSComplianceTargetPortJSONPresence(t *testing.T) {
+	tests := []struct {
+		name        string
+		json        string
+		wantPresent bool
+		wantPort    int32
+	}{
+		{name: "omitted", json: `{"spec":{"host":"example.com"}}`},
+		{name: "explicit zero", json: `{"spec":{"host":"example.com","port":0}}`, wantPresent: true},
+		{name: "custom port", json: `{"spec":{"host":"example.com","port":8443}}`, wantPresent: true, wantPort: 8443},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var target TLSComplianceTarget
+			if err := json.Unmarshal([]byte(tt.json), &target); err != nil {
+				t.Fatalf("json.Unmarshal() error = %v", err)
+			}
+			if (target.Spec.Port != nil) != tt.wantPresent {
+				t.Fatalf("port presence = %t, want %t", target.Spec.Port != nil, tt.wantPresent)
+			}
+			if target.Spec.Port != nil && *target.Spec.Port != tt.wantPort {
+				t.Errorf("port = %d, want %d", *target.Spec.Port, tt.wantPort)
+			}
+		})
+	}
+}
+
+func TestTLSComplianceTargetDeepCopyCopiesPort(t *testing.T) {
+	port := int32(443)
+	original := &TLSComplianceTarget{Spec: TLSComplianceTargetSpec{Port: &port}}
+	copy := original.DeepCopy()
+	*copy.Spec.Port = 8443
+
+	if *original.Spec.Port != 443 {
+		t.Errorf("original port = %d, want 443 after changing deep copy", *original.Spec.Port)
+	}
+}
+
 func TestCRDEnumValues(t *testing.T) {
 	sourceKinds := []struct {
 		name string

@@ -33,7 +33,7 @@ certificate details, and post-quantum readiness.
 - **Prometheus Metrics** — Compliance status, certificate expiry, TLS versions, PQC readiness, forward secrecy
 - **Kubernetes Events** — Non-compliance, status changes, certificate warnings, PQC readiness changes
 - **OpenShift TLS Profiles** — Checks against APIServer, IngressController, and KubeletConfig profiles
-- **Arbitrary Targets** — Scan any host:port via `TLSComplianceTarget` CRD with webhook validation
+- **Arbitrary Targets** — Scan any host:port via `TLSComplianceTarget` CRD with webhook defaulting and validation
 - **mTLS Client Certificates** — Optionally provide client certs for probing mTLS-protected endpoints
 - **Per-Namespace Rate Limiting** — Fine-grained rate control for sensitive namespaces
 - **Report Export** — CSV, JSON, YAML, JUnit XML, Markdown, HTML, and SARIF via `kubectl-tlsreport`, plus snapshot diff for upgrade validation

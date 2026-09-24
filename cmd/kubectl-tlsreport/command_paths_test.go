@@ -183,7 +183,7 @@ func TestRunRescanAll_TriggersMatchingReports(t *testing.T) {
 func TestRunTargetCommands(t *testing.T) {
 	target := &securityv1alpha1.TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: "target-1"},
-		Spec:       securityv1alpha1.TLSComplianceTargetSpec{Host: "example.com", Port: 443},
+		Spec:       securityv1alpha1.TLSComplianceTargetSpec{Host: "example.com", Port: int32Pointer(443)},
 	}
 	c := useFakeCommandClient(t, target)
 	filterOpts = export.FilterOptions{}

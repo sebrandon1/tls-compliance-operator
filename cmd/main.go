@@ -521,7 +521,7 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 			setupLog.Error(err, "unable to create webhook", "webhook", "TLSComplianceTarget")
 			os.Exit(1)
 		}
-		setupLog.Info("TLSComplianceTarget validating webhook enabled")
+		setupLog.Info("TLSComplianceTarget mutating and validating webhooks enabled")
 	}
 
 	// +kubebuilder:scaffold:builder

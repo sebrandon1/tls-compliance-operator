@@ -61,6 +61,10 @@ func newTestScheme() *runtime.Scheme {
 	return scheme
 }
 
+func int32PointerForTest(value int32) *int32 {
+	return &value
+}
+
 // MockTLSChecker implements tlscheck.Checker for testing
 type MockTLSChecker struct {
 	Result    *tlscheck.TLSCheckResult
@@ -3512,7 +3516,7 @@ func TestHandleTarget_SetsOwnerReference(t *testing.T) {
 		},
 		Spec: securityv1alpha1.TLSComplianceTargetSpec{
 			Host: "example.com",
-			Port: 443,
+			Port: int32PointerForTest(443),
 		},
 	}
 
@@ -3688,7 +3692,7 @@ func TestHandleTarget_ProcessEndpointError(t *testing.T) {
 
 	target := &securityv1alpha1.TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: "fail-target", UID: "uid-123"},
-		Spec:       securityv1alpha1.TLSComplianceTargetSpec{Host: "fail.example.com", Port: 443},
+		Spec:       securityv1alpha1.TLSComplianceTargetSpec{Host: "fail.example.com", Port: int32PointerForTest(443)},
 	}
 
 	fakeClient := fake.NewClientBuilder().
@@ -3781,7 +3785,7 @@ func TestHandleTarget_WorkersBusy_Requeues(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "busy-target"},
 		Spec: securityv1alpha1.TLSComplianceTargetSpec{
 			Host: "busy-host.example.com",
-			Port: 443,
+			Port: int32PointerForTest(443),
 		},
 	}
 
@@ -5086,7 +5090,7 @@ func TestUpdateTargetStatus_SuccessCase(t *testing.T) {
 		},
 		Spec: securityv1alpha1.TLSComplianceTargetSpec{
 			Host: "example.com",
-			Port: 443,
+			Port: int32PointerForTest(443),
 		},
 	}
 
@@ -5148,7 +5152,7 @@ func TestUpdateTargetStatus_ErrorCase(t *testing.T) {
 		},
 		Spec: securityv1alpha1.TLSComplianceTargetSpec{
 			Host: "example.com",
-			Port: 443,
+			Port: int32PointerForTest(443),
 		},
 	}
 

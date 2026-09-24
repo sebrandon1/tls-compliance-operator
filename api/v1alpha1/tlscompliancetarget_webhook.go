@@ -40,14 +40,28 @@ var (
 	targetClientMu sync.RWMutex
 )
 
-// SetupTLSComplianceTargetWebhookWithManager registers the validating webhook.
+// SetupTLSComplianceTargetWebhookWithManager registers the mutating and validating webhooks.
 func SetupTLSComplianceTargetWebhookWithManager(mgr ctrl.Manager) error {
 	targetClientMu.Lock()
 	targetClient = mgr.GetClient()
 	targetClientMu.Unlock()
 	return builder.WebhookManagedBy(mgr, &TLSComplianceTarget{}).
+		WithDefaulter(&TLSComplianceTargetDefaulter{}).
 		WithValidator(&TLSComplianceTargetValidator{}).
 		Complete()
+}
+
+// +kubebuilder:webhook:path=/mutate-security-telco-openshift-io-v1alpha1-tlscompliancetarget,mutating=true,failurePolicy=fail,sideEffects=None,groups=security.telco.openshift.io,resources=tlscompliancetargets,verbs=create;update,versions=v1alpha1,name=mtlscompliancetarget.kb.io,admissionReviewVersions=v1
+
+// TLSComplianceTargetDefaulter defaults fields on TLSComplianceTarget resources.
+type TLSComplianceTargetDefaulter struct{}
+
+func (TLSComplianceTargetDefaulter) Default(_ context.Context, target *TLSComplianceTarget) error {
+	if target.Spec.Port == nil {
+		port := defaultTLSComplianceTargetPort
+		target.Spec.Port = &port
+	}
+	return nil
 }
 
 // +kubebuilder:webhook:path=/validate-security-telco-openshift-io-v1alpha1-tlscompliancetarget,mutating=false,failurePolicy=fail,sideEffects=None,groups=security.telco.openshift.io,resources=tlscompliancetargets,verbs=create;update,versions=v1alpha1,name=vtlscompliancetarget.kb.io,admissionReviewVersions=v1
@@ -127,9 +141,9 @@ func validateNoDuplicate(ctx context.Context, target *TLSComplianceTarget, selfN
 		if existing.Name == selfName {
 			continue
 		}
-		if existing.Spec.Host == target.Spec.Host && existing.Spec.Port == target.Spec.Port {
+		if existing.Spec.Host == target.Spec.Host && existing.Spec.EffectivePort() == target.Spec.EffectivePort() {
 			return field.Invalid(field.NewPath("spec"),
-				fmt.Sprintf("%s:%d", target.Spec.Host, target.Spec.Port),
+				fmt.Sprintf("%s:%d", target.Spec.Host, target.Spec.EffectivePort()),
 				fmt.Sprintf("duplicate host:port — already defined in TLSComplianceTarget %q", existing.Name))
 		}
 	}

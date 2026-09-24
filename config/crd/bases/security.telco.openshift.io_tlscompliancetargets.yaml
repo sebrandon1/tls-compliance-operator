@@ -70,7 +70,8 @@ spec:
                 minLength: 1
                 type: string
               port:
-                description: Port is the port number to scan
+                description: Port is the port number to scan. It defaults to 443 when
+                  the mutating webhook is enabled.
                 format: int32
                 maximum: 65535
                 minimum: 1

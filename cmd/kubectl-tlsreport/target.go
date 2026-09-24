@@ -274,7 +274,7 @@ func printTargetTableImpl(targets []securityv1alpha1.TLSComplianceTarget, wide b
 		}
 		age := formatAge(time.Since(targets[i].CreationTimestamp.Time))
 		row := fmt.Sprintf("%s\t%s\t%d\t%s\t%s",
-			targets[i].Name, targets[i].Spec.Host, targets[i].Spec.Port,
+			targets[i].Name, targets[i].Spec.Host, targets[i].Spec.EffectivePort(),
 			string(targets[i].Status.ComplianceStatus), report)
 		if wide {
 			message := targets[i].Status.Message
@@ -323,7 +323,7 @@ func printTargetDetail(t *securityv1alpha1.TLSComplianceTarget) error {
 
 	_, _ = fmt.Fprintf(w, "Name:         %s\n", t.Name)
 	_, _ = fmt.Fprintf(w, "Host:         %s\n", t.Spec.Host)
-	_, _ = fmt.Fprintf(w, "Port:         %d\n", t.Spec.Port)
+	_, _ = fmt.Fprintf(w, "Port:         %d\n", t.Spec.EffectivePort())
 	_, _ = fmt.Fprintf(w, "Age:          %s\n", formatAge(time.Since(t.CreationTimestamp.Time)))
 
 	_, _ = fmt.Fprintf(w, "\nStatus:\n")
@@ -369,7 +369,7 @@ func runTargetCreate(cmd *cobra.Command, args []string, wait bool, timeout time.
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: securityv1alpha1.TLSComplianceTargetSpec{
 			Host: host,
-			Port: int32(port),
+			Port: int32Pointer(int32(port)),
 		},
 	}
 
@@ -384,6 +384,10 @@ func runTargetCreate(cmd *cobra.Command, args []string, wait bool, timeout time.
 	}
 
 	return waitForTargetScan(cmd.Context(), c, name, timeout)
+}
+
+func int32Pointer(value int32) *int32 {
+	return &value
 }
 
 func waitForTargetScan(ctx context.Context, c client.Client, name string, timeout time.Duration) error {
@@ -458,7 +462,7 @@ func updateTarget(ctx context.Context, c client.Client, name, host string, port 
 		target.Spec.Host = host
 	}
 	if portSet {
-		target.Spec.Port = int32(port)
+		target.Spec.Port = int32Pointer(int32(port))
 	}
 
 	if err := c.Update(ctx, &target); err != nil {
@@ -551,7 +555,7 @@ func sortTargets(targets []securityv1alpha1.TLSComplianceTarget, key string) err
 		})
 	case "port":
 		sort.SliceStable(targets, func(i, j int) bool {
-			return targets[i].Spec.Port < targets[j].Spec.Port
+			return targets[i].Spec.EffectivePort() < targets[j].Spec.EffectivePort()
 		})
 	case "compliance", "status":
 		sort.SliceStable(targets, func(i, j int) bool {

@@ -4,4 +4,3 @@ metadata:
   name: external-api-check
 spec:
   host: api.example.com
-  port: 443
