@@ -18,6 +18,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -54,40 +55,41 @@ func runExport(cmd *cobra.Command, args []string) error {
 
 	export.SortReports(reports, sortBy)
 
-	return writeFilteredReports(format, reports)
+	return writeFilteredReports(format, reports, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
-func writeFilteredReports(format string, reports []securityv1alpha1.TLSComplianceReport) error {
+func writeFilteredReports(format string, reports []securityv1alpha1.TLSComplianceReport, writers ...io.Writer) error {
 	if len(reports) == 0 {
-		if err := printNoMatchingReports(); err != nil {
+		if err := printNoMatchingReports(writerOrDefault(writers, 1, os.Stderr)); err != nil {
 			return err
 		}
 	}
 
+	out := writerOrDefault(writers, 0, os.Stdout)
 	var writeErr error
 	switch format {
 	case "csv":
-		writeErr = export.WriteCSV(os.Stdout, reports)
+		writeErr = export.WriteCSV(out, reports)
 	case "json":
 		if rawExport {
-			writeErr = export.WriteRawJSON(os.Stdout, reports)
+			writeErr = export.WriteRawJSON(out, reports)
 		} else {
-			writeErr = export.WriteJSON(os.Stdout, reports)
+			writeErr = export.WriteJSON(out, reports)
 		}
 	case "yaml":
 		if rawExport {
-			writeErr = export.WriteRawYAML(os.Stdout, reports)
+			writeErr = export.WriteRawYAML(out, reports)
 		} else {
-			writeErr = export.WriteYAML(os.Stdout, reports)
+			writeErr = export.WriteYAML(out, reports)
 		}
 	case "junit":
-		writeErr = export.WriteJUnit(os.Stdout, reports)
+		writeErr = export.WriteJUnit(out, reports)
 	case "markdown", "md":
-		writeErr = export.WriteMarkdown(os.Stdout, reports)
+		writeErr = export.WriteMarkdown(out, reports)
 	case "html":
-		writeErr = export.WriteHTML(os.Stdout, reports)
+		writeErr = export.WriteHTML(out, reports)
 	case "sarif":
-		writeErr = export.WriteSARIF(os.Stdout, reports)
+		writeErr = export.WriteSARIF(out, reports)
 	}
 	if writeErr != nil {
 		return writeErr

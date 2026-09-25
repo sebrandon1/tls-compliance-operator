@@ -67,6 +67,13 @@ func (w *outputWriter) Err() error {
 	return w.err
 }
 
+func writerOrDefault(writers []io.Writer, index int, fallback io.Writer) io.Writer {
+	if index < len(writers) && writers[index] != nil {
+		return writers[index]
+	}
+	return fallback
+}
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(securityv1alpha1.AddToScheme(scheme))
@@ -111,7 +118,9 @@ func main() {
 		if errors.As(err, &ece) {
 			os.Exit(ece.code)
 		}
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		// Best-effort reporting after Execute has already failed; stderr failure
+		// cannot turn this command into a successful exit.
+		_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -168,20 +177,21 @@ func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print the plugin version",
-		Run: func(_ *cobra.Command, _ []string) {
-			fmt.Println("kubectl-tlsreport " + version)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), "kubectl-tlsreport "+version)
+			return err
 		},
 	}
 }
 
-func printNoMatchingReports() error {
-	fmt.Fprintln(os.Stderr, "No reports match the specified filters.")
-	return nil
+func printNoMatchingReports(writers ...io.Writer) error {
+	_, err := fmt.Fprintln(writerOrDefault(writers, 0, os.Stderr), "No reports match the specified filters.")
+	return err
 }
 
-func printNoMatchingTargets() error {
-	fmt.Fprintln(os.Stderr, "No targets match the specified filters.")
-	return nil
+func printNoMatchingTargets(writers ...io.Writer) error {
+	_, err := fmt.Fprintln(writerOrDefault(writers, 0, os.Stderr), "No targets match the specified filters.")
+	return err
 }
 
 func newCompletionCmd() *cobra.Command {
@@ -207,15 +217,16 @@ PowerShell:
 		ValidArgs:             []string{"bash", "zsh", "fish", "powershell"},
 		Args:                  cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			w := cmd.OutOrStdout()
 			switch args[0] {
 			case "bash":
-				return cmd.Root().GenBashCompletionV2(os.Stdout, true)
+				return cmd.Root().GenBashCompletionV2(w, true)
 			case "zsh":
-				return cmd.Root().GenZshCompletion(os.Stdout)
+				return cmd.Root().GenZshCompletion(w)
 			case "fish":
-				return cmd.Root().GenFishCompletion(os.Stdout, true)
+				return cmd.Root().GenFishCompletion(w, true)
 			case "powershell":
-				return cmd.Root().GenPowerShellCompletionWithDesc(os.Stdout)
+				return cmd.Root().GenPowerShellCompletionWithDesc(w)
 			}
 			return nil
 		},

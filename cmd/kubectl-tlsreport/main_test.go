@@ -450,8 +450,8 @@ func TestPrintTable_Empty(t *testing.T) {
 		name string
 		fn   func([]securityv1alpha1.TLSComplianceReport) error
 	}{
-		{"table", printReportTable},
-		{"wide", printReportTableWide},
+		{"table", func(reports []securityv1alpha1.TLSComplianceReport) error { return printReportTable(reports) }},
+		{"wide", func(reports []securityv1alpha1.TLSComplianceReport) error { return printReportTableWide(reports) }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			filterOpts.Namespace = ""

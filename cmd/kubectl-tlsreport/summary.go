@@ -17,8 +17,6 @@ limitations under the License.
 package main
 
 import (
-	"os"
-
 	"github.com/spf13/cobra"
 
 	"github.com/sebrandon1/tls-compliance-operator/pkg/export"
@@ -49,12 +47,12 @@ func runSummary(cmd *cobra.Command, _ []string) error {
 	}
 
 	if len(reports) == 0 {
-		return printNoMatchingReports()
+		return printNoMatchingReports(cmd.ErrOrStderr())
 	}
 
 	export.SortReports(reports, sortBy)
 
-	if err := export.WriteSummary(os.Stdout, reports); err != nil {
+	if err := export.WriteSummary(cmd.OutOrStdout(), reports); err != nil {
 		return err
 	}
 	return checkExitCode(reports)
