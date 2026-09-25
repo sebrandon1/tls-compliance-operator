@@ -86,7 +86,7 @@ func runGet(cmd *cobra.Command, args []string, watchFlag bool) error {
 		for i := range reports {
 			if reports[i].Name == name {
 				matched := []securityv1alpha1.TLSComplianceReport{reports[i]}
-				if err := outputReports(matched); err != nil {
+				if err := outputReports(matched, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
 					return err
 				}
 				return checkExitCode(matched)
@@ -102,7 +102,7 @@ func runGet(cmd *cobra.Command, args []string, watchFlag bool) error {
 
 	export.SortReports(reports, sortBy)
 
-	if err := outputReports(reports); err != nil {
+	if err := outputReports(reports, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
 		return err
 	}
 	return checkExitCode(reports)
@@ -117,7 +117,7 @@ func runGetWatch(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		name = args[0]
 	}
-	return watchReports(cmd.Context(), c, name, os.Stdout)
+	return watchReports(cmd.Context(), c, name, cmd.OutOrStdout())
 }
 
 func watchReports(ctx context.Context, c client.WithWatch, name string, w io.Writer) error {
@@ -306,16 +306,18 @@ func writeWatchTable(w io.Writer, reports []securityv1alpha1.TLSComplianceReport
 const reportTableHeader = "NAME\tHOST\tPORT\tSOURCE\tCOMPLIANCE\tGRADE\tFS\tTLS 1.3\tTLS 1.2\tPQC\tMLKEM\tNEXT SCAN"
 const reportTableWideHeader = "NAME\tHOST\tPORT\tSOURCE\tNAMESPACE\tCOMPLIANCE\tGRADE\tFS\tTLS 1.3\tTLS 1.2\tTLS 1.0\tSSL 3.0\tPQC\tMLKEM\tISSUER\tCERT EXPIRY\tNEXT SCAN"
 
-func outputReports(reports []securityv1alpha1.TLSComplianceReport) error {
+func outputReports(reports []securityv1alpha1.TLSComplianceReport, writers ...io.Writer) error {
+	out := writerOrDefault(writers, 0, os.Stdout)
+	errOut := writerOrDefault(writers, 1, os.Stderr)
 	if len(reports) == 0 {
-		if err := printNoMatchingReports(); err != nil {
+		if err := printNoMatchingReports(errOut); err != nil {
 			return err
 		}
 		switch outputFormat {
 		case "json":
-			return export.WriteJSON(os.Stdout, reports)
+			return export.WriteJSON(out, reports)
 		case "yaml":
-			return export.WriteYAML(os.Stdout, reports)
+			return export.WriteYAML(out, reports)
 		case "wide", "table", "":
 			return nil
 		default:
@@ -325,23 +327,23 @@ func outputReports(reports []securityv1alpha1.TLSComplianceReport) error {
 
 	switch outputFormat {
 	case "json":
-		return export.WriteJSON(os.Stdout, reports)
+		return export.WriteJSON(out, reports)
 	case "yaml":
-		return export.WriteYAML(os.Stdout, reports)
+		return export.WriteYAML(out, reports)
 	case "wide":
-		return printReportTableWide(reports)
+		return printReportTableWide(reports, out, errOut)
 	case "table", "":
-		return printReportTable(reports)
+		return printReportTable(reports, out, errOut)
 	default:
 		return fmt.Errorf("unknown output format: %s (supported: table, wide, json, yaml)", outputFormat)
 	}
 }
 
-func printReportTable(reports []securityv1alpha1.TLSComplianceReport) error {
+func printReportTable(reports []securityv1alpha1.TLSComplianceReport, writers ...io.Writer) error {
 	if len(reports) == 0 {
-		return printNoMatchingReports()
+		return printNoMatchingReports(writerOrDefault(writers, 1, os.Stderr))
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	w := tabwriter.NewWriter(writerOrDefault(writers, 0, os.Stdout), 0, 4, 2, ' ', 0)
 	if _, err := fmt.Fprintln(w, reportTableHeader); err != nil {
 		return err
 	}
@@ -353,11 +355,11 @@ func printReportTable(reports []securityv1alpha1.TLSComplianceReport) error {
 	return w.Flush()
 }
 
-func printReportTableWide(reports []securityv1alpha1.TLSComplianceReport) error {
+func printReportTableWide(reports []securityv1alpha1.TLSComplianceReport, writers ...io.Writer) error {
 	if len(reports) == 0 {
-		return printNoMatchingReports()
+		return printNoMatchingReports(writerOrDefault(writers, 1, os.Stderr))
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	w := tabwriter.NewWriter(writerOrDefault(writers, 0, os.Stdout), 0, 4, 2, ' ', 0)
 	if _, err := fmt.Fprintln(w, reportTableWideHeader); err != nil {
 		return err
 	}

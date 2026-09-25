@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strconv"
@@ -133,7 +134,7 @@ func newTargetCreateCmd() *cobra.Command {
   kubectl tlsreport target create google.com 443 --wait --timeout 120s`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTargetCreate(cmd, args, waitFlag, timeout)
+			return runTargetCreate(cmd, args, waitFlag, timeout, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	cmd.Flags().BoolVar(&waitFlag, "wait", false, "Wait for the scan to complete and display the result")
@@ -160,7 +161,7 @@ func newTargetUpdateCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			hostSet := cmd.Flags().Changed("host")
 			portSet := cmd.Flags().Changed("port")
-			return runTargetUpdate(cmd.Context(), args[0], host, port, hostSet, portSet)
+			return runTargetUpdate(cmd.Context(), args[0], host, port, hostSet, portSet, cmd.ErrOrStderr())
 		},
 	}
 	cmd.Flags().StringVar(&host, "host", "", "New hostname or IP")
@@ -175,7 +176,7 @@ func newTargetDeleteCmd() *cobra.Command {
 		Short: "Delete a TLSComplianceTarget by name",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTargetDelete(cmd.Context(), args, deleteAll)
+			return runTargetDelete(cmd.Context(), args, deleteAll, cmd.ErrOrStderr())
 		},
 	}
 	cmd.Flags().BoolVar(&deleteAll, "all", false, "Delete all TLSComplianceTargets")
@@ -191,39 +192,42 @@ func runTargetList(cmd *cobra.Command, _ []string) error {
 	if err := sortTargets(targets, sortBy); err != nil {
 		return err
 	}
-	return writeTargetList(targets)
+	return writeTargetList(targets, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
-func writeTargetList(targets []securityv1alpha1.TLSComplianceTarget) error {
+func writeTargetList(targets []securityv1alpha1.TLSComplianceTarget, writers ...io.Writer) error {
+	out := writerOrDefault(writers, 0, os.Stdout)
+	errOut := writerOrDefault(writers, 1, os.Stderr)
 	if len(targets) == 0 {
-		if err := printNoMatchingTargets(); err != nil {
+		if err := printNoMatchingTargets(errOut); err != nil {
 			return err
 		}
 		switch targetOutputFormat {
 		case "json", "yaml":
-			return outputTargets(targets)
+			return outputTargets(targets, out)
 		default:
 			return nil
 		}
 	}
-	return outputTargets(targets)
+	return outputTargets(targets, out, errOut)
 }
 
-func outputTargets(targets []securityv1alpha1.TLSComplianceTarget) error {
+func outputTargets(targets []securityv1alpha1.TLSComplianceTarget, writers ...io.Writer) error {
+	out := writerOrDefault(writers, 0, os.Stdout)
 	switch targetOutputFormat {
 	case "json":
 		if targets == nil {
 			targets = []securityv1alpha1.TLSComplianceTarget{}
 		}
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
 		return enc.Encode(targets)
 	case "yaml":
 		if len(targets) == 0 {
-			_, err := fmt.Fprintln(os.Stdout, "[]")
+			_, err := fmt.Fprintln(out, "[]")
 			return err
 		}
-		w := &outputWriter{w: os.Stdout}
+		w := &outputWriter{w: out}
 		for i := range targets {
 			ydata, err := sigsyaml.Marshal(targets[i])
 			if err != nil {
@@ -236,24 +240,24 @@ func outputTargets(targets []securityv1alpha1.TLSComplianceTarget) error {
 		}
 		return w.Err()
 	case "wide":
-		return printTargetTableWide(targets)
+		return printTargetTableWide(targets, writers...)
 	case "table", "":
-		return printTargetTable(targets)
+		return printTargetTable(targets, writers...)
 	default:
 		return fmt.Errorf("unknown output format: %s (supported: table, wide, json, yaml)", targetOutputFormat)
 	}
 }
 
-func printTargetTable(targets []securityv1alpha1.TLSComplianceTarget) error {
-	return printTargetTableImpl(targets, false)
+func printTargetTable(targets []securityv1alpha1.TLSComplianceTarget, writers ...io.Writer) error {
+	return printTargetTableImpl(targets, false, writers...)
 }
 
-func printTargetTableWide(targets []securityv1alpha1.TLSComplianceTarget) error {
-	return printTargetTableImpl(targets, true)
+func printTargetTableWide(targets []securityv1alpha1.TLSComplianceTarget, writers ...io.Writer) error {
+	return printTargetTableImpl(targets, true, writers...)
 }
 
-func printTargetTableImpl(targets []securityv1alpha1.TLSComplianceTarget, wide bool) error {
-	output := &outputWriter{w: os.Stdout}
+func printTargetTableImpl(targets []securityv1alpha1.TLSComplianceTarget, wide bool, writers ...io.Writer) error {
+	output := &outputWriter{w: writerOrDefault(writers, 0, os.Stdout)}
 	w := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
 	header := "NAME\tHOST\tPORT\tSTATUS\tREPORT"
 	if wide {
@@ -303,7 +307,7 @@ func runTargetGet(cmd *cobra.Command, args []string) error {
 	if err := c.Get(cmd.Context(), client.ObjectKey{Name: args[0]}, &target); err != nil {
 		return fmt.Errorf("getting TLSComplianceTarget %q: %w", args[0], err)
 	}
-	return outputTargets([]securityv1alpha1.TLSComplianceTarget{target})
+	return outputTargets([]securityv1alpha1.TLSComplianceTarget{target}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
 func runTargetDescribe(cmd *cobra.Command, args []string) error {
@@ -315,11 +319,11 @@ func runTargetDescribe(cmd *cobra.Command, args []string) error {
 	if err := c.Get(cmd.Context(), client.ObjectKey{Name: args[0]}, &target); err != nil {
 		return fmt.Errorf("getting TLSComplianceTarget %q: %w", args[0], err)
 	}
-	return printTargetDetail(&target)
+	return printTargetDetail(&target, cmd.OutOrStdout())
 }
 
-func printTargetDetail(t *securityv1alpha1.TLSComplianceTarget) error {
-	w := &outputWriter{w: os.Stdout}
+func printTargetDetail(t *securityv1alpha1.TLSComplianceTarget, writers ...io.Writer) error {
+	w := &outputWriter{w: writerOrDefault(writers, 0, os.Stdout)}
 
 	_, _ = fmt.Fprintf(w, "Name:         %s\n", t.Name)
 	_, _ = fmt.Fprintf(w, "Host:         %s\n", t.Spec.Host)
@@ -349,7 +353,7 @@ func printTargetDetail(t *securityv1alpha1.TLSComplianceTarget) error {
 	return w.Err()
 }
 
-func runTargetCreate(cmd *cobra.Command, args []string, wait bool, timeout time.Duration) error {
+func runTargetCreate(cmd *cobra.Command, args []string, wait bool, timeout time.Duration, writers ...io.Writer) error {
 	host := args[0]
 	port, err := strconv.Atoi(args[1])
 	if err != nil || port < 1 || port > 65535 {
@@ -377,21 +381,27 @@ func runTargetCreate(cmd *cobra.Command, args []string, wait bool, timeout time.
 		return fmt.Errorf("creating target: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "tlscompliancetarget/%s created\n", name)
+	if _, err := fmt.Fprintf(writerOrDefault(writers, 1, os.Stderr), "tlscompliancetarget/%s created\n", name); err != nil {
+		return err
+	}
 
 	if !wait {
 		return nil
 	}
 
-	return waitForTargetScan(cmd.Context(), c, name, timeout)
+	return waitForTargetScan(cmd.Context(), c, name, timeout, writers...)
 }
 
 func int32Pointer(value int32) *int32 {
 	return &value
 }
 
-func waitForTargetScan(ctx context.Context, c client.Client, name string, timeout time.Duration) error {
-	fmt.Fprint(os.Stderr, "Waiting for scan to complete...")
+func waitForTargetScan(ctx context.Context, c client.Client, name string, timeout time.Duration, writers ...io.Writer) error {
+	out := writerOrDefault(writers, 0, os.Stdout)
+	errOut := writerOrDefault(writers, 1, os.Stderr)
+	if _, err := fmt.Fprint(errOut, "Waiting for scan to complete..."); err != nil {
+		return err
+	}
 
 	waitCtx := ctx
 	if timeout > 0 {
@@ -403,23 +413,35 @@ func waitForTargetScan(ctx context.Context, c client.Client, name string, timeou
 	for {
 		select {
 		case <-waitCtx.Done():
-			fmt.Fprintln(os.Stderr)
+			if _, err := fmt.Fprintln(errOut); err != nil {
+				return err
+			}
 			return fmt.Errorf("timeout waiting for scan of target %s", name)
 		case <-time.After(2 * time.Second):
-			fmt.Fprint(os.Stderr, ".")
+			if _, err := fmt.Fprint(errOut, "."); err != nil {
+				return err
+			}
 			var target securityv1alpha1.TLSComplianceTarget
 			if err := c.Get(waitCtx, client.ObjectKey{Name: name}, &target); err != nil {
 				return fmt.Errorf("checking target status: %w", err)
 			}
 			if target.Status.LastScannedAt != nil {
-				fmt.Fprintln(os.Stderr, " done")
+				if _, err := fmt.Fprintln(errOut, " done"); err != nil {
+					return err
+				}
 				status := string(target.Status.ComplianceStatus)
-				fmt.Fprintf(os.Stdout, "Status: %s\n", status)
+				if _, err := fmt.Fprintf(out, "Status: %s\n", status); err != nil {
+					return err
+				}
 				if target.Status.ReportName != "" {
-					fmt.Fprintf(os.Stdout, "Report: %s\n", target.Status.ReportName)
+					if _, err := fmt.Fprintf(out, "Report: %s\n", target.Status.ReportName); err != nil {
+						return err
+					}
 				}
 				if target.Status.Message != "" {
-					fmt.Fprintf(os.Stdout, "Message: %s\n", target.Status.Message)
+					if _, err := fmt.Fprintf(out, "Message: %s\n", target.Status.Message); err != nil {
+						return err
+					}
 				}
 				return nil
 			}
@@ -427,7 +449,7 @@ func waitForTargetScan(ctx context.Context, c client.Client, name string, timeou
 	}
 }
 
-func runTargetUpdate(ctx context.Context, name, host string, port int, hostSet, portSet bool) error {
+func runTargetUpdate(ctx context.Context, name, host string, port int, hostSet, portSet bool, writers ...io.Writer) error {
 	if err := validateTargetUpdate(host, port, hostSet, portSet); err != nil {
 		return err
 	}
@@ -436,7 +458,7 @@ func runTargetUpdate(ctx context.Context, name, host string, port int, hostSet, 
 	if err != nil {
 		return err
 	}
-	return updateTarget(ctx, c, name, host, port, hostSet, portSet)
+	return updateTarget(ctx, c, name, host, port, hostSet, portSet, writers...)
 }
 
 func validateTargetUpdate(host string, port int, hostSet, portSet bool) error {
@@ -452,7 +474,7 @@ func validateTargetUpdate(host string, port int, hostSet, portSet bool) error {
 	return nil
 }
 
-func updateTarget(ctx context.Context, c client.Client, name, host string, port int, hostSet, portSet bool) error {
+func updateTarget(ctx context.Context, c client.Client, name, host string, port int, hostSet, portSet bool, writers ...io.Writer) error {
 	var target securityv1alpha1.TLSComplianceTarget
 	if err := c.Get(ctx, client.ObjectKey{Name: name}, &target); err != nil {
 		return fmt.Errorf("getting TLSComplianceTarget %q: %w", name, err)
@@ -469,11 +491,11 @@ func updateTarget(ctx context.Context, c client.Client, name, host string, port 
 		return fmt.Errorf("updating target %q: %w", name, err)
 	}
 
-	fmt.Fprintf(os.Stderr, "tlscompliancetarget/%s updated\n", name)
-	return nil
+	_, err := fmt.Fprintf(writerOrDefault(writers, 0, os.Stderr), "tlscompliancetarget/%s updated\n", name)
+	return err
 }
 
-func runTargetDelete(ctx context.Context, args []string, deleteAll bool) error {
+func runTargetDelete(ctx context.Context, args []string, deleteAll bool, writers ...io.Writer) error {
 	if !deleteAll && len(args) == 0 {
 		return fmt.Errorf("target name required (or use --all)")
 	}
@@ -488,13 +510,14 @@ func runTargetDelete(ctx context.Context, args []string, deleteAll bool) error {
 		if err != nil {
 			return err
 		}
+		output := &outputWriter{w: writerOrDefault(writers, 0, os.Stderr)}
 		for i := range targets {
 			if err := c.Delete(ctx, &targets[i]); err != nil {
 				return fmt.Errorf("deleting target %s: %w", targets[i].Name, err)
 			}
-			fmt.Fprintf(os.Stderr, "tlscompliancetarget/%s deleted\n", targets[i].Name)
+			output.Fprintf("tlscompliancetarget/%s deleted\n", targets[i].Name)
 		}
-		return nil
+		return output.Err()
 	}
 
 	target := &securityv1alpha1.TLSComplianceTarget{
@@ -503,8 +526,8 @@ func runTargetDelete(ctx context.Context, args []string, deleteAll bool) error {
 	if err := c.Delete(ctx, target); err != nil {
 		return fmt.Errorf("deleting target %q: %w", args[0], err)
 	}
-	fmt.Fprintf(os.Stderr, "tlscompliancetarget/%s deleted\n", args[0])
-	return nil
+	_, err = fmt.Fprintf(writerOrDefault(writers, 0, os.Stderr), "tlscompliancetarget/%s deleted\n", args[0])
+	return err
 }
 
 func fetchTargets(ctx context.Context) ([]securityv1alpha1.TLSComplianceTarget, error) {

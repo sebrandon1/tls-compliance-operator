@@ -47,14 +47,14 @@ func runDescribe(cmd *cobra.Command, args []string) error {
 	name := args[0]
 	for i := range reports {
 		if reports[i].Name == name {
-			return printReportDetail(&reports[i])
+			return printReportDetail(&reports[i], cmd.OutOrStdout())
 		}
 	}
 	return fmt.Errorf("report %q not found", name)
 }
 
-func printReportDetail(r *securityv1alpha1.TLSComplianceReport) error {
-	w := &outputWriter{w: os.Stdout}
+func printReportDetail(r *securityv1alpha1.TLSComplianceReport, writers ...io.Writer) error {
+	w := &outputWriter{w: writerOrDefault(writers, 0, os.Stdout)}
 
 	_, _ = fmt.Fprintf(w, "Name:         %s\n", r.Name)
 	_, _ = fmt.Fprintf(w, "Host:         %s\n", r.Spec.Host)

@@ -97,11 +97,11 @@ func runDiff(cmd *cobra.Command, args []string, failOnRegression bool, output st
 
 	switch output {
 	case "", "text":
-		if err := export.WriteDiff(os.Stdout, &diff); err != nil {
+		if err := export.WriteDiff(cmd.OutOrStdout(), &diff); err != nil {
 			return err
 		}
 	case "json":
-		if err := export.WriteDiffJSON(os.Stdout, &diff); err != nil {
+		if err := export.WriteDiffJSON(cmd.OutOrStdout(), &diff); err != nil {
 			return err
 		}
 	default:

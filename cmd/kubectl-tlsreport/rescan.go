@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -63,9 +64,9 @@ func newRescanCmd() *cobra.Command {
 				return fmt.Errorf("cannot specify both a report name and --all")
 			}
 			if allFlag {
-				return runRescanAll(cmd.Context(), waitFlag, timeout)
+				return runRescanAll(cmd.Context(), waitFlag, timeout, cmd.ErrOrStderr())
 			}
-			return runRescan(cmd.Context(), args[0], waitFlag, timeout)
+			return runRescan(cmd.Context(), args[0], waitFlag, timeout, cmd.ErrOrStderr())
 		},
 	}
 	cmd.Flags().BoolVar(&allFlag, "all", false, "Rescan all reports matching current filters")
@@ -74,7 +75,7 @@ func newRescanCmd() *cobra.Command {
 	return cmd
 }
 
-func runRescan(ctx context.Context, name string, wait bool, timeout time.Duration) error {
+func runRescan(ctx context.Context, name string, wait bool, timeout time.Duration, writers ...io.Writer) error {
 	c, err := clientBuilder()
 	if err != nil {
 		return err
@@ -89,16 +90,19 @@ func runRescan(ctx context.Context, name string, wait bool, timeout time.Duratio
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "Rescan triggered for %s\n", name)
+	errOut := writerOrDefault(writers, 0, os.Stderr)
+	if _, err := fmt.Fprintf(errOut, "Rescan triggered for %s\n", name); err != nil {
+		return err
+	}
 
 	if !wait {
 		return nil
 	}
 
-	return waitForRescan(ctx, c, name, timeout)
+	return waitForRescan(ctx, c, name, timeout, errOut)
 }
 
-func runRescanAll(ctx context.Context, wait bool, timeout time.Duration) error {
+func runRescanAll(ctx context.Context, wait bool, timeout time.Duration, writers ...io.Writer) error {
 	c, err := clientBuilder()
 	if err != nil {
 		return err
@@ -114,36 +118,47 @@ func runRescanAll(ctx context.Context, wait bool, timeout time.Duration) error {
 		return fmt.Errorf("filtering reports: %w", err)
 	}
 
-	return rescanReports(ctx, c, reports, wait, timeout)
+	return rescanReports(ctx, c, reports, wait, timeout, writers...)
 }
 
-func rescanReports(ctx context.Context, c client.Client, reports []securityv1alpha1.TLSComplianceReport, wait bool, timeout time.Duration) error {
+func rescanReports(ctx context.Context, c client.Client, reports []securityv1alpha1.TLSComplianceReport, wait bool, timeout time.Duration, writers ...io.Writer) error {
+	errOut := writerOrDefault(writers, 0, os.Stderr)
 	if len(reports) == 0 {
-		return printNoMatchingReports()
+		return printNoMatchingReports(errOut)
 	}
 
+	diagnostics := &outputWriter{w: errOut}
 	var triggered []string
 	var triggerFailed int
 	for i := range reports {
 		if err := triggerRescan(ctx, c, &reports[i]); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to trigger rescan for %s: %v\n", reports[i].Name, err)
+			diagnostics.Fprintf("Failed to trigger rescan for %s: %v\n", reports[i].Name, err)
 			triggerFailed++
 			continue
 		}
 		triggered = append(triggered, reports[i].Name)
 	}
 
-	fmt.Fprintf(os.Stderr, "Rescan triggered for %d/%d reports\n", len(triggered), len(reports))
+	diagnostics.Fprintf("Rescan triggered for %d/%d reports\n", len(triggered), len(reports))
 
 	if !wait || len(triggered) == 0 {
+		if diagnostics.Err() != nil {
+			return diagnostics.Err()
+		}
 		if triggerFailed > 0 {
 			return exitCodeError{code: 1}
 		}
 		return nil
 	}
 
-	completed := waitForRescans(ctx, c, triggered, timeout)
-	fmt.Fprintf(os.Stderr, "Rescan completed for %d/%d reports\n", completed, len(triggered))
+	completed, err := waitForRescans(ctx, c, triggered, timeout, errOut)
+	if err != nil {
+		return err
+	}
+	diagnostics.Fprintf("Rescan completed for %d/%d reports\n", completed, len(triggered))
+	if diagnostics.Err() != nil {
+		return diagnostics.Err()
+	}
 	if triggerFailed > 0 || completed < len(triggered) {
 		return exitCodeError{code: 1}
 	}
@@ -161,7 +176,8 @@ func triggerRescan(ctx context.Context, c client.Client, report *securityv1alpha
 	return nil
 }
 
-func waitForRescan(ctx context.Context, c client.Client, name string, timeout time.Duration) error {
+func waitForRescan(ctx context.Context, c client.Client, name string, timeout time.Duration, writers ...io.Writer) error {
+	errOut := writerOrDefault(writers, 0, os.Stderr)
 	waitCtx := ctx
 	if timeout > 0 {
 		var cancel context.CancelFunc
@@ -179,7 +195,9 @@ func waitForRescan(ctx context.Context, c client.Client, name string, timeout ti
 				return fmt.Errorf("checking rescan status: %w", err)
 			}
 			if _, hasAnnotation := updated.Annotations[securityv1alpha1.RescanAnnotation]; !hasAnnotation {
-				fmt.Fprintf(os.Stderr, "Rescan complete for %s (status: %s)\n", name, updated.Status.ComplianceStatus)
+				if _, err := fmt.Fprintf(errOut, "Rescan complete for %s (status: %s)\n", name, updated.Status.ComplianceStatus); err != nil {
+					return err
+				}
 				return nil
 			}
 		}
@@ -188,7 +206,8 @@ func waitForRescan(ctx context.Context, c client.Client, name string, timeout ti
 
 const rescanWaitPollInterval = 2 * time.Second
 
-func waitForRescans(ctx context.Context, c client.Client, names []string, timeout time.Duration) int {
+func waitForRescans(ctx context.Context, c client.Client, names []string, timeout time.Duration, writers ...io.Writer) (int, error) {
+	errOut := writerOrDefault(writers, 0, os.Stderr)
 	waitCtx := ctx
 	if timeout > 0 {
 		var cancel context.CancelFunc
@@ -203,8 +222,9 @@ func waitForRescans(ctx context.Context, c client.Client, names []string, timeou
 	total := len(names)
 	completed := 0
 
-	printProgress := func() {
-		fmt.Fprintf(os.Stderr, "\rscanned %d/%d", completed, total)
+	printProgress := func() error {
+		_, err := fmt.Fprintf(errOut, "\rscanned %d/%d", completed, total)
+		return err
 	}
 
 	check := func() error {
@@ -218,14 +238,20 @@ func waitForRescans(ctx context.Context, c client.Client, names []string, timeou
 				completed++
 			}
 		}
-		printProgress()
 		return nil
 	}
 
 	if err := check(); err != nil {
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		return completed
+		if _, writeErr := fmt.Fprintln(errOut); writeErr != nil {
+			return completed, writeErr
+		}
+		if _, writeErr := fmt.Fprintf(errOut, "%v\n", err); writeErr != nil {
+			return completed, writeErr
+		}
+		return completed, nil
+	}
+	if err := printProgress(); err != nil {
+		return completed, err
 	}
 
 	ticker := time.NewTicker(rescanWaitPollInterval)
@@ -234,20 +260,33 @@ func waitForRescans(ctx context.Context, c client.Client, names []string, timeou
 	for len(pending) > 0 {
 		select {
 		case <-waitCtx.Done():
-			fmt.Fprintln(os.Stderr)
-			for name := range pending {
-				fmt.Fprintf(os.Stderr, "Timeout waiting for %s\n", name)
+			if _, err := fmt.Fprintln(errOut); err != nil {
+				return completed, err
 			}
-			return completed
+			for name := range pending {
+				if _, err := fmt.Fprintf(errOut, "Timeout waiting for %s\n", name); err != nil {
+					return completed, err
+				}
+			}
+			return completed, nil
 		case <-ticker.C:
 			if err := check(); err != nil {
-				fmt.Fprintln(os.Stderr)
-				fmt.Fprintf(os.Stderr, "%v\n", err)
-				return completed
+				if _, writeErr := fmt.Fprintln(errOut); writeErr != nil {
+					return completed, writeErr
+				}
+				if _, writeErr := fmt.Fprintf(errOut, "%v\n", err); writeErr != nil {
+					return completed, writeErr
+				}
+				return completed, nil
+			}
+			if err := printProgress(); err != nil {
+				return completed, err
 			}
 		}
 	}
 
-	fmt.Fprintln(os.Stderr)
-	return completed
+	if _, err := fmt.Fprintln(errOut); err != nil {
+		return completed, err
+	}
+	return completed, nil
 }
