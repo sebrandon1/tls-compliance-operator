@@ -42,6 +42,9 @@ import (
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlscheck"
 )
 
+// ScanWindowTimeFormat is the HH:MM layout expected by --scan-window-start and --scan-window-end.
+const ScanWindowTimeFormat = "15:04"
+
 // unstructuredList is a type alias for unstructured.UnstructuredList for clarity.
 type unstructuredList = unstructured.UnstructuredList
 
@@ -491,6 +494,42 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 	}
 }
 
+// isWithinScanWindow reports whether now falls inside the [start, end) daily
+// window expressed as "HH:MM" strings in the given IANA timezone. Overnight
+// windows (end < start, e.g. "22:00"–"02:00") are handled by extending end
+// by 24 h. Returns true unconditionally when start or end is empty.
+func isWithinScanWindow(now time.Time, start, end, tz string) (bool, error) {
+	if start == "" || end == "" {
+		return true, nil
+	}
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return false, fmt.Errorf("invalid scan-window-timezone %q: %w", tz, err)
+	}
+	now = now.In(loc)
+	ref := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	parseHHMM := func(s string) (time.Time, error) {
+		t, err := time.Parse(ScanWindowTimeFormat, s)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("invalid scan-window time %q: %w", s, err)
+		}
+		return ref.Add(time.Duration(t.Hour())*time.Hour + time.Duration(t.Minute())*time.Minute), nil
+	}
+	startT, err := parseHHMM(start)
+	if err != nil {
+		return false, err
+	}
+	endT, err := parseHHMM(end)
+	if err != nil {
+		return false, err
+	}
+	// Handle overnight windows (e.g. 22:00–02:00).
+	if !endT.After(startT) {
+		endT = endT.Add(24 * time.Hour)
+	}
+	return !now.Before(startT) && now.Before(endT), nil
+}
+
 // StartPeriodicScan starts a goroutine that scans all endpoints after leader
 // election completes, then re-checks on every tick of the configured interval.
 // The elected channel should come from mgr.Elected() to ensure the informer
@@ -526,7 +565,13 @@ func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval tim
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				_ = r.runScanCycleWithError(ctx, logger)
+				if ok, werr := isWithinScanWindow(time.Now(), r.ScanWindowStart, r.ScanWindowEnd, r.ScanWindowTimezone); werr != nil {
+					logger.Error(werr, "invalid scan window configuration, skipping scan cycle")
+				} else if !ok {
+					logger.V(1).Info("outside scan window, skipping scan cycle")
+				} else {
+					_ = r.runScanCycleWithError(ctx, logger)
+				}
 			}
 		}
 	}()
