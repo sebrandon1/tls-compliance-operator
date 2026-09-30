@@ -110,6 +110,9 @@ type operatorConfig struct {
 	outputFormat           string
 	outputFile             string
 	shutdownDrainTimeout   time.Duration
+	scanWindowStart        string
+	scanWindowEnd          string
+	scanWindowTimezone     string
 
 	zapOpts zap.Options
 }
@@ -191,6 +194,12 @@ func parseFlags() *operatorConfig {
 		"Path to write scan results (requires --output-format)")
 	flag.DurationVar(&cfg.shutdownDrainTimeout, "shutdown-drain-timeout", 30*time.Second,
 		"How long to wait for in-flight TLS checks to complete on shutdown before forcing exit")
+	flag.StringVar(&cfg.scanWindowStart, "scan-window-start", "",
+		"Start of daily scan window in HH:MM format (empty = no window restriction; requires --scan-window-end)")
+	flag.StringVar(&cfg.scanWindowEnd, "scan-window-end", "",
+		"End of daily scan window in HH:MM format (empty = no window restriction; requires --scan-window-start)")
+	flag.StringVar(&cfg.scanWindowTimezone, "scan-window-timezone", "UTC",
+		"IANA timezone for --scan-window-start/--scan-window-end (e.g. America/New_York)")
 
 	cfg.zapOpts = zap.Options{Development: true}
 	cfg.zapOpts.BindFlags(flag.CommandLine)
@@ -229,6 +238,34 @@ func validateConfig(cfg *operatorConfig) {
 	endpoint.SetScanAllPorts(cfg.scanAllPorts)
 	if cfg.scanAllPorts {
 		setupLog.Info("scan-all-ports enabled: all declared TCP ports on pods and services will be scanned")
+	}
+
+	if (cfg.scanWindowStart == "") != (cfg.scanWindowEnd == "") {
+		setupLog.Error(nil, "both --scan-window-start and --scan-window-end must be set together")
+		os.Exit(1)
+	}
+	if cfg.scanWindowStart != "" {
+		if cfg.scanWindowStart == cfg.scanWindowEnd {
+			setupLog.Error(nil, "--scan-window-start and --scan-window-end must differ")
+			os.Exit(1)
+		}
+		if _, err := time.Parse(controller.ScanWindowTimeFormat, cfg.scanWindowStart); err != nil {
+			setupLog.Error(err, "invalid --scan-window-start, expected HH:MM")
+			os.Exit(1)
+		}
+		if _, err := time.Parse(controller.ScanWindowTimeFormat, cfg.scanWindowEnd); err != nil {
+			setupLog.Error(err, "invalid --scan-window-end, expected HH:MM")
+			os.Exit(1)
+		}
+		if _, err := time.LoadLocation(cfg.scanWindowTimezone); err != nil {
+			setupLog.Error(err, "invalid --scan-window-timezone")
+			os.Exit(1)
+		}
+		setupLog.Info("scan window configured",
+			"start", cfg.scanWindowStart,
+			"end", cfg.scanWindowEnd,
+			"timezone", cfg.scanWindowTimezone,
+		)
 	}
 
 	warnings, err := checkConfig(cfg)
@@ -489,6 +526,9 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 		RetryBackoff:          cfg.retryBackoff,
 		MaxBackoff:            cfg.maxBackoff,
 		ScanInterval:          cfg.scanInterval,
+		ScanWindowStart:       cfg.scanWindowStart,
+		ScanWindowEnd:         cfg.scanWindowEnd,
+		ScanWindowTimezone:    cfg.scanWindowTimezone,
 		MetricsPerEndpoint:    cfg.metricsPerEndpoint,
 		ReportRetentionDays:   cfg.reportRetentionDays,
 		MaxHistoryEntries:     cfg.maxHistoryEntries,
@@ -683,6 +723,9 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_OUTPUT_FORMAT", "output-format"},
 	{"TLS_COMPLIANCE_OUTPUT_FILE", "output-file"},
 	{"TLS_COMPLIANCE_SHUTDOWN_DRAIN_TIMEOUT", "shutdown-drain-timeout"},
+	{"TLS_COMPLIANCE_SCAN_WINDOW_START", "scan-window-start"},
+	{"TLS_COMPLIANCE_SCAN_WINDOW_END", "scan-window-end"},
+	{"TLS_COMPLIANCE_SCAN_WINDOW_TIMEZONE", "scan-window-timezone"},
 }
 
 // resolveEnvConfig applies environment variable overrides to flags that were not
@@ -774,6 +817,14 @@ func validateEnvValue(flagName, value string) error {
 		case "csv", "json", "yaml", "junit", "markdown", "html", "sarif":
 		default:
 			return fmt.Errorf("must be csv, json, yaml, junit, markdown, html, or sarif, got %q", value)
+		}
+	case "scan-window-start", "scan-window-end":
+		if _, err := time.Parse(controller.ScanWindowTimeFormat, value); err != nil {
+			return fmt.Errorf("invalid HH:MM time: %w", err)
+		}
+	case "scan-window-timezone":
+		if _, err := time.LoadLocation(value); err != nil {
+			return fmt.Errorf("invalid IANA timezone: %w", err)
 		}
 	}
 	return nil

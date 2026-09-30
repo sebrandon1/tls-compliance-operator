@@ -33,7 +33,7 @@ import (
 type starttlsProtocol int
 
 const (
-	starttlsProtocolSMTP     starttlsProtocol = iota
+	starttlsProtocolSMTP starttlsProtocol = iota
 	starttlsProtocolIMAP
 	starttlsProtocolLDAP
 	starttlsProtocolPostgres
