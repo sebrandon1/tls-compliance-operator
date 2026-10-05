@@ -86,6 +86,7 @@ make build          # Build binary
 make test           # Run unit tests
 make lint           # Run linter
 make manifests generate  # After editing *_types.go
+make bundle         # Generate and validate the OLM bundle (Operator SDK v1.42.3)
 make test-e2e       # E2E tests (creates Kind cluster)
 make docker-buildx IMG=quay.io/bapalm/tls-compliance-operator:latest  # Multi-arch build
 ```
