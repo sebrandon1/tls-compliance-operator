@@ -1,6 +1,17 @@
 # Image URL to use all building/pushing image targets
 IMG ?= quay.io/bapalm/tls-compliance-operator:latest
 
+# OLM bundle metadata
+BUNDLE_VERSION ?= 1.1.16
+BUNDLE_IMAGE ?= quay.io/bapalm/tls-compliance-operator:v$(BUNDLE_VERSION)
+BUNDLE_PACKAGE ?= tls-compliance-operator
+BUNDLE_CHANNELS ?= stable
+BUNDLE_DEFAULT_CHANNEL ?= stable
+OPERATOR_SDK_VERSION ?= v1.42.3
+OPERATOR_SDK ?= $(LOCALBIN)/operator-sdk
+OPERATOR_SDK_OS ?= $(shell uname -s | tr '[:upper:]' '[:lower:]')
+OPERATOR_SDK_ARCH ?= $(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -181,6 +192,21 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/default > dist/install.yaml
 
+.PHONY: bundle
+bundle: manifests kustomize operator-sdk ## Generate and validate the OLM bundle.
+	"$(KUSTOMIZE)" build config/manifests | sed -E 's#quay\.io/bapalm/tls-compliance-operator:v[0-9][^[:space:]]*#$(BUNDLE_IMAGE)#g' | "$(OPERATOR_SDK)" generate bundle --quiet --overwrite --version "$(BUNDLE_VERSION)" --package "$(BUNDLE_PACKAGE)" --channels "$(BUNDLE_CHANNELS)" --default-channel "$(BUNDLE_DEFAULT_CHANNEL)"
+	"$(OPERATOR_SDK)" bundle validate ./bundle
+	"$(OPERATOR_SDK)" bundle validate ./bundle --select-optional name=operatorhubv2 --optional-values=k8s-version=1.28
+	"$(OPERATOR_SDK)" bundle validate ./bundle --select-optional name=capabilities
+	"$(OPERATOR_SDK)" bundle validate ./bundle --select-optional name=categories
+
+.PHONY: bundle-validate
+bundle-validate: operator-sdk ## Validate the OLM bundle, including OperatorHub listing requirements.
+	"$(OPERATOR_SDK)" bundle validate ./bundle
+	"$(OPERATOR_SDK)" bundle validate ./bundle --select-optional name=operatorhubv2 --optional-values=k8s-version=1.28
+	"$(OPERATOR_SDK)" bundle validate ./bundle --select-optional name=capabilities
+	"$(OPERATOR_SDK)" bundle validate ./bundle --select-optional name=categories
+
 ##@ Deployment
 
 ifndef ignore-not-found
@@ -242,6 +268,12 @@ GOVULNCHECK_VERSION ?= v1.3.0
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): $(LOCALBIN)
 	$(call go-install-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5,$(KUSTOMIZE_VERSION))
+
+.PHONY: operator-sdk
+operator-sdk: $(OPERATOR_SDK) ## Download Operator SDK locally if necessary.
+$(OPERATOR_SDK): $(LOCALBIN)
+	curl -fsSL "https://github.com/operator-framework/operator-sdk/releases/download/$(OPERATOR_SDK_VERSION)/operator-sdk_$(OPERATOR_SDK_OS)_$(OPERATOR_SDK_ARCH)" -o "$@"
+	chmod +x "$@"
 
 .PHONY: controller-gen
 controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.

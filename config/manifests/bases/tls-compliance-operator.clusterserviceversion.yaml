@@ -1,0 +1,88 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  name: tls-compliance-operator.v1.1.16
+  annotations:
+    capabilities: Deep Insights
+    categories: Security
+    containerImage: quay.io/bapalm/tls-compliance-operator:v1.1.16
+    createdAt: "2026-10-02T12:49:01Z"
+    description: Continuously discovers TLS endpoints and reports their protocol, certificate, and compliance status.
+    repository: https://github.com/sebrandon1/tls-compliance-operator
+    support: Brandon Palm
+    alm-examples: |
+      [
+        {
+          "apiVersion": "security.telco.openshift.io/v1alpha1",
+          "kind": "TLSComplianceTarget",
+          "metadata": {
+            "name": "external-api-check"
+          },
+          "spec": {
+            "host": "api.example.com",
+            "port": 443
+          }
+        },
+        {
+          "apiVersion": "security.telco.openshift.io/v1alpha1",
+          "kind": "TLSComplianceReport",
+          "metadata": {
+            "name": "example-service-443-abc12345"
+          },
+          "spec": {
+            "host": "example-service.default",
+            "port": 443,
+            "sourceKind": "Service",
+            "sourceNamespace": "default",
+            "sourceName": "example-service"
+          }
+        }
+      ]
+spec:
+  displayName: TLS Compliance Operator
+  description: |
+    The TLS Compliance Operator continuously monitors TLS endpoints across a Kubernetes or OpenShift cluster.
+    It discovers Services, Ingresses, Pods, optional OpenShift Routes, and installed Gateway API resources,
+    then creates TLSComplianceReport resources with protocol support, cipher strength, certificate health,
+    and post-quantum readiness details. TLSComplianceTarget resources add arbitrary host and port scans.
+
+    The operator needs cluster-wide read access to discover endpoints and write access to its report resources.
+    Route and Gateway API monitoring is enabled only when those APIs are installed. The operator supports
+    Kubernetes 1.28 and later and OpenShift 4.x.
+  icon:
+    - mediatype: image/svg+xml
+      base64data: PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MCIgaGVpZ2h0PSI0MCIgdmlld0JveD0iMCAwIDgwIDQwIj48cmVjdCB3aWR0aD0iODAiIGhlaWdodD0iNDAiIHJ4PSI2IiBmaWxsPSIjMTAyYTQzIi8+PHBhdGggZD0iTTE4IDggMzAgMTJ2OGMwIDgtNSAxMi0xMiAxNS03LTMtMTItNy0xMi0xNXYtOHoiIGZpbGw9IiMzOGJkZjgiLz48cGF0aCBkPSJtMTIgMjAgNCA0IDgtOSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMTAyYTQzIiBzdHJva2Utd2lkdGg9IjIuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PHRleHQgeD0iMzciIHk9IjI1IiBmaWxsPSIjZmZmIiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIgZm9udC1zaXplPSIxMiIgZm9udC13ZWlnaHQ9IjcwMCI+VExTPC90ZXh0Pjwvc3ZnPg==
+  installModes:
+    - type: AllNamespaces
+      supported: true
+  maintainers:
+    - name: Brandon Palm
+      email: bpalm@redhat.com
+  provider:
+    name: Brandon Palm
+  links:
+    - name: Source Code
+      url: https://github.com/sebrandon1/tls-compliance-operator
+    - name: Documentation
+      url: https://github.com/sebrandon1/tls-compliance-operator/tree/main/docs
+    - name: Issue Tracker
+      url: https://github.com/sebrandon1/tls-compliance-operator/issues
+  keywords:
+    - TLS
+    - security
+    - compliance
+    - certificates
+    - post-quantum
+  minKubeVersion: 1.28.0
+  customresourcedefinitions:
+    owned:
+      - name: tlscompliancereports.security.telco.openshift.io
+        version: v1alpha1
+        kind: TLSComplianceReport
+        displayName: TLS Compliance Report
+        description: Observed TLS protocol, cipher, certificate, and compliance data for a discovered endpoint.
+      - name: tlscompliancetargets.security.telco.openshift.io
+        version: v1alpha1
+        kind: TLSComplianceTarget
+        displayName: TLS Compliance Target
+        description: A user-defined host and port for TLS compliance scanning.
