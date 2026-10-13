@@ -36,6 +36,11 @@ func (c *TLSChecker) probeHTTP(ctx context.Context, addr, host string) bool {
 		return false
 	}
 	defer conn.Close()
+	stopCancel := context.AfterFunc(ctx, func() {
+		_ = conn.Close()
+	})
+	defer stopCancel()
+
 	deadline := time.Now().Add(c.Timeout)
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
 		deadline = ctxDeadline
@@ -50,7 +55,7 @@ func (c *TLSChecker) probeHTTP(ctx context.Context, addr, host string) bool {
 
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
-	if err != nil {
+	if err != nil || ctx.Err() != nil {
 		return false
 	}
 
