@@ -177,6 +177,61 @@ func TestProbeHTTP_ContextCancelled(t *testing.T) {
 	}
 }
 
+func TestProbeHTTP_ContextCancelledDuringRead(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	serverReady := make(chan error, 1)
+	serverRelease := make(chan struct{})
+	defer close(serverRelease)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			serverReady <- err
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		buf := make([]byte, 1024)
+		if _, err := conn.Read(buf); err != nil {
+			serverReady <- err
+			return
+		}
+		serverReady <- nil
+		<-serverRelease
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	checker := NewTLSChecker(5 * time.Second)
+	probeDone := make(chan bool, 1)
+	go func() {
+		probeDone <- checker.probeHTTP(ctx, listener.Addr().String(), "127.0.0.1")
+	}()
+
+	select {
+	case err := <-serverReady:
+		if err != nil {
+			t.Fatalf("server did not receive HTTP request: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("probe did not connect and send its request")
+	}
+
+	cancel()
+	select {
+	case got := <-probeDone:
+		if got {
+			t.Error("expected a cancelled probe to return false")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("probe did not return promptly after context cancellation")
+	}
+}
+
 func TestProbeHTTP_CRLFInjection(t *testing.T) {
 	tests := []struct {
 		name         string
