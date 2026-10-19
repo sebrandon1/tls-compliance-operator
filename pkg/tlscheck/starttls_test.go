@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"testing"
@@ -333,6 +334,67 @@ func TestCheckEndpoint_STARTTLS_Timeout(t *testing.T) {
 	result, _ := checker.CheckEndpoint(context.Background(), addr.IP.String(), addr.Port)
 	if result.FailureReason != FailureReasonTimeout {
 		t.Errorf("want FailureReasonTimeout, got %q", result.FailureReason)
+	}
+}
+
+func TestTrySTARTTLSVersion_ContextCancelledDuringUpgrade(t *testing.T) {
+	// Silent server: the SMTP greeting never arrives, so the upgrade blocks on read.
+	addr, received := startSilentServer(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	checker := NewTLSChecker(5 * time.Second)
+	type probeOutcome struct {
+		supported bool
+		cipherID  uint16
+		err       error
+	}
+	outcomeCh := make(chan probeOutcome, 1)
+	go func() {
+		supported, cipherID, _, _, _, _, err := checker.trySTARTTLSVersion(
+			ctx, addr, "127.0.0.1", starttlsProtocolSMTP, tls.VersionTLS12)
+		outcomeCh <- probeOutcome{supported: supported, cipherID: cipherID, err: err}
+	}()
+
+	select {
+	case <-received:
+	case <-time.After(time.Second):
+		t.Fatal("probe did not connect")
+	}
+
+	cancel()
+	select {
+	case got := <-outcomeCh:
+		if !errors.Is(got.err, context.Canceled) {
+			t.Errorf("want context.Canceled, got %v", got.err)
+		}
+		if got.supported || got.cipherID != 0 {
+			t.Errorf("cancelled probe reported supported=%v cipherID=%#x", got.supported, got.cipherID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("STARTTLS upgrade did not return promptly after context cancellation")
+	}
+}
+
+func TestTrySTARTTLSVersion_SilentServerHonorsTimeout(t *testing.T) {
+	addr, _ := startSilentServer(t)
+
+	// A long context deadline must not extend the per-probe timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	checker := NewTLSChecker(200 * time.Millisecond)
+
+	start := time.Now()
+	supported, _, _, _, _, _, err := checker.trySTARTTLSVersion(
+		ctx, addr, "127.0.0.1", starttlsProtocolSMTP, tls.VersionTLS12)
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("probe took %v, want it bounded by the 200ms probe timeout", elapsed)
+	}
+	if supported {
+		t.Error("expected supported=false for a silent server")
+	}
+	if err == nil || ctx.Err() != nil {
+		t.Errorf("want a per-probe timeout error with ctx still live, got err=%v ctxErr=%v", err, ctx.Err())
 	}
 }
 

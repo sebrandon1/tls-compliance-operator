@@ -77,6 +77,44 @@ func generateTestCert(t *testing.T) (tls.Certificate, *x509.Certificate) {
 }
 
 // startTLSServer starts a TLS server with the given min/max TLS versions
+// startSilentServer accepts connections, reads whatever the client sends, and
+// never replies. Each accepted connection signals on the returned channel once
+// its first read completes. Connections are held until the test ends.
+func startSilentServer(t *testing.T) (string, <-chan struct{}) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	t.Cleanup(func() {
+		close(release)
+		_ = ln.Close()
+	})
+
+	received := make(chan struct{}, 1)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = conn.Close() }()
+				buf := make([]byte, 1024)
+				_ = conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+				_, _ = conn.Read(buf)
+				select {
+				case received <- struct{}{}:
+				default:
+				}
+				<-release
+			}()
+		}
+	}()
+	return ln.Addr().String(), received
+}
+
 func startTLSServer(t *testing.T, cert tls.Certificate, minVersion, maxVersion uint16) (string, int, func()) {
 	return startTLSServerWithCurves(t, cert, minVersion, maxVersion, nil)
 }
@@ -1003,4 +1041,34 @@ func timeoutErr() error {
 		},
 		Err: &net.DNSError{IsTimeout: true},
 	}
+}
+
+func TestProbeDeadline(t *testing.T) {
+	const timeout = time.Second
+
+	t.Run("no context deadline", func(t *testing.T) {
+		before := time.Now()
+		got := probeDeadline(context.Background(), timeout)
+		if got.Before(before.Add(timeout)) || got.After(time.Now().Add(timeout)) {
+			t.Errorf("got %v, want about now+%v", got, timeout)
+		}
+	})
+
+	t.Run("earlier context deadline wins", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		ctxDeadline, _ := ctx.Deadline()
+		if got := probeDeadline(ctx, timeout); !got.Equal(ctxDeadline) {
+			t.Errorf("got %v, want context deadline %v", got, ctxDeadline)
+		}
+	})
+
+	t.Run("later context deadline is capped by timeout", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+		defer cancel()
+		got := probeDeadline(ctx, timeout)
+		if got.After(time.Now().Add(timeout)) {
+			t.Errorf("got %v, want no later than now+%v", got, timeout)
+		}
+	})
 }

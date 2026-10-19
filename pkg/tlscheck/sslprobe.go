@@ -21,7 +21,6 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
-	"time"
 )
 
 // SSL protocol version bytes
@@ -93,23 +92,18 @@ func buildSSL30ClientHello() []byte {
 // ProbeSSL30 sends a raw SSLv3 ClientHello and checks if the server responds
 // with an SSLv3 ServerHello, indicating SSLv3 support.
 func (c *TLSChecker) ProbeSSL30(ctx context.Context, addr string) bool {
-	dialer := &net.Dialer{Timeout: c.Timeout}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	conn, stopCancel, err := c.dialProbe(ctx, addr)
 	if err != nil {
 		return false
 	}
 	defer conn.Close()
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetDeadline(deadline)
-	} else {
-		_ = conn.SetDeadline(time.Now().Add(c.Timeout))
-	}
+	defer stopCancel()
 
 	if _, err := conn.Write(ssl30ClientHello); err != nil {
 		return false
 	}
 
-	return isSSL30ServerHello(conn)
+	return isSSL30ServerHello(conn) && ctx.Err() == nil
 }
 
 // isSSL30ServerHello reads the server's response and checks if it's an SSLv3
