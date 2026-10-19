@@ -20,9 +20,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"net"
 	"strings"
-	"time"
 )
 
 var httpResponsePrefix = []byte("HTTP/")
@@ -30,22 +28,12 @@ var httpResponsePrefix = []byte("HTTP/")
 // probeHTTP returns true if the endpoint serves plaintext HTTP.
 // Called only after NoTLS classification to refine the diagnosis.
 func (c *TLSChecker) probeHTTP(ctx context.Context, addr, host string) bool {
-	dialer := &net.Dialer{Timeout: c.Timeout}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	conn, stopCancel, err := c.dialProbe(ctx, addr)
 	if err != nil {
 		return false
 	}
 	defer conn.Close()
-	stopCancel := context.AfterFunc(ctx, func() {
-		_ = conn.Close()
-	})
 	defer stopCancel()
-
-	deadline := time.Now().Add(c.Timeout)
-	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
-		deadline = ctxDeadline
-	}
-	_ = conn.SetDeadline(deadline)
 
 	sanitizedHost := strings.NewReplacer("\r", "", "\n", "").Replace(host)
 	request := fmt.Appendf(nil, "HEAD / HTTP/1.0\r\nHost: %s\r\n\r\n", sanitizedHost)

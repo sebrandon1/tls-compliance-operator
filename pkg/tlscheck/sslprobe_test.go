@@ -200,3 +200,48 @@ func buildMockSSL30ServerHello() []byte {
 
 	return record
 }
+
+func TestProbeSSL30_SilentServerHonorsTimeout(t *testing.T) {
+	addr, _ := startSilentServer(t)
+
+	// A long context deadline must not extend the per-probe timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	checker := NewTLSChecker(200 * time.Millisecond)
+
+	start := time.Now()
+	if checker.ProbeSSL30(ctx, addr) {
+		t.Error("expected false for a silent server")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("probe took %v, want it bounded by the 200ms probe timeout", elapsed)
+	}
+}
+
+func TestProbeSSL30_ContextCancelledDuringRead(t *testing.T) {
+	addr, received := startSilentServer(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	checker := NewTLSChecker(5 * time.Second)
+	probeDone := make(chan bool, 1)
+	go func() {
+		probeDone <- checker.ProbeSSL30(ctx, addr)
+	}()
+
+	select {
+	case <-received:
+	case <-time.After(time.Second):
+		t.Fatal("probe did not connect and send its ClientHello")
+	}
+
+	cancel()
+	select {
+	case got := <-probeDone:
+		if got {
+			t.Error("expected a cancelled probe to return false")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("probe did not return promptly after context cancellation")
+	}
+}

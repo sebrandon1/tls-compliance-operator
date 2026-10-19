@@ -38,6 +38,33 @@ type Checker interface {
 // DefaultTimeout is the default timeout for individual TLS connection attempts
 const DefaultTimeout = 5 * time.Second
 
+// probeDeadline returns the socket deadline for a single probe: the earlier of
+// now+timeout and the context deadline, if any.
+func probeDeadline(ctx context.Context, timeout time.Duration) time.Time {
+	deadline := time.Now().Add(timeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		return ctxDeadline
+	}
+	return deadline
+}
+
+// dialProbe dials addr for a raw-socket probe. The connection's deadline is
+// bounded by the per-probe timeout rather than the (possibly much longer) ctx
+// deadline, and the connection is closed if ctx is cancelled so blocking reads
+// return promptly. Call stop to detach the cancellation hook.
+func (c *TLSChecker) dialProbe(ctx context.Context, addr string) (conn net.Conn, stop func() bool, err error) {
+	dialer := &net.Dialer{Timeout: c.Timeout}
+	conn, err = dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, nil, err
+	}
+	stop = context.AfterFunc(ctx, func() {
+		_ = conn.Close()
+	})
+	_ = conn.SetDeadline(probeDeadline(ctx, c.Timeout))
+	return conn, stop, nil
+}
+
 // maxCipherIterations caps the number of TLS connections made during cipher
 // enumeration to prevent pathological cases against servers supporting many suites.
 const maxCipherIterations = 20

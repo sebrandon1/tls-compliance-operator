@@ -25,7 +25,6 @@ import (
 	"fmt"
 	"net"
 	"strings"
-	"time"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -228,21 +227,21 @@ func upgradePostgres(conn net.Conn) error {
 func (c *TLSChecker) trySTARTTLSVersion(
 	ctx context.Context, addr, host string, proto starttlsProtocol, version uint16,
 ) (supported bool, cipherID uint16, cipherSuite, curveName, alpnProto string, cert *CertificateDetails, err error) {
-	dialer := &net.Dialer{Timeout: c.Timeout}
-	rawConn, err := dialer.DialContext(ctx, "tcp", addr)
+	rawConn, stopCancel, err := c.dialProbe(ctx, addr)
 	if err != nil {
 		return false, 0, "", "", "", nil, err
 	}
 
-	deadline := time.Now().Add(c.Timeout)
-	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
-		deadline = ctxDeadline
-	}
-	_ = rawConn.SetDeadline(deadline)
-
-	if err := upgradeSTARTTLS(rawConn, proto); err != nil {
+	// The close-on-cancel hook only matters for the plaintext upgrade's blocking
+	// reads; the TLS handshake below honors ctx on its own.
+	upgradeErr := upgradeSTARTTLS(rawConn, proto)
+	stopCancel()
+	if upgradeErr != nil {
 		_ = rawConn.Close()
-		return false, 0, "", "", "", nil, err
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, 0, "", "", "", nil, ctxErr
+		}
+		return false, 0, "", "", "", nil, upgradeErr
 	}
 
 	tlsCfg := &tls.Config{
