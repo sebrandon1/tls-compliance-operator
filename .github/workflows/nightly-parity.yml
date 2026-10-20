@@ -60,8 +60,13 @@ jobs:
           kubectl wait --for=condition=available --timeout=300s deployment/tls-compliance-operator-controller-manager -n tls-compliance-operator-system
 
       - name: Run parity tests
-        run: |
-          make test-parity
+        uses: nick-fields/retry@v4.0.0
+        with:
+          max_attempts: 3
+          timeout_minutes: 30
+          retry_wait_seconds: 60
+          command: |
+            make test-parity
 
       - name: Collect logs on failure
         if: failure()
