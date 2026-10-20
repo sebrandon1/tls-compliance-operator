@@ -31,3 +31,8 @@ jobs:
 
       - name: Run linter
         run: make lint
+
+      - name: Check generated files are up to date
+        run: |
+          make manifests generate
+          git diff --exit-code -- api config
