@@ -160,7 +160,8 @@ func (r *EndpointReconciler) tryAsyncCheck(crName, host string, port int, namesp
 	if r.skipIfCircuitOpen(crName) {
 		return nil
 	}
-	if _, running := r.inFlight.LoadOrStore(crName, struct{}{}); running {
+	release, claimed := r.claimCheck(crName)
+	if !claimed {
 		return nil
 	}
 	r.initCheckSemaphore()
@@ -170,7 +171,7 @@ func (r *EndpointReconciler) tryAsyncCheck(crName, host string, port int, namesp
 		r.checkWg.Add(1)
 		go func() {
 			defer func() {
-				r.inFlight.Delete(crName)
+				release()
 				r.checkWg.Done()
 				<-r.checkSem
 				metrics.RecordWorkerRelease()
@@ -184,9 +185,19 @@ func (r *EndpointReconciler) tryAsyncCheck(crName, host string, port int, namesp
 		}()
 		return nil
 	default:
-		r.inFlight.Delete(crName)
+		release()
 		return errWorkersBusy
 	}
+}
+
+// claimCheck marks crName as having a TLS check in flight so callers that probe
+// the same endpoint (reconcile burst, periodic scan, rescan) never overlap. The
+// returned release must be called once the check finishes.
+func (r *EndpointReconciler) claimCheck(crName string) (release func(), ok bool) {
+	if _, running := r.inFlight.LoadOrStore(crName, struct{}{}); running {
+		return nil, false
+	}
+	return func() { r.inFlight.Delete(crName) }, true
 }
 
 func (r *EndpointReconciler) managerCtx() context.Context {
@@ -715,7 +726,15 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 					return
 				default:
 				}
-				r.performTLSCheck(ctx, item.name, item.host, item.port, item.namespace, false)
+				func() {
+					release, claimed := r.claimCheck(item.name)
+					if !claimed {
+						// The in-flight check refreshes this report; the next interval covers any gap.
+						return
+					}
+					defer release()
+					r.performTLSCheck(ctx, item.name, item.host, item.port, item.namespace, false)
+				}()
 			}
 		}()
 	}
