@@ -19,7 +19,33 @@ If a flag is set on the command line, its environment variable is ignored.
 | `--extra-tls-ports` | `TLS_COMPLIANCE_EXTRA_TLS_PORTS` | string | `""` | Comma-separated list of additional port numbers to treat as TLS endpoints (e.g., `12345,54321`). These are checked in addition to the built-in defaults (443, 2379, 2380, 5443, 5671, 6380, 6443, 7443, 8443, 9091, 9092, 9093, 9100, 9200, 9443, 10250, 10257, 10259) and any port named `https` or `https-*`. |
 | `--scan-all-ports` | `TLS_COMPLIANCE_SCAN_ALL_PORTS` | bool | `false` | Scan all declared TCP container ports on pods, not just known TLS ports. Useful for discovering TLS on non-standard ports that the default heuristics miss. Increases scan time and may produce more `NoTLS` reports. HTTP health-probe ports are still skipped. |
 | `--enumerate-ciphers` | `TLS_COMPLIANCE_ENUMERATE_CIPHERS` | bool | `true` | Enumerate all supported cipher suites per TLS version. When enabled, the operator performs multiple handshakes to discover every cipher suite each TLS version accepts. Disable for faster scans if you only need the first negotiated cipher. |
+| `--detect-cipher-preference` | `TLS_COMPLIANCE_DETECT_CIPHER_PREFERENCE` | bool | `false` | Detect whether TLS 1.2 endpoints prefer their own cipher order. Performs two extra handshakes offering the first two discovered suites in opposite orders; requires `--enumerate-ciphers` to have found at least two suites. The result is recorded as `status.serverPrefersOwnCiphers` on the report. |
 | `--metrics-per-endpoint` | `TLS_COMPLIANCE_METRICS_PER_ENDPOINT` | bool | `false` | Emit per-endpoint Prometheus metrics (certificate expiry, TLS version support, PQC readiness, forward secrecy). Leave off on large clusters (2000+ endpoints) to avoid high metric cardinality and Prometheus memory usage. Aggregate metrics (`tls_compliance_endpoints_total`) are always emitted regardless of this setting. |
+
+### Scan Window
+
+Restrict periodic scans to a daily time window. Outside the window the periodic
+scan cycle is skipped (new and changed resources are still checked promptly).
+The window is `[start, end)` in the configured timezone; overnight windows
+(e.g. `22:00`–`02:00`) are supported.
+
+| Flag | Env Var | Type | Default | Description |
+|------|---------|------|---------|-------------|
+| `--scan-window-start` | `TLS_COMPLIANCE_SCAN_WINDOW_START` | string | `""` | Start of the daily scan window in `HH:MM` format. Must be set together with `--scan-window-end` and differ from it. Empty (default) means no window restriction. |
+| `--scan-window-end` | `TLS_COMPLIANCE_SCAN_WINDOW_END` | string | `""` | End of the daily scan window in `HH:MM` format. Must be set together with `--scan-window-start`. Empty (default) means no window restriction. |
+| `--scan-window-timezone` | `TLS_COMPLIANCE_SCAN_WINDOW_TIMEZONE` | string | `UTC` | IANA timezone used to interpret the window boundaries (e.g. `America/New_York`). |
+
+The operator exits at startup if only one of `--scan-window-start`/`--scan-window-end`
+is set, if the two times are equal, or if a time is not valid `HH:MM`.
+
+Example: scan only between 22:00 and 02:00 US Eastern:
+
+```yaml
+args:
+- --scan-window-start=22:00
+- --scan-window-end=02:00
+- --scan-window-timezone=America/New_York
+```
 
 ## Rate Limiting
 
