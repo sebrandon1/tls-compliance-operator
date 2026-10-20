@@ -69,6 +69,8 @@ Requires **Go 1.26+**.
 | `pkg/endpoint/` | Endpoint extraction from K8s resources |
 | `pkg/export/` | Filter/sort/summary + CSV/JSON/YAML/JUnit/Markdown/HTML/SARIF export |
 | `pkg/tlsprofile/` | OpenShift TLS security profiles |
+| `pkg/fips/` | FIPS mode detection (procfs + Go runtime check) |
+| `pkg/hostvalidation/` | Reserved/internal host checks before probing targets |
 | `internal/metrics/` | Prometheus metrics |
 | `test/e2e/`, `test/parity/`, `test/testserver/` | Integration and fixture tests |
 
