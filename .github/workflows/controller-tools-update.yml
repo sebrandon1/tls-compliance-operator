@@ -107,6 +107,17 @@ jobs:
 
           echo "Makefile updated successfully"
 
+      - name: Setup Go
+        if: steps.check.outputs.needs_update == 'true'
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Regenerate manifests with the new version
+        if: steps.check.outputs.needs_update == 'true'
+        run: make manifests generate
+
       - name: Create Pull Request
         if: steps.check.outputs.needs_update == 'true'
         uses: peter-evans/create-pull-request@v8
@@ -121,6 +132,7 @@ jobs:
 
             ### Files Updated:
             - `Makefile`
+            - `config/crd/bases/*.yaml`, `config/rbac/role.yaml` and `zz_generated` files, if the new version changes the generated output
 
             ### Controller-Tools Release Notes
             https://github.com/kubernetes-sigs/controller-tools/releases/tag/${{ steps.controller_tools.outputs.version }}
