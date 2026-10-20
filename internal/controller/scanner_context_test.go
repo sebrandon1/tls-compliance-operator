@@ -344,3 +344,32 @@ func TestDrainInFlightChecks_TimesOutIfWorkerBlocked(t *testing.T) {
 	cancel()
 	waitWorkerIdle(t, r)
 }
+
+func TestTryAsyncCheck_DedupesInFlightReport(t *testing.T) {
+	checker := newBlockingChecker()
+	r := newAsyncCheckReconciler(t, checker, context.Background(), time.Minute)
+
+	if err := r.tryAsyncCheck("async-test", "example.com", 443, "default"); err != nil {
+		t.Fatalf("tryAsyncCheck() error = %v", err)
+	}
+	waitStarted(t, checker.started)
+
+	// A repeat for the same report is a no-op, not a second probe or a busy error.
+	if err := r.tryAsyncCheck("async-test", "example.com", 443, "default"); err != nil {
+		t.Fatalf("duplicate tryAsyncCheck() error = %v, want nil", err)
+	}
+	// A different report still hits the worker limit, and must not leave a stale guard.
+	if err := r.tryAsyncCheck("other", "example.com", 443, "default"); !errors.Is(err, errWorkersBusy) {
+		t.Fatalf("tryAsyncCheck(other) error = %v, want errWorkersBusy", err)
+	}
+	if _, stale := r.inFlight.Load("other"); stale {
+		t.Error("busy rejection left an in-flight entry behind")
+	}
+
+	close(checker.release)
+	waitWorkerIdle(t, r)
+
+	if _, stale := r.inFlight.Load("async-test"); stale {
+		t.Error("in-flight entry not cleared after the check finished")
+	}
+}

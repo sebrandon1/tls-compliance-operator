@@ -160,6 +160,9 @@ func (r *EndpointReconciler) tryAsyncCheck(crName, host string, port int, namesp
 	if r.skipIfCircuitOpen(crName) {
 		return nil
 	}
+	if _, running := r.inFlight.LoadOrStore(crName, struct{}{}); running {
+		return nil
+	}
 	r.initCheckSemaphore()
 	select {
 	case r.checkSem <- struct{}{}:
@@ -167,6 +170,7 @@ func (r *EndpointReconciler) tryAsyncCheck(crName, host string, port int, namesp
 		r.checkWg.Add(1)
 		go func() {
 			defer func() {
+				r.inFlight.Delete(crName)
 				r.checkWg.Done()
 				<-r.checkSem
 				metrics.RecordWorkerRelease()
@@ -180,6 +184,7 @@ func (r *EndpointReconciler) tryAsyncCheck(crName, host string, port int, namesp
 		}()
 		return nil
 	default:
+		r.inFlight.Delete(crName)
 		return errWorkersBusy
 	}
 }

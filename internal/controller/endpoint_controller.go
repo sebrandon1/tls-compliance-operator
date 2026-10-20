@@ -119,6 +119,7 @@ type EndpointReconciler struct {
 	checkSem              chan struct{}
 	checkSemOnce          sync.Once
 	checkWg               sync.WaitGroup
+	inFlight              sync.Map
 	nodeAddrMu            sync.RWMutex
 	nodeAddrCache         []string
 	nodeAddrExpiry        time.Time
