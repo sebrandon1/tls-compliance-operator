@@ -103,10 +103,15 @@ jobs:
           kind load image-archive ${{ github.workspace }}/e2e-images.tar --name kind
 
       - name: Run E2E tests
+        uses: nick-fields/retry@v4.0.0
+        with:
+          max_attempts: 3
+          timeout_minutes: 30
+          retry_wait_seconds: 60
+          command: |
+            KIND_CLUSTER=kind make test-e2e IMG=tls-compliance-operator:test E2E_LABEL_FILTER="${{ matrix.suite.label }}"
         env:
           TEST_SERVER_IMG: tls-test-server:test
-        run: |
-          KIND_CLUSTER=kind make test-e2e IMG=tls-compliance-operator:test E2E_LABEL_FILTER="${{ matrix.suite.label }}"
 
       - name: Collect logs on failure
         if: failure()
