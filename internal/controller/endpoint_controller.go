@@ -473,9 +473,17 @@ func (r *EndpointReconciler) handleTarget(ctx context.Context, target *securityv
 	return ctrl.Result{}, nil
 }
 
-func (r *EndpointReconciler) handleRescan(ctx context.Context, report *securityv1alpha1.TLSComplianceReport) (ctrl.Result, error) { //nolint:unparam // ctrl.Result required by handler signature
+func (r *EndpointReconciler) handleRescan(ctx context.Context, report *securityv1alpha1.TLSComplianceReport) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	logger.Info("rescan requested", "report", report.Name)
+
+	// Claim before consuming the annotation so a busy report keeps the request.
+	release, claimed := r.claimCheck(report.Name)
+	if !claimed {
+		logger.V(1).Info("rescan deferred, check already in flight", "report", report.Name)
+		return ctrl.Result{RequeueAfter: workerBusyRequeueDelay}, nil
+	}
+	defer release()
 
 	if err := r.updateWithRetry(ctx, report.Name, func(cr *securityv1alpha1.TLSComplianceReport) {
 		delete(cr.Annotations, securityv1alpha1.RescanAnnotation)

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
@@ -371,5 +372,112 @@ func TestTryAsyncCheck_DedupesInFlightReport(t *testing.T) {
 
 	if _, stale := r.inFlight.Load("async-test"); stale {
 		t.Error("in-flight entry not cleared after the check finished")
+	}
+}
+
+func TestClaimCheck_ExclusiveUntilReleased(t *testing.T) {
+	r := &EndpointReconciler{}
+
+	release, ok := r.claimCheck("cr")
+	if !ok {
+		t.Fatal("first claim should succeed")
+	}
+	if _, ok := r.claimCheck("cr"); ok {
+		t.Error("second claim for the same report should fail while held")
+	}
+	if _, ok := r.claimCheck("other"); !ok {
+		t.Error("claim for a different report should succeed")
+	}
+
+	release()
+	if _, ok := r.claimCheck("cr"); !ok {
+		t.Error("claim should succeed again after release")
+	}
+}
+
+func TestScanAllEndpoints_SkipsReportWithCheckInFlight(t *testing.T) {
+	crName := "scan-inflight-cr"
+	checker := &MockTLSChecker{
+		Result: &tlscheck.TLSCheckResult{SupportsTLS12: true, SupportsTLS13: true, CipherSuites: map[string][]string{}},
+	}
+	r := newCircuitCheckReconciler(t, crName, "inflight.example.com", checker)
+	r.Workers = 1
+
+	release, ok := r.claimCheck(crName)
+	if !ok {
+		t.Fatal("claim should succeed")
+	}
+	if err := r.scanAllEndpoints(context.Background()); err != nil {
+		t.Fatalf("scanAllEndpoints: %v", err)
+	}
+	if got := checker.CheckCount(); got != 0 {
+		t.Errorf("expected 0 checks while another check is in flight, got %d", got)
+	}
+
+	release()
+	if err := r.scanAllEndpoints(context.Background()); err != nil {
+		t.Fatalf("scanAllEndpoints: %v", err)
+	}
+	if got := checker.CheckCount(); got != 1 {
+		t.Errorf("expected 1 check once released, got %d", got)
+	}
+	if _, held := r.inFlight.Load(crName); held {
+		t.Error("scan left the in-flight entry behind")
+	}
+}
+
+func TestHandleRescan_DefersWhenCheckInFlight(t *testing.T) {
+	ctx := context.Background()
+	crName := "async-test" // the report created by newAsyncCheckReconciler
+	checker := &MockTLSChecker{
+		Result: &tlscheck.TLSCheckResult{SupportsTLS12: true, SupportsTLS13: true},
+	}
+	r := newAsyncCheckReconciler(t, checker, context.Background(), time.Minute)
+	if err := r.updateWithRetry(ctx, crName, func(cr *securityv1alpha1.TLSComplianceReport) {
+		cr.Annotations = map[string]string{securityv1alpha1.RescanAnnotation: "true"}
+	}); err != nil {
+		t.Fatalf("failed to annotate report: %v", err)
+	}
+	var report securityv1alpha1.TLSComplianceReport
+	if err := r.Get(ctx, client.ObjectKey{Name: crName}, &report); err != nil {
+		t.Fatalf("failed to get report: %v", err)
+	}
+
+	release, ok := r.claimCheck(crName)
+	if !ok {
+		t.Fatal("claim should succeed")
+	}
+	res, err := r.handleRescan(ctx, &report)
+	if err != nil {
+		t.Fatalf("handleRescan() error = %v", err)
+	}
+	if res.RequeueAfter != workerBusyRequeueDelay {
+		t.Errorf("RequeueAfter = %v, want %v", res.RequeueAfter, workerBusyRequeueDelay)
+	}
+	if checker.CheckCount() != 0 {
+		t.Errorf("expected no check while one is in flight, got %d", checker.CheckCount())
+	}
+	if err := r.Get(ctx, client.ObjectKey{Name: crName}, &report); err != nil {
+		t.Fatalf("failed to get report: %v", err)
+	}
+	if _, kept := report.Annotations[securityv1alpha1.RescanAnnotation]; !kept {
+		t.Fatal("rescan annotation was consumed although the request was deferred")
+	}
+
+	release()
+	if _, err := r.handleRescan(ctx, &report); err != nil {
+		t.Fatalf("handleRescan() error = %v", err)
+	}
+	if checker.CheckCount() == 0 {
+		t.Error("expected the rescan to run once the in-flight check finished")
+	}
+	if err := r.Get(ctx, client.ObjectKey{Name: crName}, &report); err != nil {
+		t.Fatalf("failed to get report: %v", err)
+	}
+	if _, kept := report.Annotations[securityv1alpha1.RescanAnnotation]; kept {
+		t.Error("rescan annotation should be consumed once the rescan runs")
+	}
+	if _, held := r.inFlight.Load(crName); held {
+		t.Error("rescan left the in-flight entry behind")
 	}
 }
