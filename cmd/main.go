@@ -571,7 +571,7 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 
 	endpointReconciler.StartPeriodicScan(ctx, cfg.scanInterval, mgr.Elected())
 	if !cfg.runOnce {
-		endpointReconciler.StartCleanupLoop(ctx, cfg.cleanupInterval)
+		endpointReconciler.StartCleanupLoop(ctx, cfg.cleanupInterval, mgr.Elected())
 		if profileFetcher != nil {
 			profileFetcher.StartPeriodicRefresh(ctx, cfg.profileRefreshInterval)
 		}
