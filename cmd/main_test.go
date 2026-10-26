@@ -570,22 +570,25 @@ func TestResolveEnvConfig_NamespaceRateLimits(t *testing.T) {
 	}
 }
 
-func TestCheckConfig(t *testing.T) {
-	validCfg := func() *operatorConfig {
-		return &operatorConfig{
-			workers:           5,
-			maxRetries:        3,
-			rateLimit:         10.0,
-			rateBurst:         20,
-			scanInterval:      1 * time.Hour,
-			cleanupInterval:   5 * time.Minute,
-			tlsCheckTimeout:   5 * time.Second,
-			maxHistoryEntries: 10,
-		}
+// validOperatorConfig returns an operatorConfig that passes checkConfig, so a
+// test case can mutate a single field and expect only that field's error.
+func validOperatorConfig() *operatorConfig {
+	return &operatorConfig{
+		workers:                5,
+		maxRetries:             3,
+		rateLimit:              10.0,
+		rateBurst:              20,
+		scanInterval:           1 * time.Hour,
+		cleanupInterval:        5 * time.Minute,
+		profileRefreshInterval: 5 * time.Minute,
+		tlsCheckTimeout:        5 * time.Second,
+		maxHistoryEntries:      10,
 	}
+}
 
+func TestCheckConfig(t *testing.T) {
 	t.Run("valid config", func(t *testing.T) {
-		warnings, err := checkConfig(validCfg())
+		warnings, err := checkConfig(validOperatorConfig())
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -595,7 +598,7 @@ func TestCheckConfig(t *testing.T) {
 	})
 
 	t.Run("rate-limit zero", func(t *testing.T) {
-		cfg := validCfg()
+		cfg := validOperatorConfig()
 		cfg.rateLimit = 0
 		_, err := checkConfig(cfg)
 		if err == nil || !strings.Contains(err.Error(), "rate-limit") {
@@ -604,7 +607,7 @@ func TestCheckConfig(t *testing.T) {
 	})
 
 	t.Run("rate-limit negative", func(t *testing.T) {
-		cfg := validCfg()
+		cfg := validOperatorConfig()
 		cfg.rateLimit = -1
 		_, err := checkConfig(cfg)
 		if err == nil || !strings.Contains(err.Error(), "rate-limit") {
@@ -613,7 +616,7 @@ func TestCheckConfig(t *testing.T) {
 	})
 
 	t.Run("rate-burst too low", func(t *testing.T) {
-		cfg := validCfg()
+		cfg := validOperatorConfig()
 		cfg.rateBurst = 0
 		_, err := checkConfig(cfg)
 		if err == nil || !strings.Contains(err.Error(), "rate-burst") {
@@ -622,7 +625,7 @@ func TestCheckConfig(t *testing.T) {
 	})
 
 	t.Run("rate-burst too high", func(t *testing.T) {
-		cfg := validCfg()
+		cfg := validOperatorConfig()
 		cfg.rateBurst = 1001
 		_, err := checkConfig(cfg)
 		if err == nil || !strings.Contains(err.Error(), "rate-burst") {
@@ -631,7 +634,7 @@ func TestCheckConfig(t *testing.T) {
 	})
 
 	t.Run("client-cert without client-key", func(t *testing.T) {
-		cfg := validCfg()
+		cfg := validOperatorConfig()
 		cfg.clientCertPath = "/path/to/cert.pem"
 		_, err := checkConfig(cfg)
 		if err == nil || !strings.Contains(err.Error(), "client-key") {
@@ -640,7 +643,7 @@ func TestCheckConfig(t *testing.T) {
 	})
 
 	t.Run("client-key without client-cert", func(t *testing.T) {
-		cfg := validCfg()
+		cfg := validOperatorConfig()
 		cfg.clientKeyPath = "/path/to/key.pem"
 		_, err := checkConfig(cfg)
 		if err == nil || !strings.Contains(err.Error(), "client-cert") {
@@ -649,7 +652,7 @@ func TestCheckConfig(t *testing.T) {
 	})
 
 	t.Run("both client-cert and client-key is valid", func(t *testing.T) {
-		cfg := validCfg()
+		cfg := validOperatorConfig()
 		cfg.clientCertPath = "/path/to/cert.pem"
 		cfg.clientKeyPath = "/path/to/key.pem"
 		_, err := checkConfig(cfg)
@@ -659,7 +662,7 @@ func TestCheckConfig(t *testing.T) {
 	})
 
 	t.Run("include and exclude namespaces warns", func(t *testing.T) {
-		cfg := validCfg()
+		cfg := validOperatorConfig()
 		cfg.includeNamespaces = "ns1"
 		cfg.excludeNamespaces = "ns2"
 		warnings, err := checkConfig(cfg)
@@ -672,7 +675,7 @@ func TestCheckConfig(t *testing.T) {
 	})
 
 	t.Run("workers much higher than rate-limit warns", func(t *testing.T) {
-		cfg := validCfg()
+		cfg := validOperatorConfig()
 		cfg.workers = 50
 		cfg.rateLimit = 1.0
 		warnings, err := checkConfig(cfg)
@@ -691,7 +694,7 @@ func TestCheckConfig(t *testing.T) {
 	})
 
 	t.Run("workers proportional to rate-limit no warning", func(t *testing.T) {
-		cfg := validCfg()
+		cfg := validOperatorConfig()
 		cfg.workers = 5
 		cfg.rateLimit = 10.0
 		warnings, err := checkConfig(cfg)
@@ -707,21 +710,8 @@ func TestCheckConfig(t *testing.T) {
 }
 
 func TestCheckConfig_ReportRetentionDays(t *testing.T) {
-	validCfg := func() *operatorConfig {
-		return &operatorConfig{
-			workers:           5,
-			maxRetries:        3,
-			rateLimit:         10.0,
-			rateBurst:         20,
-			scanInterval:      1 * time.Hour,
-			cleanupInterval:   5 * time.Minute,
-			tlsCheckTimeout:   5 * time.Second,
-			maxHistoryEntries: 10,
-		}
-	}
-
 	t.Run("negative retention days", func(t *testing.T) {
-		cfg := validCfg()
+		cfg := validOperatorConfig()
 		cfg.reportRetentionDays = -1
 		_, err := checkConfig(cfg)
 		if err == nil || !strings.Contains(err.Error(), "report-retention-days") {
@@ -730,7 +720,7 @@ func TestCheckConfig_ReportRetentionDays(t *testing.T) {
 	})
 
 	t.Run("retention days too high", func(t *testing.T) {
-		cfg := validCfg()
+		cfg := validOperatorConfig()
 		cfg.reportRetentionDays = 3651
 		_, err := checkConfig(cfg)
 		if err == nil || !strings.Contains(err.Error(), "report-retention-days") {
@@ -740,21 +730,8 @@ func TestCheckConfig_ReportRetentionDays(t *testing.T) {
 }
 
 func TestCheckConfig_InvalidMaxHistoryEntries(t *testing.T) {
-	validCfg := func() *operatorConfig {
-		return &operatorConfig{
-			workers:           5,
-			maxRetries:        3,
-			rateLimit:         10.0,
-			rateBurst:         20,
-			scanInterval:      1 * time.Hour,
-			cleanupInterval:   5 * time.Minute,
-			tlsCheckTimeout:   5 * time.Second,
-			maxHistoryEntries: 10,
-		}
-	}
-
 	t.Run("zero max history entries", func(t *testing.T) {
-		cfg := validCfg()
+		cfg := validOperatorConfig()
 		cfg.maxHistoryEntries = 0
 		_, err := checkConfig(cfg)
 		if err == nil || !strings.Contains(err.Error(), "max-history-entries") {
@@ -763,7 +740,7 @@ func TestCheckConfig_InvalidMaxHistoryEntries(t *testing.T) {
 	})
 
 	t.Run("max history entries too high", func(t *testing.T) {
-		cfg := validCfg()
+		cfg := validOperatorConfig()
 		cfg.maxHistoryEntries = 101
 		_, err := checkConfig(cfg)
 		if err == nil || !strings.Contains(err.Error(), "max-history-entries") {
@@ -773,21 +750,8 @@ func TestCheckConfig_InvalidMaxHistoryEntries(t *testing.T) {
 }
 
 func TestCheckConfig_MaxRetries(t *testing.T) {
-	validCfg := func() *operatorConfig {
-		return &operatorConfig{
-			workers:           5,
-			maxRetries:        3,
-			rateLimit:         10.0,
-			rateBurst:         20,
-			scanInterval:      1 * time.Hour,
-			cleanupInterval:   5 * time.Minute,
-			tlsCheckTimeout:   5 * time.Second,
-			maxHistoryEntries: 10,
-		}
-	}
-
 	t.Run("negative retries", func(t *testing.T) {
-		cfg := validCfg()
+		cfg := validOperatorConfig()
 		cfg.maxRetries = -1
 		_, err := checkConfig(cfg)
 		if err == nil || !strings.Contains(err.Error(), "max-retries") {
@@ -796,7 +760,7 @@ func TestCheckConfig_MaxRetries(t *testing.T) {
 	})
 
 	t.Run("retries too high", func(t *testing.T) {
-		cfg := validCfg()
+		cfg := validOperatorConfig()
 		cfg.maxRetries = 11
 		_, err := checkConfig(cfg)
 		if err == nil || !strings.Contains(err.Error(), "max-retries") {
@@ -805,7 +769,7 @@ func TestCheckConfig_MaxRetries(t *testing.T) {
 	})
 
 	t.Run("workers too low", func(t *testing.T) {
-		cfg := validCfg()
+		cfg := validOperatorConfig()
 		cfg.workers = 0
 		_, err := checkConfig(cfg)
 		if err == nil || !strings.Contains(err.Error(), "workers") {
@@ -815,21 +779,8 @@ func TestCheckConfig_MaxRetries(t *testing.T) {
 }
 
 func TestCheckConfig_OutputFormat(t *testing.T) {
-	validCfg := func() *operatorConfig {
-		return &operatorConfig{
-			workers:           5,
-			maxRetries:        3,
-			rateLimit:         10.0,
-			rateBurst:         20,
-			scanInterval:      1 * time.Hour,
-			cleanupInterval:   5 * time.Minute,
-			tlsCheckTimeout:   5 * time.Second,
-			maxHistoryEntries: 10,
-		}
-	}
-
 	t.Run("invalid format", func(t *testing.T) {
-		cfg := validCfg()
+		cfg := validOperatorConfig()
 		cfg.outputFormat = "xml"
 		_, err := checkConfig(cfg)
 		if err == nil || !strings.Contains(err.Error(), "output-format") {
@@ -838,7 +789,7 @@ func TestCheckConfig_OutputFormat(t *testing.T) {
 	})
 
 	t.Run("output-file without output-format", func(t *testing.T) {
-		cfg := validCfg()
+		cfg := validOperatorConfig()
 		cfg.outputFile = "/tmp/out.csv"
 		_, err := checkConfig(cfg)
 		if err == nil || !strings.Contains(err.Error(), "output-file requires") {
@@ -1110,4 +1061,44 @@ func TestReadyzCheck_BeforeAndAfterScan(t *testing.T) {
 	if err := checker(nil); err != nil {
 		t.Errorf("readyz should return nil after initial scan, got: %v", err)
 	}
+}
+
+func TestCheckConfig_Durations(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*operatorConfig)
+		wantErr string
+	}{
+		{"scan-interval zero", func(c *operatorConfig) { c.scanInterval = 0 }, "--scan-interval"},
+		{"scan-interval negative", func(c *operatorConfig) { c.scanInterval = -time.Second }, "--scan-interval"},
+		{"cleanup-interval zero", func(c *operatorConfig) { c.cleanupInterval = 0 }, "--cleanup-interval"},
+		{"cleanup-interval negative", func(c *operatorConfig) { c.cleanupInterval = -time.Minute }, "--cleanup-interval"},
+		{"profile-refresh-interval zero", func(c *operatorConfig) { c.profileRefreshInterval = 0 }, "--profile-refresh-interval"},
+		{"profile-refresh-interval negative", func(c *operatorConfig) { c.profileRefreshInterval = -time.Second }, "--profile-refresh-interval"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validOperatorConfig()
+			tt.mutate(cfg)
+			_, err := checkConfig(cfg)
+			if err == nil {
+				t.Fatalf("expected error for %s, got nil", tt.name)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("expected error mentioning %s, got: %v", tt.wantErr, err)
+			}
+			if !strings.Contains(err.Error(), "must be greater than zero") {
+				t.Errorf("expected error to explain the requirement, got: %v", err)
+			}
+		})
+	}
+
+	t.Run("valid intervals accepted", func(t *testing.T) {
+		cfg := validOperatorConfig()
+		cfg.scanInterval = 30 * time.Minute
+		if _, err := checkConfig(cfg); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
 }

@@ -314,6 +314,21 @@ func checkConfig(cfg *operatorConfig) (warnings []string, _ error) {
 		return nil, fmt.Errorf("invalid --rate-burst value, must be between 1 and 1000, got %d", cfg.rateBurst)
 	}
 
+	// These intervals are handed to time.NewTicker, which panics on a
+	// non-positive duration; an unrecovered panic in the ticker goroutine
+	// terminates the manager.
+	if cfg.scanInterval <= 0 {
+		return nil, fmt.Errorf("invalid --scan-interval value %s: must be greater than zero", cfg.scanInterval)
+	}
+
+	if cfg.cleanupInterval <= 0 {
+		return nil, fmt.Errorf("invalid --cleanup-interval value %s: must be greater than zero", cfg.cleanupInterval)
+	}
+
+	if cfg.profileRefreshInterval <= 0 {
+		return nil, fmt.Errorf("invalid --profile-refresh-interval value %s: must be greater than zero", cfg.profileRefreshInterval)
+	}
+
 	if cfg.includeNamespaces != "" && cfg.excludeNamespaces != "" {
 		warnings = append(warnings, "WARNING: both --include-namespaces and --exclude-namespaces are set; --include-namespaces takes precedence")
 	}

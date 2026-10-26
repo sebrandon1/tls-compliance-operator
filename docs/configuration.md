@@ -12,8 +12,8 @@ If a flag is set on the command line, its environment variable is ignored.
 
 | Flag | Env Var | Type | Default | Description |
 |------|---------|------|---------|-------------|
-| `--scan-interval` | `TLS_COMPLIANCE_SCAN_INTERVAL` | duration | `1h` | How often the operator re-checks all known TLS endpoints. Each cycle scans every Service, Ingress, Route, and Pod endpoint. Shorter intervals give faster detection but increase API server and network load. |
-| `--cleanup-interval` | `TLS_COMPLIANCE_CLEANUP_INTERVAL` | duration | `5m` | How often the operator removes TLSComplianceReport CRs whose source resource (Service, Ingress, Route) has been deleted. |
+| `--scan-interval` | `TLS_COMPLIANCE_SCAN_INTERVAL` | duration | `1h` | How often the operator re-checks all known TLS endpoints. Each cycle scans every Service, Ingress, Route, and Pod endpoint. Shorter intervals give faster detection but increase API server and network load. Must be greater than `0`; zero or negative values are rejected at startup. |
+| `--cleanup-interval` | `TLS_COMPLIANCE_CLEANUP_INTERVAL` | duration | `5m` | How often the operator removes TLSComplianceReport CRs whose source resource (Service, Ingress, Route) has been deleted. Must be greater than `0`; zero or negative values are rejected at startup. |
 | `--tls-check-timeout` | `TLS_COMPLIANCE_CHECK_TIMEOUT` | duration | `5s` | Timeout for each individual TLS connection attempt. The operator probes all TLS versions (1.0, 1.1, 1.2, 1.3, SSLv3) in parallel, so worst-case time per endpoint is roughly 1x this value plus a small overhead for the ML-KEM active probe. Increase on high-latency networks. |
 | `--workers` | `TLS_COMPLIANCE_WORKERS` | int | `5` | Number of concurrent goroutines used during periodic scans. Range: 1-50. Higher values scan faster but use more CPU and network. This also controls `MaxConcurrentReconciles` for the controller work queue. |
 | `--extra-tls-ports` | `TLS_COMPLIANCE_EXTRA_TLS_PORTS` | string | `""` | Comma-separated list of additional port numbers to treat as TLS endpoints (e.g., `12345,54321`). These are checked in addition to the built-in defaults (443, 2379, 2380, 5443, 5671, 6380, 6443, 7443, 8443, 9091, 9092, 9093, 9100, 9200, 9443, 10250, 10257, 10259) and any port named `https` or `https-*`. |
@@ -113,7 +113,7 @@ args:
 
 | Flag | Env Var | Type | Default | Description |
 |------|---------|------|---------|-------------|
-| `--profile-refresh-interval` | `TLS_COMPLIANCE_PROFILE_REFRESH_INTERVAL` | duration | `5m` | How often to re-fetch OpenShift TLS security profile configuration (APIServer, IngressController, KubeletConfig). Only used when running on OpenShift. Ignored on vanilla Kubernetes. |
+| `--profile-refresh-interval` | `TLS_COMPLIANCE_PROFILE_REFRESH_INTERVAL` | duration | `5m` | How often to re-fetch OpenShift TLS security profile configuration (APIServer, IngressController, KubeletConfig). Only used when running on OpenShift. Ignored on vanilla Kubernetes. Must be greater than `0`; zero or negative values are rejected at startup. |
 
 ## Logging
 
