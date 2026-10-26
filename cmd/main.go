@@ -459,6 +459,12 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 	if err == nil {
 		setupLog.Info("OpenShift Config API detected, enabling TLS security profile monitoring")
 		profileFetcher = tlsprofile.NewFetcher(mgr.GetClient())
+
+		// Fetch profiles synchronously, before the manager (and therefore the
+		// first scan) starts. In --run-once mode this is the only fetch; in
+		// manager mode StartPeriodicRefresh only re-fetches on later ticks.
+		// A failure here is non-fatal: scanning continues without profile data.
+		profileFetcher.RefreshAll(ctx)
 	} else {
 		setupLog.Info("OpenShift Config API not detected, skipping TLS security profile monitoring")
 	}
