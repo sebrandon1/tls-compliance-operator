@@ -24,6 +24,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1883,7 +1884,7 @@ func TestWatchReports_CancelledContext(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	if err := watchReports(ctx, c, "", &buf); err != nil {
+	if err := watchReports(ctx, c, "", &buf, io.Discard); err != nil {
 		t.Fatalf("watchReports() error = %v", err)
 	}
 	if !strings.Contains(buf.String(), "svc-443") {
@@ -1905,11 +1906,161 @@ func TestWatchReports_NamedMissing(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	if err := watchReports(ctx, c, "missing-report", &buf); err != nil {
+	if err := watchReports(ctx, c, "missing-report", &buf, io.Discard); err != nil {
 		t.Fatalf("watchReports() error = %v", err)
 	}
 	if !strings.Contains(buf.String(), "NAME") {
 		t.Errorf("expected table header while waiting, got %q", buf.String())
+	}
+}
+
+// closingWatchClient wraps a fake client and closes its first watch
+// immediately, letting tests exercise the reconnect path. beforeClose runs
+// just before the first watch is handed back, so tests can mutate objects while
+// the client is "disconnected".
+type closingWatchClient struct {
+	client.WithWatch
+	watches     atomic.Int32
+	beforeClose func()
+	alwaysClose bool
+	cancelAfter func()
+}
+
+func (c *closingWatchClient) Watch(
+	ctx context.Context,
+	obj client.ObjectList,
+	opts ...client.ListOption,
+) (watch.Interface, error) {
+	n := c.watches.Add(1)
+	if n == 1 && c.beforeClose != nil {
+		c.beforeClose()
+	}
+	if c.alwaysClose || n == 1 {
+		w := watch.NewFake()
+		w.Stop()
+		return w, nil
+	}
+	if c.cancelAfter != nil {
+		c.cancelAfter()
+	}
+	return c.WithWatch.Watch(ctx, obj, opts...)
+}
+
+func TestWatchReports_ReconnectsAfterWatchClose(t *testing.T) {
+	report := sampleWatchReport("svc-443", "svc.example", "Compliant")
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(report).Build()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	c := &closingWatchClient{
+		WithWatch: fakeClient,
+		beforeClose: func() {
+			updated := report.DeepCopy()
+			updated.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusNonCompliant
+			if err := fakeClient.Update(ctx, updated); err != nil {
+				t.Errorf("updating report while disconnected: %v", err)
+			}
+		},
+		cancelAfter: cancel,
+	}
+
+	outputFormat = "table"
+	labelSelector = ""
+	filterOpts = export.FilterOptions{}
+	oldDelay := watchReconnectDelay
+	watchReconnectDelay = 0
+	defer func() {
+		outputFormat = ""
+		labelSelector = ""
+		filterOpts = export.FilterOptions{}
+		watchReconnectDelay = oldDelay
+	}()
+
+	var stdout, stderr bytes.Buffer
+	if err := watchReports(ctx, c, "", &stdout, &stderr); err != nil {
+		t.Fatalf("watchReports() error = %v", err)
+	}
+
+	if got := c.watches.Load(); got < 2 {
+		t.Fatalf("expected the watch to be re-established, got %d Watch calls", got)
+	}
+	if !strings.Contains(stderr.String(), "watch closed; reconnecting (1/5)") && !strings.Contains(stderr.String(), "watch closed; reconnecting") {
+		t.Errorf("expected a reconnect warning on stderr, got %q", stderr.String())
+	}
+	if n := strings.Count(stdout.String(), "svc-443"); n < 2 {
+		t.Errorf("expected the report before and after the reconnect, got %d rows: %q", n, stdout.String())
+	}
+}
+
+func TestWatchReports_GivesUpAfterRepeatedCloses(t *testing.T) {
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	c := &closingWatchClient{WithWatch: fakeClient, alwaysClose: true}
+
+	outputFormat = "table"
+	labelSelector = ""
+	filterOpts = export.FilterOptions{}
+	oldDelay := watchReconnectDelay
+	watchReconnectDelay = 0
+	defer func() {
+		outputFormat = ""
+		labelSelector = ""
+		filterOpts = export.FilterOptions{}
+		watchReconnectDelay = oldDelay
+	}()
+
+	var stderr bytes.Buffer
+	err := watchReports(context.Background(), c, "", io.Discard, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "giving up") {
+		t.Fatalf("expected a give-up error, got %v", err)
+	}
+	if got := c.watches.Load(); got != int32(watchMaxReconnectAttempts)+1 {
+		t.Errorf("expected %d Watch calls, got %d", watchMaxReconnectAttempts+1, got)
+	}
+	if n := strings.Count(stderr.String(), "reconnecting"); n != watchMaxReconnectAttempts {
+		t.Errorf("expected %d reconnect warnings, got %d", watchMaxReconnectAttempts, n)
+	}
+}
+
+func TestWatchReports_PrintsDeletionOnReconnect(t *testing.T) {
+	keep := sampleWatchReport("keep-443", "keep.example", "Compliant")
+	gone := sampleWatchReport("gone-443", "gone.example", "Compliant")
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(keep, gone).Build()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	c := &closingWatchClient{
+		WithWatch: fakeClient,
+		beforeClose: func() {
+			if err := fakeClient.Delete(ctx, gone); err != nil {
+				t.Errorf("deleting report while disconnected: %v", err)
+			}
+		},
+		cancelAfter: cancel,
+	}
+
+	outputFormat = "wide"
+	labelSelector = ""
+	filterOpts = export.FilterOptions{}
+	oldDelay := watchReconnectDelay
+	watchReconnectDelay = 0
+	defer func() {
+		outputFormat = ""
+		labelSelector = ""
+		filterOpts = export.FilterOptions{}
+		watchReconnectDelay = oldDelay
+	}()
+
+	var stdout, stderr bytes.Buffer
+	if err := watchReports(ctx, c, "", &stdout, &stderr); err != nil {
+		t.Fatalf("watchReports() error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "gone-443") || !strings.Contains(stdout.String(), "Deleted") {
+		t.Errorf("expected a Deleted row for the report removed while disconnected, got %q", stdout.String())
+	}
+	if strings.Contains(stderr.String(), "reconnecting (2/5)") {
+		t.Errorf("unexpected extra reconnect: %q", stderr.String())
 	}
 }
 
@@ -1949,7 +2100,7 @@ func TestWatchReports_InvalidSelector(t *testing.T) {
 	labelSelector = "!!invalid"
 	defer func() { labelSelector = "" }()
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
-	err := watchReports(context.Background(), c, "", io.Discard)
+	err := watchReports(context.Background(), c, "", io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "parsing label selector") {
 		t.Fatalf("error = %v", err)
 	}

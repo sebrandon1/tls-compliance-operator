@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"text/tabwriter"
 	"time"
 
@@ -117,18 +118,106 @@ func runGetWatch(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		name = args[0]
 	}
-	return watchReports(cmd.Context(), c, name, cmd.OutOrStdout())
+	return watchReports(cmd.Context(), c, name, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
-func watchReports(ctx context.Context, c client.WithWatch, name string, w io.Writer) error {
+// watchMaxReconnectAttempts bounds how many times a watch that keeps closing
+// without delivering events is re-established before the command gives up, so
+// a permanently broken API server cannot spin forever.
+const watchMaxReconnectAttempts = 5
+
+// watchReconnectDelay is the pause before re-listing after an unexpected watch
+// close. It is a variable so tests do not have to sleep.
+var watchReconnectDelay = time.Second
+
+// watchReports prints an initial snapshot, then streams changes. The API server
+// closes un-timed watches periodically (resource-version expiry after 410 Gone,
+// apiserver restart, proxy timeouts); a closed channel means "resume from a
+// fresh list", not "the stream ended". Reconnecting keeps `--watch` running
+// until the context is cancelled instead of exiting 0 as if it were done.
+func watchReports(ctx context.Context, c client.WithWatch, name string, w, errW io.Writer) error {
+	seen := make(map[string]securityv1alpha1.TLSComplianceReport)
+	printed := false
+	reconnects := 0
+
+	for {
+		reports, resourceVersion, err := listWatchReports(ctx, c, name)
+		if err != nil {
+			return err
+		}
+
+		if !printed {
+			if err := writeWatchSnapshot(w, reports); err != nil {
+				return err
+			}
+			printed = true
+			for i := range reports {
+				seen[reportKey(&reports[i])] = reports[i]
+			}
+		} else if err := writeWatchDelta(w, reports, seen); err != nil {
+			return err
+		}
+
+		if ctx.Err() != nil {
+			// Ctrl-C and other cancellations are a deliberate stop, not an error.
+			return nil //nolint:nilerr // context cancellation must exit 0
+		}
+
+		watchOpts, err := reportListOptions(resourceVersion)
+		if err != nil {
+			return err
+		}
+		watcher, err := c.Watch(ctx, &securityv1alpha1.TLSComplianceReportList{}, watchOpts...)
+		if err != nil {
+			return fmt.Errorf("watching TLSComplianceReports: %w", err)
+		}
+
+		sawEvent, watchErr := consumeWatch(ctx, watcher, name, w, seen)
+		watcher.Stop()
+		if watchErr != nil {
+			return watchErr
+		}
+		if ctx.Err() != nil {
+			// Ctrl-C and other cancellations are a deliberate stop, not an error.
+			return nil //nolint:nilerr // context cancellation must exit 0
+		}
+
+		if sawEvent {
+			reconnects = 0
+		}
+		reconnects++
+		if reconnects > watchMaxReconnectAttempts {
+			return fmt.Errorf(
+				"TLSComplianceReport watch closed %d times without a stable connection; giving up",
+				watchMaxReconnectAttempts)
+		}
+		if errW != nil {
+			fmt.Fprintf(errW, "warning: TLSComplianceReport watch closed; reconnecting (%d/%d)\n",
+				reconnects, watchMaxReconnectAttempts)
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(watchReconnectDelay):
+		}
+	}
+}
+
+// listWatchReports fetches the filtered, sorted reports and the list
+// resourceVersion to resume watching from.
+func listWatchReports(
+	ctx context.Context,
+	c client.WithWatch,
+	name string,
+) ([]securityv1alpha1.TLSComplianceReport, string, error) {
 	listOpts, err := reportListOptions("")
 	if err != nil {
-		return err
+		return nil, "", err
 	}
 
 	var reportList securityv1alpha1.TLSComplianceReportList
 	if err := c.List(ctx, &reportList, listOpts...); err != nil {
-		return fmt.Errorf("listing TLSComplianceReports: %w", err)
+		return nil, "", fmt.Errorf("listing TLSComplianceReports: %w", err)
 	}
 
 	reports := reportList.Items
@@ -137,37 +226,104 @@ func watchReports(ctx context.Context, c client.WithWatch, name string, w io.Wri
 	}
 	reports, err = export.FilterReports(reports, &filterOpts)
 	if err != nil {
-		return err
+		return nil, "", err
 	}
 	export.SortReports(reports, sortBy)
+	return reports, reportList.ResourceVersion, nil
+}
 
-	if err := writeWatchSnapshot(w, reports); err != nil {
-		return err
-	}
-
-	watchOpts, err := reportListOptions(reportList.ResourceVersion)
-	if err != nil {
-		return err
-	}
-	watcher, err := c.Watch(ctx, &securityv1alpha1.TLSComplianceReportList{}, watchOpts...)
-	if err != nil {
-		return fmt.Errorf("watching TLSComplianceReports: %w", err)
-	}
-	defer watcher.Stop()
-
+// consumeWatch forwards events to the writer and records them in seen. It
+// returns true as soon as one event arrives, so a watch that delivers data and
+// later closes is not counted as a failed reconnect.
+func consumeWatch(
+	ctx context.Context,
+	watcher watch.Interface,
+	name string,
+	w io.Writer,
+	seen map[string]securityv1alpha1.TLSComplianceReport,
+) (bool, error) {
+	sawEvent := false
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return sawEvent, nil
 		case ev, ok := <-watcher.ResultChan():
 			if !ok {
-				return nil
+				return sawEvent, nil
 			}
+			sawEvent = true
 			if err := handleGetWatchEvent(w, ev, name); err != nil {
-				return err
+				return sawEvent, err
 			}
+			recordWatchEvent(seen, ev, name)
 		}
 	}
+}
+
+// recordWatchEvent mirrors a watch event into the seen map used to suppress
+// duplicate rows after a reconnect relist.
+func recordWatchEvent(
+	seen map[string]securityv1alpha1.TLSComplianceReport,
+	ev watch.Event,
+	name string,
+) {
+	report, ok := ev.Object.(*securityv1alpha1.TLSComplianceReport)
+	if !ok || report == nil {
+		return
+	}
+	if ev.Type == watch.Deleted {
+		delete(seen, reportKey(report))
+		return
+	}
+	if ev.Type != watch.Added && ev.Type != watch.Modified {
+		return
+	}
+	if match, err := reportMatchesGetFilters(report, name); err != nil || !match {
+		return
+	}
+	seen[reportKey(report)] = *report
+}
+
+// writeWatchDelta prints what changed while the watch was disconnected: new or
+// modified reports, and reports that disappeared, without re-printing rows the
+// caller has already seen.
+func writeWatchDelta(
+	w io.Writer,
+	reports []securityv1alpha1.TLSComplianceReport,
+	seen map[string]securityv1alpha1.TLSComplianceReport,
+) error {
+	current := make(map[string]struct{}, len(reports))
+	for i := range reports {
+		key := reportKey(&reports[i])
+		current[key] = struct{}{}
+		if prev, known := seen[key]; known && prev.ResourceVersion == reports[i].ResourceVersion {
+			continue
+		}
+		if err := writeWatchEvent(w, &reports[i], false); err != nil {
+			return err
+		}
+		seen[key] = reports[i]
+	}
+
+	missing := make([]string, 0, len(seen))
+	for key := range seen {
+		if _, ok := current[key]; !ok {
+			missing = append(missing, key)
+		}
+	}
+	sort.Strings(missing)
+	for _, key := range missing {
+		gone := seen[key]
+		if err := writeWatchEvent(w, &gone, true); err != nil {
+			return err
+		}
+		delete(seen, key)
+	}
+	return nil
+}
+
+func reportKey(report *securityv1alpha1.TLSComplianceReport) string {
+	return report.Namespace + "/" + report.Name
 }
 
 func handleGetWatchEvent(w io.Writer, ev watch.Event, name string) error {
