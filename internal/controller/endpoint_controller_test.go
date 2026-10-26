@@ -29,6 +29,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -1059,7 +1060,9 @@ func TestEndpointReconciler_StartCleanupLoop(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	reconciler.StartCleanupLoop(ctx, 100*time.Millisecond)
+	elected := make(chan struct{})
+	close(elected)
+	reconciler.StartCleanupLoop(ctx, 100*time.Millisecond, elected)
 	time.Sleep(150 * time.Millisecond)
 	cancel()
 	time.Sleep(50 * time.Millisecond)
@@ -2804,7 +2807,9 @@ func TestCleanupLoop_RemovesOrphanedCRs(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	reconciler.StartCleanupLoop(ctx, 50*time.Millisecond)
+	elected := make(chan struct{})
+	close(elected)
+	reconciler.StartCleanupLoop(ctx, 50*time.Millisecond, elected)
 	time.Sleep(150 * time.Millisecond)
 	cancel()
 	time.Sleep(50 * time.Millisecond)
@@ -5933,3 +5938,98 @@ func TestGetNodeAddresses_ExpiredListError(t *testing.T) {
 
 // Ensure _ satisfies the client.Object interface for compile-time check
 var _ client.Object = &securityv1alpha1.TLSComplianceReport{}
+
+// orphanedReportFixture is a report whose source Service does not exist, so the
+// cleanup loop should delete it on its first pass.
+func orphanedReportFixture() *securityv1alpha1.TLSComplianceReport {
+	return &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "orphaned-cr"},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host:            "gone-svc.default",
+			Port:            443,
+			SourceKind:      securityv1alpha1.SourceKindService,
+			SourceNamespace: testNamespace,
+			SourceName:      "gone-svc",
+		},
+	}
+}
+
+func waitForReportDeletion(t *testing.T, fakeClient client.Client, name string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		err := fakeClient.Get(context.Background(), types.NamespacedName{Name: name}, &securityv1alpha1.TLSComplianceReport{})
+		if apierrors.IsNotFound(err) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("report %q still present after cleanup, Get error: %v", name, err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestCleanupLoop_WaitsForLeaderElection(t *testing.T) {
+	scheme := newTestScheme()
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(orphanedReportFixture()).
+		Build()
+
+	reconciler := &EndpointReconciler{Client: fakeClient, Scheme: scheme}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	elected := make(chan struct{})
+	reconciler.StartCleanupLoop(ctx, 20*time.Millisecond, elected)
+
+	// Many tick intervals pass without a leader: nothing may be deleted.
+	time.Sleep(150 * time.Millisecond)
+	if err := fakeClient.Get(ctx, types.NamespacedName{Name: "orphaned-cr"}, &securityv1alpha1.TLSComplianceReport{}); err != nil {
+		t.Fatalf("cleanup ran before leader election, orphaned report already gone: %v", err)
+	}
+
+	close(elected)
+	waitForReportDeletion(t, fakeClient, "orphaned-cr")
+}
+
+func TestCleanupLoop_ContextCancelBeforeElection(t *testing.T) {
+	scheme := newTestScheme()
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(orphanedReportFixture()).
+		Build()
+
+	reconciler := &EndpointReconciler{Client: fakeClient, Scheme: scheme}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	elected := make(chan struct{})
+	reconciler.StartCleanupLoop(ctx, 20*time.Millisecond, elected)
+
+	cancel()
+	// Closing elected after cancellation must not revive the loop.
+	close(elected)
+	time.Sleep(150 * time.Millisecond)
+
+	if err := fakeClient.Get(context.Background(), types.NamespacedName{Name: "orphaned-cr"}, &securityv1alpha1.TLSComplianceReport{}); err != nil {
+		t.Fatalf("cleanup ran after context cancellation: %v", err)
+	}
+}
+
+func TestCleanupLoop_NilElectedStartsImmediately(t *testing.T) {
+	scheme := newTestScheme()
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(orphanedReportFixture()).
+		Build()
+
+	reconciler := &EndpointReconciler{Client: fakeClient, Scheme: scheme}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// A nil channel means "no leader election to wait for" (single replica).
+	reconciler.StartCleanupLoop(ctx, 20*time.Millisecond, nil)
+	waitForReportDeletion(t, fakeClient, "orphaned-cr")
+}

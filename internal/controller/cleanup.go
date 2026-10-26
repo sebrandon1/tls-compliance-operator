@@ -33,10 +33,26 @@ import (
 	"github.com/sebrandon1/tls-compliance-operator/internal/metrics"
 )
 
-// StartCleanupLoop starts a goroutine that removes CRs for deleted source resources
-func (r *EndpointReconciler) StartCleanupLoop(ctx context.Context, interval time.Duration) {
+// StartCleanupLoop starts a goroutine that removes CRs for deleted source
+// resources once leader election completes, then on every tick of the
+// configured interval. Deletions are idempotent, but running them on every
+// replica duplicates API traffic and inflates the deletion counters, so the
+// elected channel (mgr.Elected()) gates the loop the same way StartPeriodicScan
+// is gated.
+func (r *EndpointReconciler) StartCleanupLoop(ctx context.Context, interval time.Duration, elected <-chan struct{}) {
 	go func() {
 		logger := log.FromContext(ctx).WithName("cleanup")
+
+		if elected != nil {
+			logger.Info("waiting for leader election before cleanup loop")
+			select {
+			case <-ctx.Done():
+				return
+			case <-elected:
+				logger.Info("leader election complete, starting cleanup loop")
+			}
+		}
+
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
