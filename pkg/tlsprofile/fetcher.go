@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -54,9 +55,12 @@ func (f *Fetcher) GetAllProfiles() map[Component]Profile {
 }
 
 // RefreshAll fetches TLS security profiles from all three OpenShift components concurrently.
+// A component whose fetch fails keeps its last successfully fetched profile; only a
+// component that has never been fetched successfully falls back to the default.
 func (f *Fetcher) RefreshAll(ctx context.Context) {
 	logger := log.FromContext(ctx).WithName("tlsprofile-fetcher")
 
+	var failures atomic.Int32
 	var wg sync.WaitGroup
 	wg.Add(3)
 
@@ -64,44 +68,82 @@ func (f *Fetcher) RefreshAll(ctx context.Context) {
 		defer wg.Done()
 		profile, adherence, err := f.fetchAPIServerProfile(ctx)
 		if err != nil {
-			logger.V(1).Info("could not fetch TLS profile, using default", "component", ComponentAPIServer, "error", err)
-			profile = DefaultProfile()
+			failures.Add(1)
+			f.applyFetchFailure(logger, ComponentAPIServer, err)
+			return
 		}
 		f.setAPIServer(&profile, adherence)
 	}()
 
 	go func() {
 		defer wg.Done()
-		f.refreshComponent(ctx, logger, ComponentIngressController, f.fetchIngressControllerProfile)
+		if !f.refreshComponent(ctx, logger, ComponentIngressController, f.fetchIngressControllerProfile) {
+			failures.Add(1)
+		}
 	}()
 
 	go func() {
 		defer wg.Done()
-		f.refreshComponent(ctx, logger, ComponentKubeletConfig, f.fetchKubeletConfigProfile)
+		if !f.refreshComponent(ctx, logger, ComponentKubeletConfig, f.fetchKubeletConfigProfile) {
+			failures.Add(1)
+		}
 	}()
 
 	wg.Wait()
+	if n := failures.Load(); n > 0 {
+		logger.Info("TLS security profile refresh incomplete", "failedComponents", n)
+		return
+	}
 	logger.Info("TLS security profiles refreshed")
 }
 
-func (f *Fetcher) refreshComponent(ctx context.Context, logger logr.Logger, component Component, fetch func(context.Context) (Profile, error)) {
+// refreshComponent fetches one component's profile and stores it. It reports
+// whether the fetch succeeded.
+func (f *Fetcher) refreshComponent(
+	ctx context.Context, logger logr.Logger, component Component, fetch func(context.Context) (Profile, error),
+) bool {
 	profile, err := fetch(ctx)
 	if err != nil {
-		logger.V(1).Info("could not fetch TLS profile, using default", "component", component, "error", err)
-		profile = DefaultProfile()
+		f.applyFetchFailure(logger, component, err)
+		return false
 	}
+	f.setProfile(component, &profile)
+	return true
+}
+
+// applyFetchFailure decides what to do when a fetch fails. A component that has
+// a cached profile keeps it: a transient API error must not rewrite
+// last-known-good data with defaults, which would silently flip compliance
+// results. Only a component with no cached profile gets the default.
+func (f *Fetcher) applyFetchFailure(logger logr.Logger, component Component, err error) {
+	if f.hasCachedProfile(component) {
+		logger.V(1).Info("could not fetch TLS profile, keeping last known value",
+			"component", component, "error", err)
+		return
+	}
+
+	logger.V(1).Info("could not fetch TLS profile, using default", "component", component, "error", err)
+	profile := DefaultProfile()
 	f.setProfile(component, &profile)
 }
 
+// hasCachedProfile reports whether a profile has been stored for the component.
+func (f *Fetcher) hasCachedProfile(component Component) bool {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	_, ok := f.profiles[component]
+	return ok
+}
+
 // StartPeriodicRefresh starts a goroutine that periodically refreshes profiles.
+// The caller is responsible for one synchronous refresh before the first scan
+// (see RefreshAll); this loop only re-fetches on each tick so it cannot race
+// the start of scanning.
 func (f *Fetcher) StartPeriodicRefresh(ctx context.Context, interval time.Duration) {
 	go func() {
 		logger := log.FromContext(ctx).WithName("tlsprofile-refresh")
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-
-		// Initial refresh
-		f.RefreshAll(ctx)
 
 		for {
 			select {

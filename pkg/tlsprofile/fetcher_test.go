@@ -19,6 +19,7 @@ package tlsprofile
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -441,5 +442,125 @@ func TestRefreshAll_PartialErrorKeepsSuccessfulProfiles(t *testing.T) {
 	}
 	if got := f.GetAdherence(); got != "" {
 		t.Errorf("adherence = %q, want empty when APIServer fetch fails", got)
+	}
+}
+
+// failingAfterFirstFetch returns a client that serves a distinct profile per
+// component on the first round of calls, then fails every call.
+func failingAfterFirstFetch() (client.Client, *atomic.Int32) {
+	var calls atomic.Int32
+	healthy := func() bool { return calls.Load() <= 3 }
+
+	cl := newInterceptedFetcherClient(
+		func(_ context.Context, _ client.ObjectKey, obj *unstructured.Unstructured) error {
+			calls.Add(1)
+			if !healthy() {
+				return fmt.Errorf("simulated transient API error (HTTP 503)")
+			}
+			switch obj.GetKind() {
+			case "APIServer":
+				obj.Object["spec"] = map[string]any{
+					"tlsSecurityProfile": map[string]any{"type": "Old"},
+					"tlsAdherence":       "StrictAllComponents",
+				}
+			case "IngressController":
+				obj.Object["spec"] = map[string]any{
+					"tlsSecurityProfile": map[string]any{"type": "Modern"},
+				}
+			}
+			return nil
+		},
+		func(_ context.Context, list *unstructured.UnstructuredList) error {
+			calls.Add(1)
+			if !healthy() {
+				return fmt.Errorf("simulated transient API error (HTTP 503)")
+			}
+			list.Items = []unstructured.Unstructured{
+				{Object: map[string]any{
+					"apiVersion": "machineconfiguration.openshift.io/v1",
+					"kind":       "KubeletConfig",
+					"metadata":   map[string]any{"name": "kc1"},
+					"spec": map[string]any{
+						"tlsSecurityProfile": map[string]any{"type": "Modern"},
+					},
+				}},
+			}
+			return nil
+		})
+
+	return cl, &calls
+}
+
+func TestRefreshAll_KeepsLastKnownGoodOnError(t *testing.T) {
+	cl, _ := failingAfterFirstFetch()
+	f := NewFetcher(cl)
+	ctx := context.Background()
+
+	f.RefreshAll(ctx)
+
+	want := map[Component]ProfileType{
+		ComponentAPIServer:         ProfileTypeOld,
+		ComponentIngressController: ProfileTypeModern,
+		ComponentKubeletConfig:     ProfileTypeModern,
+	}
+	for component, wantType := range want {
+		if got := f.GetProfile(component); got.Type != wantType {
+			t.Fatalf("before failure: %s profile = %v, want %v", component, got.Type, wantType)
+		}
+	}
+
+	// Every fetch now fails; the cached profiles must survive untouched.
+	f.RefreshAll(ctx)
+
+	for component, wantType := range want {
+		if got := f.GetProfile(component); got.Type != wantType {
+			t.Errorf("after transient failure: %s profile = %v, want last known good %v",
+				component, got.Type, wantType)
+		}
+	}
+	if got := f.GetAdherence(); got != AdherenceStrict {
+		t.Errorf("after transient failure: adherence = %q, want %q", got, AdherenceStrict)
+	}
+}
+
+func TestStartPeriodicRefresh_DoesNotFetchBeforeFirstTick(t *testing.T) {
+	cl, calls := failingAfterFirstFetch()
+	f := NewFetcher(cl)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	f.StartPeriodicRefresh(ctx, time.Hour)
+
+	time.Sleep(100 * time.Millisecond)
+	if n := calls.Load(); n != 0 {
+		t.Errorf("fetches before first tick = %d, want 0 (caller performs the initial fetch)", n)
+	}
+}
+
+func TestStartPeriodicRefresh_RefreshesOnTick(t *testing.T) {
+	cl, calls := failingAfterFirstFetch()
+	f := NewFetcher(cl)
+
+	// Seed the cache the way the caller does, then let the loop re-fetch.
+	f.RefreshAll(context.Background())
+	initial := calls.Load()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	f.StartPeriodicRefresh(ctx, 20*time.Millisecond)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for calls.Load() < initial+3 {
+		if time.Now().After(deadline) {
+			t.Fatalf("periodic refresh did not run: calls = %d, want at least %d", calls.Load(), initial+3)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// The tick re-fetches failed; the seeded profiles must still be intact.
+	if got := f.GetProfile(ComponentAPIServer); got.Type != ProfileTypeOld {
+		t.Errorf("APIServer profile = %v, want Old (last known good)", got.Type)
 	}
 }
