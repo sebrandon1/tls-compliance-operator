@@ -35,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/events"
+	"k8s.io/client-go/util/workqueue"
 
 	"golang.org/x/time/rate"
 	"k8s.io/client-go/util/retry"
@@ -42,9 +43,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
@@ -567,7 +570,12 @@ func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&securityv1alpha1.TLSComplianceTarget{}, handler.EnqueueRequestsFromMapFunc(enqueueObject)).
 		Watches(&securityv1alpha1.TLSComplianceReport{},
 			handler.EnqueueRequestsFromMapFunc(enqueueObject),
-			builder.WithPredicates(predicate.AnnotationChangedPredicate{}))
+			builder.WithPredicates(predicate.AnnotationChangedPredicate{})).
+		// Delete events are not routed through the work queue: they only drop
+		// the report's per-endpoint metric series so reports removed by
+		// kubectl, owner-reference cascades, or a rescan do not leak them.
+		Watches(&securityv1alpha1.TLSComplianceReport{},
+			handler.Funcs{DeleteFunc: r.handleReportDeleted})
 
 	if r.RouteAPIAvailable {
 		routeObj := &unstructured.Unstructured{}
@@ -597,6 +605,23 @@ func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	return builder.Complete(r)
+}
+
+// handleReportDeleted drops the per-endpoint metric series belonging to a
+// deleted report. Deletion events reach this handler regardless of who deleted
+// the object; the cleanup loop also calls DeleteEndpointMetrics, and the double
+// delete is harmless because DeleteLabelValues is idempotent. The handler never
+// reports an error: a failed metric delete must not retry or block deletion.
+func (r *EndpointReconciler) handleReportDeleted(
+	_ context.Context,
+	e event.DeleteEvent,
+	_ workqueue.TypedRateLimitingInterface[reconcile.Request],
+) {
+	report, ok := e.Object.(*securityv1alpha1.TLSComplianceReport)
+	if !ok || report.Spec.Host == "" || report.Spec.Port <= 0 {
+		return
+	}
+	metrics.DeleteEndpointMetrics(report.Spec.Host, fmt.Sprintf("%d", report.Spec.Port))
 }
 
 func determineComplianceStatus(result *tlscheck.TLSCheckResult) securityv1alpha1.ComplianceStatus {

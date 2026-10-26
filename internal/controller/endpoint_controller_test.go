@@ -39,6 +39,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	dto "github.com/prometheus/client_model/go"
@@ -5929,6 +5931,88 @@ func TestGetNodeAddresses_ExpiredListError(t *testing.T) {
 	if _, err := r.getNodeAddresses(context.Background()); err == nil {
 		t.Fatal("expected list error after expiry, not a stale cache")
 	}
+}
+
+// hasEndpointSeries reports whether any registered metric currently carries a
+// series for the given host:port labels.
+func hasEndpointSeries(t *testing.T, host, port string) bool {
+	t.Helper()
+	families, err := crmetrics.Registry.Gather()
+	if err != nil {
+		t.Fatalf("gather metrics: %v", err)
+	}
+	for _, family := range families {
+		for _, m := range family.GetMetric() {
+			labels := make(map[string]string, len(m.GetLabel()))
+			for _, lp := range m.GetLabel() {
+				labels[lp.GetName()] = lp.GetValue()
+			}
+			if labels["host"] == host && labels["port"] == port {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestHandleReportDeleted_RemovesEndpointMetrics(t *testing.T) {
+	const (
+		host = "report-delete-metrics-host"
+		port = "8443"
+	)
+
+	metrics.RecordCertExpiry(host, port, 30)
+	metrics.RecordForwardSecrecy(host, port, true)
+	metrics.RecordVersionSupport(host, port, "1.3", true)
+	metrics.RecordPQCReadiness(host, port, securityv1alpha1.PQCReadinessPQCReady)
+
+	if !hasEndpointSeries(t, host, port) {
+		t.Fatal("expected endpoint series to exist before the delete")
+	}
+
+	report := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "report-delete", Namespace: testNamespace},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: host,
+			Port: 8443,
+		},
+	}
+	r := &EndpointReconciler{}
+	r.handleReportDeleted(context.Background(), event.DeleteEvent{Object: report}, nil)
+
+	if hasEndpointSeries(t, host, port) {
+		t.Fatal("expected endpoint series to be removed after the delete")
+	}
+}
+
+func TestHandleReportDeleted_IgnoresIncompleteObjects(t *testing.T) {
+	const host = "report-delete-guard-host"
+	const port = "8444"
+	metrics.RecordCertExpiry(host, port, 30)
+
+	r := &EndpointReconciler{}
+	cases := []struct {
+		name   string
+		object client.Object
+	}{
+		{"wrong type", &corev1.Service{}},
+		{"empty host", &securityv1alpha1.TLSComplianceReport{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{Port: 8444},
+		}},
+		{"zero port", &securityv1alpha1.TLSComplianceReport{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{Host: host},
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r.handleReportDeleted(context.Background(), event.DeleteEvent{Object: tc.object}, nil)
+		})
+	}
+
+	if !hasEndpointSeries(t, host, port) {
+		t.Fatal("guarded delete removed series for an unrelated endpoint")
+	}
+	metrics.DeleteEndpointMetrics(host, port)
 }
 
 // Ensure _ satisfies the client.Object interface for compile-time check
