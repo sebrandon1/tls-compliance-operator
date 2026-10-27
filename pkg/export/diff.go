@@ -27,7 +27,8 @@ import (
 	"strconv"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/sebrandon1/go-toolbox/cliout"
+	"github.com/sebrandon1/go-toolbox/yamlx"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 )
@@ -91,7 +92,7 @@ func LoadSnapshot(data []byte) ([]JSONReport, error) {
 		return reports, nil
 	}
 
-	if err := yaml.Unmarshal(data, &reports); err != nil {
+	if err := yamlx.Unmarshal(data, &reports); err != nil {
 		return nil, fmt.Errorf("parsing YAML snapshot: %w", err)
 	}
 	return reports, nil
@@ -191,12 +192,7 @@ func WriteDiff(w io.Writer, d *SnapshotDiff) error {
 
 // WriteDiffJSON writes SnapshotDiff as pretty-printed JSON.
 func WriteDiffJSON(w io.Writer, d *SnapshotDiff) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(d); err != nil {
-		return fmt.Errorf("encoding diff JSON: %w", err)
-	}
-	return nil
+	return cliout.PrintJSON(w, d)
 }
 
 func writeDiffGroup(ew *errWriter, title string, reports []JSONReport, markRegression bool) {

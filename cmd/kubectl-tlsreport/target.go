@@ -18,7 +18,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -28,6 +27,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/sebrandon1/go-toolbox/cliout"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -219,9 +219,7 @@ func outputTargets(targets []securityv1alpha1.TLSComplianceTarget, writers ...io
 		if targets == nil {
 			targets = []securityv1alpha1.TLSComplianceTarget{}
 		}
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(targets)
+		return cliout.PrintJSON(out, targets)
 	case "yaml":
 		if len(targets) == 0 {
 			_, err := fmt.Fprintln(out, "[]")

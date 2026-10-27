@@ -18,7 +18,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -26,6 +25,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/sebrandon1/go-toolbox/cliout"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -422,8 +422,7 @@ func writeWatchEvent(w io.Writer, report *securityv1alpha1.TLSComplianceReport, 
 }
 
 func writeWatchJSON(w io.Writer, report *securityv1alpha1.TLSComplianceReport) error {
-	enc := json.NewEncoder(w)
-	return enc.Encode(export.ToJSONReports([]securityv1alpha1.TLSComplianceReport{*report})[0])
+	return cliout.PrintJSONCompact(w, export.ToJSONReports([]securityv1alpha1.TLSComplianceReport{*report})[0])
 }
 
 func writeWatchYAML(w io.Writer, report *securityv1alpha1.TLSComplianceReport, separator bool) error {

@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"io"
 
-	"gopkg.in/yaml.v3"
+	"github.com/sebrandon1/go-toolbox/yamlx"
 	sigsyaml "sigs.k8s.io/yaml"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
@@ -28,18 +28,7 @@ import (
 
 // WriteYAML writes TLSComplianceReport items as YAML to the given writer.
 func WriteYAML(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) error {
-	enc := yaml.NewEncoder(w)
-
-	if err := enc.Encode(ToJSONReports(reports)); err != nil {
-		_ = enc.Close()
-		return fmt.Errorf("encoding YAML: %w", err)
-	}
-
-	if err := enc.Close(); err != nil {
-		return fmt.Errorf("closing YAML encoder: %w", err)
-	}
-
-	return nil
+	return yamlx.Print(w, ToJSONReports(reports))
 }
 
 // WriteRawYAML writes the full TLSComplianceReport objects as YAML.
