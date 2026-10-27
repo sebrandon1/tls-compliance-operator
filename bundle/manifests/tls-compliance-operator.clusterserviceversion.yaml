@@ -31,15 +31,15 @@ metadata:
       ]
     capabilities: Deep Insights
     categories: Security
-    containerImage: quay.io/bapalm/tls-compliance-operator:v1.1.17
-    createdAt: "2026-10-09T13:44:34Z"
+    containerImage: quay.io/bapalm/tls-compliance-operator:v1.1.19
+    createdAt: "2026-10-27T16:57:30Z"
     description: Continuously discovers TLS endpoints and reports their protocol,
       certificate, and compliance status.
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     repository: https://github.com/sebrandon1/tls-compliance-operator
     support: Brandon Palm
-  name: tls-compliance-operator.v1.1.17
+  name: tls-compliance-operator.v1.1.19
 spec:
   apiservicedefinitions: {}
   customresourcedefinitions:
@@ -187,6 +187,12 @@ spec:
           - patch
           - update
         - apiGroups:
+          - security.telco.openshift.io
+          resources:
+          - tlscompliancetargets/finalizers
+          verbs:
+          - update
+        - apiGroups:
           - authentication.k8s.io
           resources:
           - tokenreviews
@@ -232,7 +238,7 @@ spec:
                   value: "1"
                 - name: GOMEMLIMIT
                   value: 460MiB
-                image: quay.io/bapalm/tls-compliance-operator:v1.1.17
+                image: quay.io/bapalm/tls-compliance-operator:v1.1.19
                 livenessProbe:
                   httpGet:
                     path: /healthz
@@ -318,4 +324,4 @@ spec:
   minKubeVersion: 1.28.0
   provider:
     name: Brandon Palm
-  version: 1.1.17
+  version: 1.1.19
