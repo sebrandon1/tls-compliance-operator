@@ -22,10 +22,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
-	"syscall"
 	"text/tabwriter"
 
+	"github.com/sebrandon1/go-toolbox/cobrautil"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -110,10 +109,7 @@ func checkExitCode(reports []securityv1alpha1.TLSComplianceReport) error {
 }
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	if err := newRootCmd().ExecuteContext(ctx); err != nil {
+	if err := cobrautil.Execute(newRootCmd()); err != nil {
 		var ece exitCodeError
 		if errors.As(err, &ece) {
 			os.Exit(ece.code)
@@ -139,6 +135,7 @@ Use --kubeconfig and --context to target a specific cluster.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	cobrautil.SetVersion(rootCmd, version)
 
 	rootCmd.PersistentFlags().StringVarP(&filterOpts.Namespace, "namespace", "n", "", "Filter by source namespace")
 	rootCmd.PersistentFlags().StringVar(&filterOpts.Status, "status", "", "Filter by compliance status (e.g. Compliant, NonCompliant)")
@@ -166,7 +163,7 @@ Use --kubeconfig and --context to target a specific cluster.`,
 	rootCmd.AddCommand(newRescanCmd())
 	rootCmd.AddCommand(newTargetCmd())
 	rootCmd.AddCommand(newVersionCmd())
-	rootCmd.AddCommand(newCompletionCmd())
+	rootCmd.AddCommand(cobrautil.NewCompletionCommand(rootCmd, "kubectl-tlsreport"))
 
 	registerFlagCompletions(rootCmd)
 
@@ -192,45 +189,6 @@ func printNoMatchingReports(writers ...io.Writer) error {
 func printNoMatchingTargets(writers ...io.Writer) error {
 	_, err := fmt.Fprintln(writerOrDefault(writers, 0, os.Stderr), "No targets match the specified filters.")
 	return err
-}
-
-func newCompletionCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "completion [bash|zsh|fish|powershell]",
-		Short: "Generate shell completion scripts",
-		Long: `Generate shell completion scripts for kubectl-tlsreport.
-
-To load completions:
-
-Bash:
-  source <(kubectl-tlsreport completion bash)
-
-Zsh:
-  source <(kubectl-tlsreport completion zsh)
-
-Fish:
-  kubectl-tlsreport completion fish | source
-
-PowerShell:
-  kubectl-tlsreport completion powershell | Out-String | Invoke-Expression`,
-		DisableFlagsInUseLine: true,
-		ValidArgs:             []string{"bash", "zsh", "fish", "powershell"},
-		Args:                  cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			w := cmd.OutOrStdout()
-			switch args[0] {
-			case "bash":
-				return cmd.Root().GenBashCompletionV2(w, true)
-			case "zsh":
-				return cmd.Root().GenZshCompletion(w)
-			case "fish":
-				return cmd.Root().GenFishCompletion(w, true)
-			case "powershell":
-				return cmd.Root().GenPowerShellCompletionWithDesc(w)
-			}
-			return nil
-		},
-	}
 }
 
 func registerFlagCompletions(rootCmd *cobra.Command) {

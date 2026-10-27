@@ -17,11 +17,11 @@ limitations under the License.
 package export
 
 import (
-	"encoding/json"
-	"fmt"
 	"io"
 	"net"
 	"strconv"
+
+	"github.com/sebrandon1/go-toolbox/cliout"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 )
@@ -78,23 +78,12 @@ func (r *JSONReport) EndpointKey() string {
 
 // WriteJSON writes TLSComplianceReport items as pretty-printed JSON to the given writer.
 func WriteJSON(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(ToJSONReports(reports)); err != nil {
-		return fmt.Errorf("encoding JSON: %w", err)
-	}
-
-	return nil
+	return cliout.PrintJSON(w, ToJSONReports(reports))
 }
 
 // WriteRawJSON writes the full TLSComplianceReport objects as pretty-printed JSON.
 func WriteRawJSON(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(withReportTypeMeta(reports)); err != nil {
-		return fmt.Errorf("encoding raw JSON: %w", err)
-	}
-	return nil
+	return cliout.PrintJSON(w, withReportTypeMeta(reports))
 }
 
 func withReportTypeMeta(reports []securityv1alpha1.TLSComplianceReport) []securityv1alpha1.TLSComplianceReport {
