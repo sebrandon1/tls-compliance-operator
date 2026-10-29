@@ -50,8 +50,8 @@ func countingPodListClient(t *testing.T, objects ...client.Object) (client.Clien
 	return c, &podListCalls
 }
 
-// newWindowedReconciler builds a minimal EndpointReconciler with the given scan window.
-func newWindowedReconciler(t *testing.T, start, end, tz string) (*EndpointReconciler, *atomic.Int32) {
+// newWindowedReconciler builds a minimal EndpointReconciler with the given UTC scan window.
+func newWindowedReconciler(t *testing.T, start, end string) (*EndpointReconciler, *atomic.Int32) {
 	t.Helper()
 	c, podListCalls := countingPodListClient(t)
 	r := &EndpointReconciler{
@@ -64,7 +64,7 @@ func newWindowedReconciler(t *testing.T, start, end, tz string) (*EndpointReconc
 		MaxHistoryEntries:  1,
 		ScanWindowStart:    start,
 		ScanWindowEnd:      end,
-		ScanWindowTimezone: tz,
+		ScanWindowTimezone: "UTC",
 	}
 	return r, podListCalls
 }
@@ -93,7 +93,7 @@ func inactiveWindow() (start, end string) {
 // the current time, ticker-triggered scan cycles run after the initial scan.
 func TestStartPeriodicScan_InsideWindow(t *testing.T) {
 	// "00:00"–"23:59" covers the full day; the current time is always inside.
-	r, podListCalls := newWindowedReconciler(t, "00:00", "23:59", "UTC")
+	r, podListCalls := newWindowedReconciler(t, "00:00", "23:59")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -119,7 +119,7 @@ func TestStartPeriodicScan_InsideWindow(t *testing.T) {
 // are skipped when the scan window does not cover the current time.
 func TestStartPeriodicScan_OutsideWindow(t *testing.T) {
 	start, end := inactiveWindow()
-	r, podListCalls := newWindowedReconciler(t, start, end, "UTC")
+	r, podListCalls := newWindowedReconciler(t, start, end)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -138,11 +138,47 @@ func TestStartPeriodicScan_OutsideWindow(t *testing.T) {
 // runs unconditionally even when the scan window is currently inactive.
 func TestStartPeriodicScan_InitialScanBypassesWindow(t *testing.T) {
 	start, end := inactiveWindow()
-	r, _ := newWindowedReconciler(t, start, end, "UTC")
+	r, _ := newWindowedReconciler(t, start, end)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// Long ticker interval ensures no tick fires during the test.
 	r.StartPeriodicScan(ctx, time.Hour, nil)
 	waitInitialScan(t, r)
+}
+
+// TestStartPeriodicScan_CatchUpAtWindowOpen verifies that a tick skipped just
+// before the window opens schedules exactly one catch-up scan at window open,
+// instead of waiting for the next tick that lands inside the window.
+func TestStartPeriodicScan_CatchUpAtWindowOpen(t *testing.T) {
+	r, podListCalls := newWindowedReconciler(t, "02:00", "03:00")
+	// The fake clock runs at real speed from 50ms before the first tick
+	// reaches the window: the tick at 1s lands at 01:59:59.950, outside.
+	fakeStart := time.Date(2026, 1, 1, 1, 59, 58, 950_000_000, time.UTC)
+	realStart := time.Now()
+	r.now = func() time.Time { return fakeStart.Add(time.Since(realStart)) }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	r.StartPeriodicScan(ctx, time.Second, nil)
+	waitInitialScan(t, r)
+	countAfterInitial := podListCalls.Load()
+
+	// The catch-up fires at ~1.05s; without it the first in-window tick is at 2s.
+	deadline := time.After(1500*time.Millisecond - time.Since(realStart))
+	for podListCalls.Load() == countAfterInitial {
+		select {
+		case <-deadline:
+			t.Fatal("no catch-up scan ran when the scan window opened")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	// The ticker is realigned to the catch-up, so no tick may scan again
+	// until ~2.05s.
+	time.Sleep(1800*time.Millisecond - time.Since(realStart))
+	if got := podListCalls.Load() - countAfterInitial; got != 1 {
+		t.Errorf("got %d scans after window open, want exactly 1 catch-up scan", got)
+	}
 }

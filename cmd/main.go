@@ -337,6 +337,12 @@ func checkConfig(cfg *operatorConfig) (warnings []string, _ error) {
 		warnings = append(warnings, fmt.Sprintf("WARNING: --workers (%d) is much higher than --rate-limit (%.1f); most workers will be idle", cfg.workers, cfg.rateLimit))
 	}
 
+	if cfg.scanWindowStart != "" && cfg.scanWindowEnd != "" {
+		if length, err := controller.ScanWindowLength(cfg.scanWindowStart, cfg.scanWindowEnd); err == nil && cfg.scanInterval > length {
+			warnings = append(warnings, fmt.Sprintf("WARNING: --scan-interval (%s) is longer than the scan window (%s); periodic scans will run once at window open via catch-up", cfg.scanInterval, length))
+		}
+	}
+
 	if cfg.clientCertPath != "" && cfg.clientKeyPath == "" {
 		return warnings, fmt.Errorf("--client-cert requires --client-key to also be set")
 	}
