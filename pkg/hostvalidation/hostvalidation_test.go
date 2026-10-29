@@ -17,6 +17,7 @@ limitations under the License.
 package hostvalidation
 
 import (
+	"errors"
 	"net"
 	"testing"
 )
@@ -120,6 +121,36 @@ func TestIsSafeHost(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := IsSafeHost(tt.host); got != tt.safe {
 				t.Errorf("IsSafeHost(%q) = %v, want %v", tt.host, got, tt.safe)
+			}
+		})
+	}
+}
+
+func TestDialControl(t *testing.T) {
+	tests := []struct {
+		name    string
+		address string
+		blocked bool
+		wantErr bool
+	}{
+		{"public v4", "8.8.8.8:443", false, false},
+		{"public v6", "[2001:4860:4860::8888]:443", false, false},
+		{"loopback", "127.0.0.1:443", true, true},
+		{"metadata", "169.254.169.254:80", true, true},
+		{"cluster IP", "172.30.0.1:443", true, true},
+		{"ipv4-mapped metadata", "[::ffff:169.254.169.254]:80", true, true},
+		{"link-local with zone", "[fe80::1%eth0]:443", true, true},
+		{"missing port", "8.8.8.8", false, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := DialControl("tcp", tt.address, nil)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("DialControl(%q) error = %v, wantErr %v", tt.address, err, tt.wantErr)
+			}
+			if got := errors.Is(err, ErrReservedAddress); got != tt.blocked {
+				t.Errorf("DialControl(%q) blocked = %v, want %v (err %v)", tt.address, got, tt.blocked, err)
 			}
 		})
 	}

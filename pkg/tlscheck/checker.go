@@ -28,6 +28,8 @@ import (
 
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
+
+	"github.com/sebrandon1/tls-compliance-operator/pkg/hostvalidation"
 )
 
 // Checker defines the interface for TLS endpoint checking
@@ -48,13 +50,30 @@ func probeDeadline(ctx context.Context, timeout time.Duration) time.Time {
 	return deadline
 }
 
+type restrictedDialKey struct{}
+
+// WithRestrictedDial returns a context whose probes refuse to connect to
+// reserved or internal addresses (see hostvalidation.DialControl). Use it for
+// user-specified hosts; cluster-internal endpoints are expected to be private.
+func WithRestrictedDial(ctx context.Context) context.Context {
+	return context.WithValue(ctx, restrictedDialKey{}, true)
+}
+
+// netDialer returns the dialer every probe uses, enforcing WithRestrictedDial.
+func (c *TLSChecker) netDialer(ctx context.Context) *net.Dialer {
+	d := &net.Dialer{Timeout: c.Timeout}
+	if restricted, _ := ctx.Value(restrictedDialKey{}).(bool); restricted {
+		d.Control = hostvalidation.DialControl
+	}
+	return d
+}
+
 // dialProbe dials addr for a raw-socket probe. The connection's deadline is
 // bounded by the per-probe timeout rather than the (possibly much longer) ctx
 // deadline, and the connection is closed if ctx is cancelled so blocking reads
 // return promptly. Call stop to detach the cancellation hook.
 func (c *TLSChecker) dialProbe(ctx context.Context, addr string) (conn net.Conn, stop func() bool, err error) {
-	dialer := &net.Dialer{Timeout: c.Timeout}
-	conn, err = dialer.DialContext(ctx, "tcp", addr)
+	conn, err = c.netDialer(ctx).DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -209,6 +228,12 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 	result.CheckDuration = time.Since(start)
 
 	if !anySuccess {
+		for _, err := range lastErrors {
+			if errors.Is(err, hostvalidation.ErrReservedAddress) {
+				result.FailureReason = FailureReasonUnreachable
+				return result, fmt.Errorf("endpoint %s not probed: %w", addr, err)
+			}
+		}
 		result.FailureReason = classifyFailure(lastErrors)
 		if result.FailureReason == FailureReasonNoTLS && c.probeHTTP(ctx, addr, host) {
 			result.FailureReason = FailureReasonPlaintextHTTP
@@ -297,7 +322,7 @@ func isMTLSError(err error) bool {
 // tryTLSVersion attempts to connect with a specific TLS version
 func (c *TLSChecker) tryTLSVersion(ctx context.Context, addr, serverName string, version uint16) (supported bool, cipherSuiteID uint16, cipherSuite string, curveName string, alpnProto string, cert *CertificateDetails, err error) {
 	dialer := &tls.Dialer{
-		NetDialer: &net.Dialer{Timeout: c.Timeout},
+		NetDialer: c.netDialer(ctx),
 		Config: &tls.Config{
 			MinVersion:         version,
 			MaxVersion:         version,
@@ -344,7 +369,7 @@ func (c *TLSChecker) enumerateCiphers(ctx context.Context, addr, serverName stri
 	allSuites := append(tls.CipherSuites(), tls.InsecureCipherSuites()...)
 	discovered := []string{tls.CipherSuiteName(firstCipherID)}
 	seenIDs := map[uint16]bool{firstCipherID: true}
-	dialer := &net.Dialer{Timeout: c.Timeout}
+	dialer := c.netDialer(ctx)
 
 	for range maxCipherIterations {
 		select {
@@ -415,7 +440,7 @@ func (c *TLSChecker) detectCipherPreference(ctx context.Context, addr, serverNam
 
 	negotiate := func(cipherSuites []uint16) (uint16, error) {
 		dialer := &tls.Dialer{
-			NetDialer: &net.Dialer{Timeout: c.Timeout},
+			NetDialer: c.netDialer(ctx),
 			Config: &tls.Config{
 				MinVersion:         tls.VersionTLS12,
 				MaxVersion:         tls.VersionTLS12,
@@ -467,7 +492,7 @@ func classifyCipherPreference(first, second, firstID, secondID uint16) *bool {
 // exchange. Tests X25519MLKEM768, SecP256r1MLKEM768, and SecP384r1MLKEM1024.
 func (c *TLSChecker) probeMLKEM(ctx context.Context, addr, serverName string) bool {
 	dialer := &tls.Dialer{
-		NetDialer: &net.Dialer{Timeout: c.Timeout},
+		NetDialer: c.netDialer(ctx),
 		Config: &tls.Config{
 			MinVersion: tls.VersionTLS13,
 			MaxVersion: tls.VersionTLS13,

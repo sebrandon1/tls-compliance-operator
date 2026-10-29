@@ -34,6 +34,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/sebrandon1/tls-compliance-operator/pkg/hostvalidation"
 )
 
 // generateTestCert creates a self-signed certificate for testing
@@ -151,6 +153,32 @@ func startTLSServerWithCurves(t *testing.T, cert tls.Certificate, minVersion, ma
 
 	addr := listener.Addr().(*net.TCPAddr)
 	return addr.IP.String(), addr.Port, func() { _ = listener.Close() }
+}
+
+func TestTLSChecker_CheckEndpoint_RestrictedDial(t *testing.T) {
+	cert, _ := generateTestCert(t)
+	host, port, cleanup := startTLSServer(t, cert, tls.VersionTLS12, tls.VersionTLS13)
+	defer cleanup()
+
+	checker := NewTLSChecker(2 * time.Second)
+
+	if _, err := checker.CheckEndpoint(context.Background(), host, port); err != nil {
+		t.Fatalf("unrestricted CheckEndpoint() error = %v", err)
+	}
+
+	// "localhost" exercises the post-resolution check, not just literal IPs.
+	for _, h := range []string{host, "localhost"} {
+		result, err := checker.CheckEndpoint(WithRestrictedDial(context.Background()), h, port)
+		if !errors.Is(err, hostvalidation.ErrReservedAddress) {
+			t.Fatalf("restricted CheckEndpoint(%s) error = %v, want ErrReservedAddress", h, err)
+		}
+		if result == nil || result.FailureReason != FailureReasonUnreachable {
+			t.Errorf("restricted CheckEndpoint(%s) result = %+v, want FailureReasonUnreachable", h, result)
+		}
+		if result != nil && (result.SupportsTLS12 || result.SupportsTLS13) {
+			t.Errorf("restricted CheckEndpoint(%s) completed a TLS handshake", h)
+		}
+	}
 }
 
 func TestTLSChecker_CheckEndpoint_TLS12Only(t *testing.T) {
