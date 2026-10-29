@@ -537,8 +537,10 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 
 // isWithinScanWindow reports whether now falls inside the [start, end) daily
 // window expressed as "HH:MM" strings in the given IANA timezone. Overnight
-// windows (end < start, e.g. "22:00"–"02:00") are handled by extending end
-// by 24 h. Returns true unconditionally when start or end is empty.
+// windows (end <= start, e.g. "22:00"–"02:00") cover both the evening and the
+// after-midnight part. Comparison uses wall-clock minutes of the day, so DST
+// transitions do not shift the boundaries. Returns true unconditionally when
+// start or end is empty.
 func isWithinScanWindow(now time.Time, start, end, tz string) (bool, error) {
 	if start == "" || end == "" {
 		return true, nil
@@ -547,28 +549,28 @@ func isWithinScanWindow(now time.Time, start, end, tz string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("invalid scan-window-timezone %q: %w", tz, err)
 	}
-	now = now.In(loc)
-	ref := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
-	parseHHMM := func(s string) (time.Time, error) {
+	minuteOfDay := func(s string) (int, error) {
 		t, err := time.Parse(ScanWindowTimeFormat, s)
 		if err != nil {
-			return time.Time{}, fmt.Errorf("invalid scan-window time %q: %w", s, err)
+			return 0, fmt.Errorf("invalid scan-window time %q: %w", s, err)
 		}
-		return ref.Add(time.Duration(t.Hour())*time.Hour + time.Duration(t.Minute())*time.Minute), nil
+		return t.Hour()*60 + t.Minute(), nil
 	}
-	startT, err := parseHHMM(start)
+	startMin, err := minuteOfDay(start)
 	if err != nil {
 		return false, err
 	}
-	endT, err := parseHHMM(end)
+	endMin, err := minuteOfDay(end)
 	if err != nil {
 		return false, err
 	}
-	// Handle overnight windows (e.g. 22:00–02:00).
-	if !endT.After(startT) {
-		endT = endT.Add(24 * time.Hour)
+	now = now.In(loc)
+	nowMin := now.Hour()*60 + now.Minute()
+	if startMin < endMin {
+		return startMin <= nowMin && nowMin < endMin, nil
 	}
-	return !now.Before(startT) && now.Before(endT), nil
+	// Overnight window (e.g. 22:00–02:00): inside after start or before end.
+	return nowMin >= startMin || nowMin < endMin, nil
 }
 
 // StartPeriodicScan starts a goroutine that scans all endpoints after leader
