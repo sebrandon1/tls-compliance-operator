@@ -93,6 +93,13 @@ Discovery applies the same reserved/internal host rules to ExternalName
 Services, Ingress TLS hosts, Route hosts, and HTTPRoute/TLSRoute/GRPCRoute hostnames.
 Those hosts are skipped rather than probed.
 
+The controller re-checks each Target's host before probing, so the rules apply
+even when the webhook is not installed. Hostnames are checked again at connect time:
+if a Target or ExternalName hostname resolves to a blocked address (for
+example `kubernetes.default.svc` or a wildcard DNS name such as
+`169.254.169.254.nip.io`), the probe is refused. The report is then marked
+`Unreachable` and its error names the blocked address.
+
 ### Blocked Host Categories
 
 The following host categories are rejected:

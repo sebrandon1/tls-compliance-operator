@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -39,6 +40,7 @@ import (
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 	"github.com/sebrandon1/tls-compliance-operator/internal/metrics"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/endpoint"
+	"github.com/sebrandon1/tls-compliance-operator/pkg/hostvalidation"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlscheck"
 )
 
@@ -259,6 +261,10 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 		}
 	}
 
+	if r.restrictDial(ctx, crName) {
+		ctx = tlscheck.WithRestrictedDial(ctx)
+	}
+
 	result, checkErr := r.retryTLSCheck(ctx, crName, host, port, holdsSemaphore)
 	if result == nil && checkErr == nil {
 		return
@@ -270,6 +276,25 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 		// Refresh image certification data from imagecertinfo-operator after each successful TLS check
 		go r.enrichWithImageCertInfoByCRName(ctx, crName)
 	}
+}
+
+// restrictDial reports whether the report's endpoint was specified by a user
+// (a TLSComplianceTarget or an ExternalName Service) and so must not be dialed
+// at a reserved address. Cluster-internal endpoints are expected to be private.
+func (r *EndpointReconciler) restrictDial(ctx context.Context, crName string) bool {
+	var report securityv1alpha1.TLSComplianceReport
+	if err := r.Get(ctx, client.ObjectKey{Name: crName}, &report); err != nil {
+		return false
+	}
+	switch report.Spec.SourceKind {
+	case securityv1alpha1.SourceKindTarget:
+		return true
+	case securityv1alpha1.SourceKindService:
+		var svc corev1.Service
+		key := client.ObjectKey{Namespace: report.Spec.SourceNamespace, Name: report.Spec.SourceName}
+		return r.Get(ctx, key, &svc) == nil && svc.Spec.Type == corev1.ServiceTypeExternalName
+	}
+	return false
 }
 
 type checkOutcome struct {
@@ -309,7 +334,7 @@ func (r *EndpointReconciler) retryTLSCheck(ctx context.Context, crName, host str
 			break
 		}
 
-		if result == nil || !result.FailureReason.IsTransient() {
+		if result == nil || !result.FailureReason.IsTransient() || errors.Is(checkErr, hostvalidation.ErrReservedAddress) {
 			break
 		}
 
@@ -404,7 +429,7 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 			logger.Error(err, "failed to update TLSComplianceReport after check error")
 		}
 
-		if failReason.IsTransient() && r.MaxRetries > 0 {
+		if failReason.IsTransient() && r.MaxRetries > 0 && !errors.Is(checkErr, hostvalidation.ErrReservedAddress) {
 			metrics.RecordRetriesExhausted()
 			if r.Recorder != nil {
 				var cr securityv1alpha1.TLSComplianceReport

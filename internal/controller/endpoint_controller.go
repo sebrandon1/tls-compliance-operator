@@ -53,6 +53,7 @@ import (
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 	"github.com/sebrandon1/tls-compliance-operator/internal/metrics"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/endpoint"
+	"github.com/sebrandon1/tls-compliance-operator/pkg/hostvalidation"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlscheck"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlsprofile"
 )
@@ -451,6 +452,13 @@ func (r *EndpointReconciler) handleTarget(ctx context.Context, target *securityv
 	}
 
 	crName := endpoint.GenerateCRName(&ep)
+
+	// The admission webhook is optional, so re-check here before probing.
+	if !hostvalidation.IsSafeHost(ep.Host) {
+		logger.Info("skipping Target with internal or reserved host", "target", target.Name, "host", ep.Host)
+		r.updateTargetStatus(ctx, target.Name, "", "", fmt.Sprintf("host %q is an internal or reserved address and will not be probed", ep.Host))
+		return ctrl.Result{}, nil
+	}
 
 	if err := r.processEndpoint(ctx, &ep); err != nil {
 		if errors.Is(err, errWorkersBusy) {

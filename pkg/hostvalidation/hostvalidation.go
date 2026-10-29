@@ -17,9 +17,16 @@ limitations under the License.
 package hostvalidation
 
 import (
+	"errors"
+	"fmt"
 	"net"
 	"strings"
+	"syscall"
 )
+
+// ErrReservedAddress is returned by DialControl when a connection would reach
+// a reserved or internal address.
+var ErrReservedAddress = errors.New("dial to reserved address blocked")
 
 var reservedCIDRs = func() []*net.IPNet {
 	cidrs := []string{
@@ -83,4 +90,18 @@ func IsSafeHost(host string) bool {
 		return !IsReservedIP(ip)
 	}
 	return !IsInternalHostname(host)
+}
+
+// DialControl is a net.Dialer Control hook that refuses connections to
+// reserved addresses. It runs after DNS resolution, so it also catches
+// hostnames that resolve (or rebind) to internal IPs.
+func DialControl(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	if ip := net.ParseIP(host); ip == nil || IsReservedIP(ip) {
+		return fmt.Errorf("%w: %s", ErrReservedAddress, host)
+	}
+	return nil
 }
