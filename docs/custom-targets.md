@@ -106,9 +106,14 @@ The following host categories are rejected:
 | IPv6 link-local | `fe80::1` | Link-local addresses |
 | IPv6 ULA | `fd00::1` | Unique local addresses |
 | Unspecified | `0.0.0.0` | Unspecified address |
+| CGNAT (RFC 6598) | `100.100.100.200`, `100.64.0.1` | Shared address space (Alibaba Cloud metadata) |
+| IETF protocol assignments | `192.0.0.192` | Special-purpose range (OCI metadata) |
+| Benchmarking (RFC 2544) | `198.18.0.1` | Non-routable test range |
+| Multicast / reserved | `224.0.0.1`, `240.0.0.1`, `255.255.255.255`, `ff02::1` | Multicast, Class E, and broadcast |
+| NAT64 | `64:ff9b::a9fe:a9fe` | Can embed any IPv4 address, including metadata |
 | `localhost` | `localhost`, `app.localhost` | Loopback hostnames |
 | Cluster-internal DNS | `myapp.default.svc.cluster.local` | In-cluster service DNS |
-| Cloud metadata hostnames | `metadata.google.internal` | Cloud provider metadata |
+| Cloud metadata hostnames | `metadata.google.internal`, `metadata`, `instance-data` | Cloud provider metadata |
 
 Example error for an invalid host:
 
