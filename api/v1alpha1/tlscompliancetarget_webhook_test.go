@@ -125,6 +125,9 @@ func TestValidateTargetSpec_EdgeCases(t *testing.T) {
 		{name: "trailing dot", host: "api.example.com.", wantError: "must be a valid IP address or DNS name"},
 		{name: "IPv4 mapped loopback", host: "::ffff:127.0.0.1", wantError: "internal or reserved address"},
 		{name: "IPv4 mapped link local", host: "::ffff:169.254.169.254", wantError: "internal or reserved address"},
+		{name: "CGNAT alibaba metadata", host: "100.100.100.200", wantError: "internal or reserved address"},
+		{name: "IETF oci metadata", host: "192.0.0.192", wantError: "internal or reserved address"},
+		{name: "NAT64 embedded metadata", host: "64:ff9b::a9fe:a9fe", wantError: "internal or reserved address"},
 		{name: "internal hostname with uppercase suffix", host: "API.SVC.CLUSTER.LOCAL", wantError: "must be a valid IP address or DNS name"},
 	}
 

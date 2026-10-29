@@ -32,6 +32,13 @@ var reservedCIDRs = func() []*net.IPNet {
 		"192.168.0.0/16", // RFC 1918
 		"fc00::/7",       // IPv6 unique local
 		"0.0.0.0/8",      // unspecified
+		"100.64.0.0/10",  // RFC 6598 CGNAT (includes Alibaba metadata 100.100.100.200)
+		"192.0.0.0/24",   // IETF protocol assignments (includes OCI metadata 192.0.0.192)
+		"198.18.0.0/15",  // RFC 2544 benchmarking
+		"224.0.0.0/4",    // IPv4 multicast
+		"240.0.0.0/4",    // reserved (includes broadcast 255.255.255.255)
+		"ff00::/8",       // IPv6 multicast
+		"64:ff9b::/96",   // NAT64 (can embed any IPv4, including 169.254.169.254)
 	}
 	nets := make([]*net.IPNet, 0, len(cidrs))
 	for _, c := range cidrs {
@@ -48,6 +55,8 @@ var internalHostSuffixes = []string{
 var internalHostExact = []string{
 	"localhost",
 	"metadata.google.internal",
+	"metadata",
+	"instance-data",
 }
 
 // IsReservedIP returns true if the IP falls within a reserved or private CIDR.

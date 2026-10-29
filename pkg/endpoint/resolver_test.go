@@ -242,6 +242,9 @@ func TestExtractFromService_ExternalNameSSRF(t *testing.T) {
 		{"private 192.168.x", "192.168.1.1", true},
 		{"localhost name", "localhost", true},
 		{"google metadata", "metadata.google.internal", true},
+		{"alibaba metadata IP (CGNAT)", "100.100.100.200", true},
+		{"oci metadata IP", "192.0.0.192", true},
+		{"nat64 embedded metadata", "64:ff9b::a9fe:a9fe", true},
 		{"cluster-local allowed", "redis.default.svc.cluster.local", false},
 		{"safe external", "api.vendor.example.com", false},
 	}
