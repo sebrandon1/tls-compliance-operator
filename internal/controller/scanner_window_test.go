@@ -137,3 +137,77 @@ func TestIsWithinScanWindow_InvalidEndFormat(t *testing.T) {
 		t.Error("expected error for invalid end time format")
 	}
 }
+
+func TestIsWithinScanWindow_OvernightBoundaries(t *testing.T) {
+	tests := []struct {
+		name   string
+		hour   int
+		minute int
+		want   bool
+	}{
+		{"before start", 21, 59, false},
+		{"at start", 22, 0, true},
+		{"just before midnight", 23, 59, true},
+		{"at midnight", 0, 0, true},
+		{"after midnight", 1, 0, true},
+		{"just before end", 1, 59, true},
+		{"at end", 2, 0, false},
+		{"after end", 3, 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			now := time.Date(2026, 1, 2, tt.hour, tt.minute, 0, 0, time.UTC)
+			ok, err := isWithinScanWindow(now, "22:00", "02:00", "UTC")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if ok != tt.want {
+				t.Errorf("isWithinScanWindow(%02d:%02d, 22:00–02:00) = %v, want %v", tt.hour, tt.minute, ok, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsWithinScanWindow_DSTTransition(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+	tests := []struct {
+		name       string
+		now        time.Time
+		start, end string
+		want       bool
+	}{
+		// 2026-11-01 is the US fall-back date: 02:00 EDT becomes 01:00 EST.
+		{"fall back inside", time.Date(2026, 11, 1, 3, 30, 0, 0, loc), "02:00", "04:00", true},
+		{"fall back after end", time.Date(2026, 11, 1, 4, 0, 0, 0, loc), "02:00", "04:00", false},
+		// 2026-03-08 is the US spring-forward date: 02:00 EST becomes 03:00 EDT.
+		{"spring forward inside", time.Date(2026, 3, 8, 3, 30, 0, 0, loc), "03:00", "05:00", true},
+		{"spring forward before start", time.Date(2026, 3, 8, 1, 30, 0, 0, loc), "03:00", "05:00", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ok, err := isWithinScanWindow(tt.now, tt.start, tt.end, "America/New_York")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if ok != tt.want {
+				t.Errorf("isWithinScanWindow(%s, %s–%s) = %v, want %v", tt.now.Format(time.RFC3339), tt.start, tt.end, ok, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsWithinScanWindow_EqualStartEndIsAllDay(t *testing.T) {
+	for _, h := range []int{0, 6, 12, 23} {
+		now := time.Date(2026, 1, 1, h, 0, 0, 0, time.UTC)
+		ok, err := isWithinScanWindow(now, "06:00", "06:00", "UTC")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Errorf("hour %d: expected true for a window with start == end", h)
+		}
+	}
+}
