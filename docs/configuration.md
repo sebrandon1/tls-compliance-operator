@@ -28,6 +28,11 @@ Restrict periodic scans to a daily time window. Outside the window the periodic
 scan cycle is skipped (new and changed resources are still checked promptly).
 The window is `[start, end)` in the configured timezone; overnight windows
 (e.g. `22:00`–`02:00`) are supported.
+When a periodic tick is skipped because it falls outside the window, one
+catch-up scan runs as soon as the window next opens, and later ticks are
+realigned to that time. This keeps an interval longer than the window (e.g.
+`--scan-interval=24h` with a 4-hour window) from starving; the operator logs a
+warning at startup for that combination.
 
 | Flag | Env Var | Type | Default | Description |
 |------|---------|------|---------|-------------|

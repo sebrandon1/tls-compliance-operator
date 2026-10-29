@@ -129,6 +129,8 @@ type EndpointReconciler struct {
 	nodeAddrExpiry        time.Time
 	circuitMu             sync.Mutex
 	circuits              map[string]circuitState
+	// now overrides time.Now for the periodic scan loop; tests only.
+	now func() time.Time
 }
 
 func (r *EndpointReconciler) apiReader() client.Reader {

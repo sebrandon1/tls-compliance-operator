@@ -603,21 +603,106 @@ func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval tim
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
+		// catchUp fires when the scan window next opens after a tick was
+		// skipped, so a window shorter than the interval is never starved.
+		var catchUp *time.Timer
+		var catchUpC <-chan time.Time
+		stopCatchUp := func() {
+			if catchUp != nil {
+				catchUp.Stop()
+				catchUp, catchUpC = nil, nil
+			}
+		}
+		defer stopCatchUp()
+
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if ok, werr := isWithinScanWindow(time.Now(), r.ScanWindowStart, r.ScanWindowEnd, r.ScanWindowTimezone); werr != nil {
+				now := r.clock()
+				ok, werr := isWithinScanWindow(now, r.ScanWindowStart, r.ScanWindowEnd, r.ScanWindowTimezone)
+				switch {
+				case werr != nil:
 					logger.Error(werr, "invalid scan window configuration, skipping scan cycle")
-				} else if !ok {
-					logger.V(1).Info("outside scan window, skipping scan cycle")
-				} else {
+				case ok:
+					stopCatchUp()
 					_ = r.runScanCycleWithError(ctx, logger)
+				case catchUp != nil:
+					logger.V(1).Info("outside scan window, skipping scan cycle")
+				default:
+					opens, err := nextWindowStart(now, r.ScanWindowStart, r.ScanWindowTimezone)
+					if err != nil {
+						logger.Error(err, "invalid scan window configuration, skipping scan cycle")
+						continue
+					}
+					logger.V(1).Info("outside scan window, scheduling catch-up scan at window open", "opens", opens)
+					catchUp = time.NewTimer(opens.Sub(now))
+					catchUpC = catchUp.C
 				}
+			case <-catchUpC:
+				catchUp, catchUpC = nil, nil
+				logger.Info("scan window opened, running catch-up scan")
+				_ = r.runScanCycleWithError(ctx, logger)
+				// Realign ticks to the window opening so the next tick is a
+				// full interval away instead of duplicating this scan.
+				ticker.Reset(interval)
 			}
 		}
 	}()
+}
+
+func (r *EndpointReconciler) clock() time.Time {
+	if r.now != nil {
+		return r.now()
+	}
+	return time.Now()
+}
+
+// nextWindowStart returns the first time strictly after now at which the daily
+// window starting at start ("HH:MM" in tz) opens. It builds the time from wall
+// clock fields, so DST transitions do not shift the result.
+func nextWindowStart(now time.Time, start, tz string) (time.Time, error) {
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid scan-window-timezone %q: %w", tz, err)
+	}
+	t, err := parseScanWindowTime(start)
+	if err != nil {
+		return time.Time{}, err
+	}
+	now = now.In(loc)
+	opens := time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), 0, 0, loc)
+	if !opens.After(now) {
+		opens = time.Date(now.Year(), now.Month(), now.Day()+1, t.Hour(), t.Minute(), 0, 0, loc)
+	}
+	return opens, nil
+}
+
+// ScanWindowLength returns how long the daily [start, end) window stays open.
+// Overnight windows (end <= start) wrap past midnight.
+func ScanWindowLength(start, end string) (time.Duration, error) {
+	s, err := parseScanWindowTime(start)
+	if err != nil {
+		return 0, err
+	}
+	e, err := parseScanWindowTime(end)
+	if err != nil {
+		return 0, err
+	}
+	d := e.Sub(s)
+	if d <= 0 {
+		d += 24 * time.Hour
+	}
+	return d, nil
+}
+
+func parseScanWindowTime(s string) (time.Time, error) {
+	t, err := time.Parse(ScanWindowTimeFormat, s)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid scan-window time %q: %w", s, err)
+	}
+	return t, nil
 }
 
 func (r *EndpointReconciler) runScanCycleWithError(ctx context.Context, logger logr.Logger) error {

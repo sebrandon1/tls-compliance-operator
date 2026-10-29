@@ -693,6 +693,34 @@ func TestCheckConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("scan interval longer than scan window warns", func(t *testing.T) {
+		cfg := validOperatorConfig()
+		cfg.scanInterval = 24 * time.Hour
+		cfg.scanWindowStart = "22:00"
+		cfg.scanWindowEnd = "02:00"
+		warnings, err := checkConfig(cfg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(warnings) != 1 || !strings.Contains(warnings[0], "catch-up") {
+			t.Errorf("expected one catch-up warning, got %v", warnings)
+		}
+	})
+
+	t.Run("scan interval within scan window no warning", func(t *testing.T) {
+		cfg := validOperatorConfig()
+		cfg.scanInterval = time.Hour
+		cfg.scanWindowStart = "22:00"
+		cfg.scanWindowEnd = "02:00"
+		warnings, err := checkConfig(cfg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(warnings) != 0 {
+			t.Errorf("unexpected warnings: %v", warnings)
+		}
+	})
+
 	t.Run("workers proportional to rate-limit no warning", func(t *testing.T) {
 		cfg := validOperatorConfig()
 		cfg.workers = 5

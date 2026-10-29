@@ -211,3 +211,74 @@ func TestIsWithinScanWindow_EqualStartEndIsAllDay(t *testing.T) {
 		}
 	}
 }
+
+func TestNextWindowStart(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+	tests := []struct {
+		name  string
+		now   time.Time
+		start string
+		tz    string
+		want  time.Time
+	}{
+		{"before start same day", time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC), "22:00", "UTC", time.Date(2026, 1, 1, 22, 0, 0, 0, time.UTC)},
+		{"after start rolls to tomorrow", time.Date(2026, 1, 1, 23, 0, 0, 0, time.UTC), "22:00", "UTC", time.Date(2026, 1, 2, 22, 0, 0, 0, time.UTC)},
+		{"exactly at start rolls to tomorrow", time.Date(2026, 1, 1, 22, 0, 0, 0, time.UTC), "22:00", "UTC", time.Date(2026, 1, 2, 22, 0, 0, 0, time.UTC)},
+		{"after midnight of overnight window", time.Date(2026, 1, 2, 1, 0, 0, 0, time.UTC), "22:00", "UTC", time.Date(2026, 1, 2, 22, 0, 0, 0, time.UTC)},
+		{"month rollover", time.Date(2026, 1, 31, 23, 0, 0, 0, time.UTC), "02:00", "UTC", time.Date(2026, 2, 1, 2, 0, 0, 0, time.UTC)},
+		// 2026-11-01 is the US fall-back date; the next 22:00 is 25h away, not 24h.
+		{"across DST fall back", time.Date(2026, 10, 31, 22, 30, 0, 0, ny), "22:00", "America/New_York", time.Date(2026, 11, 1, 22, 0, 0, 0, ny)},
+		// 01:00 UTC on June 1 is 21:00 EDT on May 31, so the window opens that evening.
+		{"other timezone than now", time.Date(2026, 6, 1, 1, 0, 0, 0, time.UTC), "22:00", "America/New_York", time.Date(2026, 5, 31, 22, 0, 0, 0, ny)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := nextWindowStart(tt.now, tt.start, tt.tz)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !got.Equal(tt.want) {
+				t.Errorf("nextWindowStart(%s, %s) = %s, want %s", tt.now.Format(time.RFC3339), tt.start, got.Format(time.RFC3339), tt.want.Format(time.RFC3339))
+			}
+		})
+	}
+}
+
+func TestNextWindowStart_Errors(t *testing.T) {
+	now := time.Date(2026, 1, 1, 3, 0, 0, 0, time.UTC)
+	if _, err := nextWindowStart(now, "02:00", "Not/ATimezone"); err == nil {
+		t.Error("expected error for invalid timezone")
+	}
+	if _, err := nextWindowStart(now, "bad", "UTC"); err == nil {
+		t.Error("expected error for invalid start time format")
+	}
+}
+
+func TestScanWindowLength(t *testing.T) {
+	tests := []struct {
+		start, end string
+		want       time.Duration
+		wantErr    bool
+	}{
+		{"02:00", "06:00", 4 * time.Hour, false},
+		{"22:00", "02:00", 4 * time.Hour, false},
+		{"08:30", "08:45", 15 * time.Minute, false},
+		{"06:00", "06:00", 24 * time.Hour, false},
+		{"bad", "06:00", 0, true},
+		{"02:00", "nope", 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.start+"-"+tt.end, func(t *testing.T) {
+			got, err := ScanWindowLength(tt.start, tt.end)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ScanWindowLength() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("ScanWindowLength(%s, %s) = %s, want %s", tt.start, tt.end, got, tt.want)
+			}
+		})
+	}
+}
