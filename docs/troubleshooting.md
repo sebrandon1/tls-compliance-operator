@@ -81,7 +81,7 @@ oc rollout restart deployment/tls-compliance-operator-controller-manager \
 | **Closed** | Port not listening | Check if service pods are running |
 | **Timeout** | Connection timed out | Check network connectivity / firewall rules |
 | **Filtered** | Reserved (firewall drop); not currently produced | Check network policies |
-| **Unreachable** | Could not connect (generic failure) | Check DNS resolution, verify the endpoint exists |
+| **Unreachable** | Could not connect (generic failure), or a Target/ExternalName host resolved to a reserved address | Check DNS resolution, verify the endpoint exists. If `lastError` names a blocked reserved address, the probe was refused on purpose and is not retried; see [Blocked Host Categories](custom-targets.md#blocked-host-categories) |
 | **NoTLS** | Port open but doesn't speak TLS | Expected for non-TLS services |
 | **PlaintextHTTP** | Endpoint responds with HTTP but no TLS | Add TLS termination via ingress controller or sidecar proxy |
 | **MutualTLSRequired** | Server requires client certificate | Expected for mTLS endpoints; use `--client-cert`/`--client-key` to probe |
