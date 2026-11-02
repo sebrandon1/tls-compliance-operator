@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -1101,6 +1102,81 @@ spec:
 				g.Expect(output).To(ContainSubstring("Target,cluster-scoped,test-k8s-api"))
 				g.Expect(output).NotTo(ContainSubstring("Service," + dropNS + "," + svcName))
 			}).WithTimeout(time.Minute).WithPolling(10 * time.Second).Should(Succeed())
+		})
+	})
+
+	Context("Periodic Scan Retry Stall", Label("retry-stall"), Ordered, func() {
+		const (
+			agnhostImage = "registry.k8s.io/e2e-test-images/agnhost:2.53"
+			podName      = "retry-stall-pod"
+			fastBackoff  = "--retry-backoff=1s"
+			slowBackoff  = "--retry-backoff=5m"
+		)
+
+		// minClosedCheckCount asserts that the pod has at least one report and that
+		// every one is Closed, then returns the lowest checkCount. A pod gets one
+		// report per IP (dual-stack clusters give it two), and checkCount is
+		// omitted until the first check completes.
+		minClosedCheckCount := func(g Gomega) int {
+			cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+				"jsonpath={range .items[?(@.spec.sourceName==\""+podName+"\")]}{.status.complianceStatus},{.status.checkCount}{\"\\n\"}{end}")
+			output, err := utils.Run(cmd)
+			g.Expect(err).NotTo(HaveOccurred())
+			lines := utils.GetNonEmptyLines(output)
+			g.Expect(lines).NotTo(BeEmpty(), "no report for %s yet", podName)
+			lowest := -1
+			for _, line := range lines {
+				status, count, _ := strings.Cut(line, ",")
+				g.Expect(status).To(Equal("Closed"), "report line %q", line)
+				n := 0
+				if count != "" {
+					n, err = strconv.Atoi(count)
+					g.Expect(err).NotTo(HaveOccurred())
+				}
+				if lowest < 0 || n < lowest {
+					lowest = n
+				}
+			}
+			return lowest
+		}
+
+		BeforeAll(func() {
+			DeferCleanup(func() {
+				removeManagerArg(slowBackoff)
+				removeManagerArg(fastBackoff)
+				cmd := exec.Command("kubectl", "delete", "pod", podName,
+					"--grace-period=0", "--force", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+
+			By("using a short retry backoff so the discovery check finishes quickly")
+			addManagerArg(fastBackoff)
+
+			By("creating a pod that declares port 443 but does not listen on it")
+			cmd := exec.Command("kubectl", "run", podName, "--image="+agnhostImage, "--port=443",
+				"--command", "--", "sleep", "3600")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("waiting for the discovery check, retries included, to complete")
+			Eventually(func(g Gomega) {
+				g.Expect(minClosedCheckCount(g)).To(BeNumerically(">=", 1))
+			}).WithTimeout(3 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+		})
+
+		It("should keep scanning while an endpoint refuses connections", func() {
+			By("restarting with a retry backoff longer than the test window")
+			// The last --retry-backoff wins; the report already exists, so only the periodic scan probes it.
+			addManagerArg(slowBackoff)
+
+			var start int
+			Eventually(func(g Gomega) { start = minClosedCheckCount(g) }).Should(Succeed())
+
+			By("waiting for two periodic passes to re-probe the endpoint without sleeping through backoff")
+			// --scan-interval=30s. Inline retries would hold the first pass for 5m+ instead.
+			Eventually(func(g Gomega) {
+				g.Expect(minClosedCheckCount(g)).To(BeNumerically(">=", start+2))
+			}).WithTimeout(2 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
 		})
 	})
 

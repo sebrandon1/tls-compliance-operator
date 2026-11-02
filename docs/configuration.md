@@ -115,7 +115,7 @@ args:
 
 | Flag | Env Var | Type | Default | Description |
 |------|---------|------|---------|-------------|
-| `--max-retries` | `TLS_COMPLIANCE_MAX_RETRIES` | int | `3` | Maximum number of retries for transient TLS check failures (Timeout, Unreachable). Range: 0-10. Set to 0 to disable retries entirely. Each retry uses exponential backoff. |
+| `--max-retries` | `TLS_COMPLIANCE_MAX_RETRIES` | int | `3` | Maximum number of retries for transient TLS check failures (Timeout, Closed, Unreachable, Filtered). Range: 0-10. Set to 0 to disable retries entirely. Each retry uses exponential backoff. Retries apply only to checks triggered by resource events and the rescan annotation. The periodic scan probes each endpoint once and lets the next interval act as the retry. A retry stops early if its report is deleted during the backoff. |
 | `--retry-backoff` | `TLS_COMPLIANCE_RETRY_BACKOFF` | duration | `30s` | Base backoff duration between retries. Actual delay is `base * 2^attempt` (30s, 60s, 120s for the default). On clusters with many unreachable endpoints, increasing this reduces wasted checks. |
 | `--max-backoff` | `TLS_COMPLIANCE_MAX_BACKOFF` | duration | `5m` | Maximum backoff duration between retries. Caps exponential growth so retries don't wait indefinitely. |
 

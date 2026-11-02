@@ -64,6 +64,8 @@ jobs:
             label: "cleanup"
           - name: namespace-filter
             label: "namespace-filter"
+          - name: retry-stall
+            label: "retry-stall"
           - name: scan-all-ports
             label: "scan-all-ports"
           - name: run-once

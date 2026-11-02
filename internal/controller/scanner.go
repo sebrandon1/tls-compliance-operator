@@ -304,10 +304,34 @@ type checkOutcome struct {
 	pqcReadiness        securityv1alpha1.PQCReadiness
 }
 
+type noRetriesKey struct{}
+
+// withoutRetries marks ctx so TLS checks made with it run a single attempt.
+// The periodic scan uses it: its next interval already acts as the retry, and
+// sleeping through backoff inside the pass would hold up every other endpoint.
+func withoutRetries(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noRetriesKey{}, true)
+}
+
+// checkAttempts returns how many times a TLS check made with ctx may probe the endpoint.
+func (r *EndpointReconciler) checkAttempts(ctx context.Context) int {
+	if noRetries, _ := ctx.Value(noRetriesKey{}).(bool); noRetries {
+		return 1
+	}
+	return 1 + r.MaxRetries
+}
+
+// reportDeleted reports whether the TLSComplianceReport is gone, for example
+// because cleanup removed it after its source Pod went away.
+func (r *EndpointReconciler) reportDeleted(ctx context.Context, crName string) bool {
+	var report securityv1alpha1.TLSComplianceReport
+	return apierrors.IsNotFound(r.Get(ctx, client.ObjectKey{Name: crName}, &report))
+}
+
 func (r *EndpointReconciler) retryTLSCheck(ctx context.Context, crName, host string, port int, holdsSemaphore bool) (*tlscheck.TLSCheckResult, error) {
 	logger := log.FromContext(ctx).WithValues("crName", crName)
 
-	maxAttempts := 1 + r.MaxRetries
+	maxAttempts := r.checkAttempts(ctx)
 	retryBackoff := r.RetryBackoff
 	if retryBackoff <= 0 {
 		retryBackoff = 30 * time.Second
@@ -374,6 +398,11 @@ func (r *EndpointReconciler) retryTLSCheck(ctx context.Context, crName, host str
 				r.checkSem <- struct{}{}
 				metrics.RecordWorkerAcquire()
 			}
+
+			if r.reportDeleted(ctx, crName) {
+				logger.Info("report deleted during retry backoff, abandoning check")
+				return nil, nil
+			}
 		}
 	}
 
@@ -429,14 +458,15 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 			logger.Error(err, "failed to update TLSComplianceReport after check error")
 		}
 
-		if failReason.IsTransient() && r.MaxRetries > 0 && !errors.Is(checkErr, hostvalidation.ErrReservedAddress) {
+		attempts := r.checkAttempts(ctx)
+		if failReason.IsTransient() && attempts > 1 && !errors.Is(checkErr, hostvalidation.ErrReservedAddress) {
 			metrics.RecordRetriesExhausted()
 			if r.Recorder != nil {
 				var cr securityv1alpha1.TLSComplianceReport
 				if err := r.Get(ctx, client.ObjectKey{Name: crName}, &cr); err == nil {
 					r.Recorder.Eventf(&cr, nil, corev1.EventTypeWarning, EventReasonRetryExhausted, EventActionScan,
 						"TLS check retries exhausted for %s after %d attempts: %s",
-						hostPort(host, int32(port)), 1+r.MaxRetries, failReason)
+						hostPort(host, int32(port)), attempts, failReason)
 				}
 			}
 		}
@@ -771,6 +801,7 @@ func (r *EndpointReconciler) scanPodEndpoints(ctx context.Context) error {
 // scanAllEndpoints re-checks all existing TLSComplianceReport CRs using a worker pool.
 func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 	logger := log.FromContext(ctx)
+	checkCtx := withoutRetries(ctx)
 
 	// Phase 1: Discover new pod endpoints
 	var podScanErr error
@@ -848,7 +879,7 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 						return
 					}
 					defer release()
-					r.performTLSCheck(ctx, item.name, item.host, item.port, item.namespace, false)
+					r.performTLSCheck(checkCtx, item.name, item.host, item.port, item.namespace, false)
 				}()
 			}
 		}()
