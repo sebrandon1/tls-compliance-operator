@@ -32,3 +32,6 @@ go.work
 # Build artifacts
 dist/
 /kubectl-tlsreport
+
+# Playwright MCP session artifacts
+.playwright-mcp/
