@@ -687,6 +687,16 @@ func (r *EndpointReconciler) isNamespaceFiltered(namespace string) bool {
 	return r.ExcludeNamespaces[namespace]
 }
 
+// isReportFiltered reports whether an existing TLSComplianceReport falls
+// outside the current namespace filter. TLSComplianceTarget reports are
+// cluster-scoped and have no source namespace, so they are never filtered.
+func (r *EndpointReconciler) isReportFiltered(kind securityv1alpha1.SourceKind, sourceNamespace string) bool {
+	if kind == securityv1alpha1.SourceKindTarget {
+		return false
+	}
+	return r.isNamespaceFiltered(sourceNamespace)
+}
+
 // failureReasonToComplianceStatus maps a TLS check failure reason to the
 // corresponding compliance status. Used by both performTLSCheck and updateRetryStatus.
 func failureReasonToComplianceStatus(reason tlscheck.FailureReason) securityv1alpha1.ComplianceStatus {

@@ -69,6 +69,11 @@ args:
 
 If neither flag is set, all namespaces are scanned.
 
+The filter also applies to reports that already exist. Changing either flag
+takes effect on restart: the periodic scan stops probing reports from filtered
+namespaces, and the next cleanup cycle deletes them. `TLSComplianceTarget`
+reports are cluster-scoped and are never removed by the namespace filter.
+
 ## Report Retention
 
 | Flag | Env Var | Type | Default | Description |

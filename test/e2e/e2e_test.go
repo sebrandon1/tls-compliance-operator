@@ -1038,6 +1038,72 @@ spec:
 		})
 	})
 
+	Context("Namespace Filter on Existing Reports", Label("namespace-filter"), Ordered, func() {
+		const (
+			keepNS      = "tls-e2e-ns-keep"
+			dropNS      = "tls-e2e-ns-drop"
+			svcName     = "ns-filter-svc"
+			includeFlag = "--include-namespaces=" + keepNS
+		)
+
+		reportSources := func(g Gomega) string {
+			cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+				"jsonpath={range .items[*]}{.spec.sourceKind},{.spec.sourceNamespace},{.spec.sourceName}{\"\\n\"}{end}")
+			output, err := utils.Run(cmd)
+			g.Expect(err).NotTo(HaveOccurred())
+			return output
+		}
+
+		BeforeAll(func() {
+			By("creating a TLS Service in two namespaces and a TLSComplianceTarget before any filter is set")
+			for _, ns := range []string{keepNS, dropNS} {
+				cmd := exec.Command("kubectl", "create", "ns", ns)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+				cmd = exec.Command("kubectl", "create", "service", "clusterip", svcName,
+					"--tcp=443:443", "-n", ns)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+			}
+			kubectlApplyManifest(loadManifest("tlscompliancetarget.yaml"), "TLSComplianceTarget")
+
+			DeferCleanup(func() {
+				removeManagerArg(includeFlag)
+				cmd := exec.Command("kubectl", "delete", "tlstarget", "test-k8s-api", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+				for _, ns := range []string{keepNS, dropNS} {
+					cmd = exec.Command("kubectl", "delete", "ns", ns, "--ignore-not-found", "--timeout=60s")
+					_, _ = utils.Run(cmd)
+				}
+			})
+
+			Eventually(func(g Gomega) {
+				output := reportSources(g)
+				g.Expect(output).To(ContainSubstring("Service," + keepNS + "," + svcName))
+				g.Expect(output).To(ContainSubstring("Service," + dropNS + "," + svcName))
+				g.Expect(output).To(ContainSubstring("Target,cluster-scoped,test-k8s-api"))
+			}).Should(Succeed())
+		})
+
+		It("should delete existing reports outside --include-namespaces added after the first start", func() {
+			By("adding --include-namespaces to the running operator")
+			addManagerArg(includeFlag)
+
+			By("waiting for cleanup to remove the report from the filtered namespace")
+			Eventually(func(g Gomega) {
+				g.Expect(reportSources(g)).NotTo(ContainSubstring("Service," + dropNS + "," + svcName))
+			}).WithTimeout(3 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+
+			By("verifying the included namespace report and the cluster-scoped Target report remain")
+			Consistently(func(g Gomega) {
+				output := reportSources(g)
+				g.Expect(output).To(ContainSubstring("Service," + keepNS + "," + svcName))
+				g.Expect(output).To(ContainSubstring("Target,cluster-scoped,test-k8s-api"))
+				g.Expect(output).NotTo(ContainSubstring("Service," + dropNS + "," + svcName))
+			}).WithTimeout(time.Minute).WithPolling(10 * time.Second).Should(Succeed())
+		})
+	})
+
 	Context("Run-Once Mode", Label("run-once"), Ordered, func() {
 		var managerBin string
 
