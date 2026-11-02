@@ -795,6 +795,9 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 	if err := paginatedList(ctx, r.apiReader(), &crList, func() {
 		for i := range crList.Items {
 			cr := &crList.Items[i]
+			if r.isReportFiltered(cr.Spec.SourceKind, cr.Spec.SourceNamespace) {
+				continue
+			}
 			allItems = append(allItems, scanItem{
 				name:       cr.Name,
 				host:       cr.Spec.Host,

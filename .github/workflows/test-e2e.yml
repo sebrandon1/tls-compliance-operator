@@ -62,6 +62,8 @@ jobs:
             label: "compliance-detection"
           - name: cleanup
             label: "cleanup"
+          - name: namespace-filter
+            label: "namespace-filter"
           - name: scan-all-ports
             label: "scan-all-ports"
           - name: run-once

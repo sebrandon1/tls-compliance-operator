@@ -88,7 +88,9 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 	if err := paginatedList(ctx, r.apiReader(), &crList, func() {
 		for i := range crList.Items {
 			cr := &crList.Items[i]
-			neededKinds[cr.Spec.SourceKind] = true
+			if !r.isReportFiltered(cr.Spec.SourceKind, cr.Spec.SourceNamespace) {
+				neededKinds[cr.Spec.SourceKind] = true
+			}
 			lastActivity := cr.CreationTimestamp.Time
 			if cr.Status.LastCheckAt != nil {
 				lastActivity = cr.Status.LastCheckAt.Time
@@ -201,6 +203,13 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 	cutoff := time.Now().Add(-time.Duration(r.ReportRetentionDays) * 24 * time.Hour)
 	for i := range reports {
 		ref := &reports[i]
+
+		if r.isReportFiltered(ref.sourceKind, ref.sourceNamespace) {
+			logger.Info("deleting TLSComplianceReport outside the namespace filter", "name", ref.name,
+				"sourceKind", ref.sourceKind, "sourceNamespace", ref.sourceNamespace)
+			r.deleteCleanupReport(ctx, ref, false)
+			continue
+		}
 
 		sourceSet, known := existingSources[ref.sourceKind]
 		if known {
