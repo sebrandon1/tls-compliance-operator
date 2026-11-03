@@ -1058,7 +1058,6 @@ spec:
 			rescanKey    = "tls-compliance.telco.openshift.io/rescan"
 			k8sAPITarget = "test-k8s-api"
 			sharedSvc    = "shared-tls"
-			sharedIng    = sharedSvc + "-ingress"
 			sharedHost   = sharedSvc + "." + dropNS
 			sharedLabel  = `host="` + sharedHost + `"`
 			// The Services have no backing pods, so the first check of a
@@ -1253,8 +1252,8 @@ spec:
 			// A Service and an Ingress whose TLS host is the Service's name
 			// both produce reports for sharedHost:443. Targets cannot be used
 			// here: their dials refuse private addresses such as ClusterIPs.
-			// The Ingress gets its own name because Reconcile resolves a
-			// request as a Service first, so a same-named Ingress is shadowed.
+			// The Ingress shares the Service's name to cover #650: both kinds
+			// must be discovered even though their requests have the same key.
 			By("resuming cleanup and enabling per-endpoint metrics")
 			removeManagerArg(pauseCleanup)
 			addManagerArg(perEndpoint)
@@ -1281,7 +1280,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: %[4]s
+  name: %[1]s
   namespace: %[2]s
 spec:
   tls:
@@ -1292,20 +1291,20 @@ spec:
       name: %[1]s
       port:
         number: 443
-`, sharedSvc, dropNS, sharedHost, sharedIng), "shared Service and Ingress")
+`, sharedSvc, dropNS, sharedHost), "shared Service and Ingress")
 			Eventually(func(g Gomega) {
 				output := reportSources(g)
 				g.Expect(output).To(ContainSubstring("Service," + dropNS + "," + sharedSvc))
-				g.Expect(output).To(ContainSubstring("Ingress," + dropNS + "," + sharedIng))
+				g.Expect(output).To(ContainSubstring("Ingress," + dropNS + "," + sharedSvc))
 				g.Expect(scrapeMetrics(g)).To(ContainSubstring(sharedLabel))
 			}).WithTimeout(3 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
 
 			By("deleting the Ingress while the Service still covers the endpoint")
-			cmd := exec.Command("kubectl", "delete", "ingress", sharedIng, "-n", dropNS)
+			cmd := exec.Command("kubectl", "delete", "ingress", sharedSvc, "-n", dropNS)
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 			Eventually(func(g Gomega) {
-				g.Expect(reportSources(g)).NotTo(ContainSubstring("Ingress," + dropNS + "," + sharedIng))
+				g.Expect(reportSources(g)).NotTo(ContainSubstring("Ingress," + dropNS + "," + sharedSvc))
 			}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
 			Consistently(func(g Gomega) {
 				g.Expect(scrapeMetrics(g)).To(ContainSubstring(sharedLabel))

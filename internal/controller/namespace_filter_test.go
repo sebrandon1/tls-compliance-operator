@@ -221,7 +221,7 @@ func TestReconcile_NamespacedRequestsHonorFilter(t *testing.T) {
 			before := countReports(t, r)
 			for _, ns := range []string{"keep", "drop"} {
 				req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "https", Namespace: ns}}
-				if _, err := r.Reconcile(ctx, req); err != nil {
+				if _, err := r.reconcileService(ctx, req); err != nil {
 					t.Fatalf("Reconcile %s: %v", ns, err)
 				}
 			}
@@ -250,7 +250,7 @@ func TestReconcile_TargetUnderNamespaceFilter(t *testing.T) {
 
 			before := countReports(t, r)
 			req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "new-target"}}
-			if _, err := r.Reconcile(ctx, req); err != nil {
+			if _, err := r.reconcileTarget(ctx, req); err != nil {
 				t.Fatalf("Reconcile: %v", err)
 			}
 			if got := countReports(t, r) - before; got != 1 {
@@ -279,7 +279,7 @@ func TestReconcile_RescanUnderNamespaceFilter(t *testing.T) {
 				}); err != nil {
 					t.Fatalf("annotate %s: %v", name, err)
 				}
-				if _, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: name}}); err != nil {
+				if _, err := r.reconcileReport(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: name}}); err != nil {
 					t.Fatalf("Reconcile %s: %v", name, err)
 				}
 			}

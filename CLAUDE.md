@@ -74,8 +74,12 @@ Requires **Go 1.26+**.
 | `internal/metrics/` | Prometheus metrics |
 | `test/e2e/`, `test/parity/`, `test/testserver/` | Integration and fixture tests |
 
-Single controller: watches Service, Ingress, Route (if present), Gateway API
-kinds, and `TLSComplianceTarget`. Periodic Pod scans avoid CR ownership fights.
+One `EndpointReconciler`, registered as a controller per kind
+(`endpoint-service`, `endpoint-ingress`, `endpoint-route`, `endpoint-<gateway
+kind>`, `endpoint-target`, `endpoint-report`), each with its own work queue so
+same-named objects of different kinds never collide. Routes and Gateway API
+kinds are registered only when present. Periodic Pod scans avoid CR ownership
+fights.
 CR names are `<sanitized-host>-<port>-<8-char-hash>`. Scan interval defaults to
 1h; cleanup to 5m. Endpoints that fail Timeout/Unreachable 3 times are skipped
 for 15m (circuit breaker).

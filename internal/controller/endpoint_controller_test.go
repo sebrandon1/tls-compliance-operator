@@ -144,7 +144,7 @@ func TestEndpointReconciler_Reconcile_ServiceWithHTTPS(t *testing.T) {
 		},
 	}
 
-	result, err := reconciler.Reconcile(ctx, req)
+	result, err := reconciler.reconcileService(ctx, req)
 	if err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
@@ -212,7 +212,7 @@ func TestEndpointReconciler_Reconcile_ServiceWithoutHTTPS(t *testing.T) {
 		},
 	}
 
-	result, err := reconciler.Reconcile(ctx, req)
+	result, err := reconciler.reconcileService(ctx, req)
 	if err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
@@ -264,7 +264,7 @@ func TestEndpointReconciler_Reconcile_ExternalNameService(t *testing.T) {
 		},
 	}
 
-	result, err := reconciler.Reconcile(ctx, req)
+	result, err := reconciler.reconcileService(ctx, req)
 	if err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
@@ -317,7 +317,7 @@ func TestEndpointReconciler_Reconcile_DeletedService(t *testing.T) {
 		},
 	}
 
-	result, err := reconciler.Reconcile(ctx, req)
+	result, err := reconciler.reconcileService(ctx, req)
 	if err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
@@ -362,7 +362,7 @@ func TestEndpointReconciler_Reconcile_ExcludedNamespace(t *testing.T) {
 		},
 	}
 
-	result, err := reconciler.Reconcile(ctx, req)
+	result, err := reconciler.reconcileService(ctx, req)
 	if err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
@@ -424,7 +424,7 @@ func TestEndpointReconciler_Reconcile_IncludeNamespaces(t *testing.T) {
 	}
 
 	// Reconcile included namespace - should create CR
-	result, err := reconciler.Reconcile(ctx, reconcile.Request{
+	result, err := reconciler.reconcileService(ctx, reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "included-service", Namespace: "my-app"},
 	})
 	if err != nil {
@@ -435,7 +435,7 @@ func TestEndpointReconciler_Reconcile_IncludeNamespaces(t *testing.T) {
 	}
 
 	// Reconcile non-included namespace - should be skipped
-	result, err = reconciler.Reconcile(ctx, reconcile.Request{
+	result, err = reconciler.reconcileService(ctx, reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "excluded-service", Namespace: "other-ns"},
 	})
 	if err != nil {
@@ -581,7 +581,7 @@ func TestEndpointReconciler_Reconcile_ExistingCR(t *testing.T) {
 	}
 
 	// First reconcile - creates CR
-	_, err := reconciler.Reconcile(ctx, req)
+	_, err := reconciler.reconcileService(ctx, req)
 	if err != nil {
 		t.Fatalf("First Reconcile() error = %v", err)
 	}
@@ -605,7 +605,7 @@ func TestEndpointReconciler_Reconcile_ExistingCR(t *testing.T) {
 	firstLastSeen := crList.Items[0].Status.LastSeenAt.Time
 
 	// Second reconcile - updates LastSeenAt
-	_, err = reconciler.Reconcile(ctx, req)
+	_, err = reconciler.reconcileService(ctx, req)
 	if err != nil {
 		t.Fatalf("Second Reconcile() error = %v", err)
 	}
@@ -1013,7 +1013,7 @@ func TestEndpointReconciler_ReconcileIngress(t *testing.T) {
 		CertExpiryDays: 30,
 	}
 
-	result, err := reconciler.Reconcile(ctx, reconcile.Request{
+	result, err := reconciler.reconcileIngress(ctx, reconcile.Request{
 		NamespacedName: types.NamespacedName{
 			Name:      "my-ingress",
 			Namespace: testNamespace,
@@ -5001,7 +5001,7 @@ func TestEndpointReconciler_Reconcile_ServiceWithSkipAnnotation(t *testing.T) {
 		},
 	}
 
-	result, err := reconciler.Reconcile(ctx, req)
+	result, err := reconciler.reconcileService(ctx, req)
 	if err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
@@ -5056,7 +5056,7 @@ func TestEndpointReconciler_Reconcile_ServiceWithExtraPorts(t *testing.T) {
 		},
 	}
 
-	_, err := reconciler.Reconcile(ctx, req)
+	_, err := reconciler.reconcileService(ctx, req)
 	if err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
