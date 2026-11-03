@@ -2,7 +2,7 @@
 IMG ?= quay.io/bapalm/tls-compliance-operator:latest
 
 # OLM bundle metadata
-BUNDLE_VERSION ?= 1.1.21
+BUNDLE_VERSION ?= 1.1.22
 BUNDLE_IMAGE ?= quay.io/bapalm/tls-compliance-operator:v$(BUNDLE_VERSION)
 BUNDLE_PACKAGE ?= tls-compliance-operator
 BUNDLE_CHANNELS ?= stable
