@@ -74,6 +74,29 @@ takes effect on restart: the periodic scan stops probing reports from filtered
 namespaces, and the next cleanup cycle deletes them. `TLSComplianceTarget`
 reports are cluster-scoped and are never removed by the namespace filter.
 
+`TLSComplianceTarget` objects are reconciled regardless of the filter. The
+`tls-compliance.telco.openshift.io/rescan` annotation is honored on Target reports and
+on reports from namespaces inside the filter. It is ignored on reports from
+filtered namespaces, because cleanup deletes those reports. The operator logs
+the skip and records a `RescanSkipped` Warning event on the report.
+
+In `--run-once` mode, cleanup does not run, so the JUnit/JSON output and the
+exit code include only reports inside the filter. Reports left from an earlier
+unfiltered run are not counted. The `tls_compliance_endpoints_total` gauge also
+counts only reports inside the filter.
+
+Keep in mind:
+
+- The filter matches the namespace of the object that exposes an endpoint, not
+  the namespace of the workload behind it. An Ingress, Route or HTTPRoute in an
+  included namespace is still probed even when its router or Gateway runs in a
+  filtered namespace.
+- The filter limits what the operator scans. It is not an access-control
+  boundary: the operator still watches and caches Services, Pods and the other
+  source kinds in every namespace, using its cluster-wide RBAC.
+- A flag value with no namespace names in it (for example `" , "`) is ignored
+  with a startup warning, and all namespaces are scanned.
+
 ## Report Retention
 
 | Flag | Env Var | Type | Default | Description |

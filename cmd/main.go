@@ -329,7 +329,15 @@ func checkConfig(cfg *operatorConfig) (warnings []string, _ error) {
 		return nil, fmt.Errorf("invalid --profile-refresh-interval value %s: must be greater than zero", cfg.profileRefreshInterval)
 	}
 
-	if cfg.includeNamespaces != "" && cfg.excludeNamespaces != "" {
+	included := controller.ParseNamespaceList(cfg.includeNamespaces)
+	excluded := controller.ParseNamespaceList(cfg.excludeNamespaces)
+	if cfg.includeNamespaces != "" && len(included) == 0 {
+		warnings = append(warnings, fmt.Sprintf("WARNING: --include-namespaces %q contains no namespace names and is ignored", cfg.includeNamespaces))
+	}
+	if cfg.excludeNamespaces != "" && len(excluded) == 0 {
+		warnings = append(warnings, fmt.Sprintf("WARNING: --exclude-namespaces %q contains no namespace names and is ignored", cfg.excludeNamespaces))
+	}
+	if len(included) > 0 && len(excluded) > 0 {
 		warnings = append(warnings, "WARNING: both --include-namespaces and --exclude-namespaces are set; --include-namespaces takes precedence")
 	}
 
@@ -663,7 +671,9 @@ func runOnceAndExit(ctx context.Context, cancel context.CancelFunc, mgr ctrl.Man
 		os.Exit(2)
 	}
 
-	reports := reportList.Items
+	// Cleanup does not run in run-once mode, so drop reports left over from
+	// earlier runs that the namespace filter excludes.
+	reports := reconciler.ReportsInFilter(reportList.Items)
 	setupLog.Info("run-once scan results", "total", len(reports))
 
 	if exitCode == 0 && export.HasNonCompliantReports(reports) {

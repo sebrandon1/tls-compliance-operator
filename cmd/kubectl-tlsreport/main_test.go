@@ -848,8 +848,34 @@ func TestWaitForRescan_Timeout(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(report).Build()
 
 	err := waitForRescan(ctx, c, "test-report", 3*time.Second)
-	if err == nil || !strings.Contains(err.Error(), "timeout") {
-		t.Errorf("expected timeout error, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "timeout") || !strings.Contains(err.Error(), filterHint) {
+		t.Errorf("expected timeout error with namespace filter hint, got: %v", err)
+	}
+}
+
+func TestWaitForRescan_ReportDeleted(t *testing.T) {
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	err := waitForRescan(context.Background(), c, "gone-report", 5*time.Second)
+	if err == nil || !strings.Contains(err.Error(), "was deleted") {
+		t.Errorf("expected deleted-report error, got: %v", err)
+	}
+}
+
+func TestWaitForRescans_DeletedReportDoesNotAbort(t *testing.T) {
+	done := &securityv1alpha1.TLSComplianceReport{ObjectMeta: metav1.ObjectMeta{Name: "done-report"}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(done).Build()
+
+	var out strings.Builder
+	completed, err := waitForRescans(context.Background(), c, []string{"gone-report", "done-report"}, 5*time.Second, &out)
+	if err != nil {
+		t.Fatalf("waitForRescans() error = %v", err)
+	}
+	if completed != 1 {
+		t.Errorf("completed = %d, want 1", completed)
+	}
+	if !strings.Contains(out.String(), "gone-report was deleted before its rescan finished") {
+		t.Errorf("output missing deleted notice: %q", out.String())
 	}
 }
 

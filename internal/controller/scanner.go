@@ -903,7 +903,11 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 	var refreshedCRList securityv1alpha1.TLSComplianceReportList
 	if err := paginatedList(ctx, r.apiReader(), &refreshedCRList, func() {
 		for i := range refreshedCRList.Items {
-			status := string(refreshedCRList.Items[i].Status.ComplianceStatus)
+			cr := &refreshedCRList.Items[i]
+			if r.isReportFiltered(cr.Spec.SourceKind, cr.Spec.SourceNamespace) {
+				continue
+			}
+			status := string(cr.Status.ComplianceStatus)
 			if _, ok := statusCounts[status]; ok {
 				statusCounts[status]++
 			}
