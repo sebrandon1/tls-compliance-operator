@@ -48,7 +48,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 	"github.com/sebrandon1/tls-compliance-operator/internal/metrics"
@@ -88,7 +87,8 @@ const listPageSize = 500
 
 const nodeAddressCacheTTL = time.Minute
 
-// EndpointReconciler reconciles Service, Ingress, and Route resources
+// EndpointReconciler reconciles Services, Ingresses, Routes, Gateway API
+// resources, TLSComplianceTargets and rescan requests on TLSComplianceReports.
 type EndpointReconciler struct {
 	client.Client
 	APIReader             client.Reader
@@ -182,12 +182,20 @@ func (r *EndpointReconciler) updateWithRetry(ctx context.Context, name string, m
 // +kubebuilder:rbac:groups=security.telco.openshift.io,resources=tlscompliancetargets/finalizers,verbs=update
 // +kubebuilder:rbac:groups=security.telco.openshift.io,resources=tlscompliancetargets/status,verbs=get;update;patch
 
-// Reconcile handles all watched resource events (Service, Ingress, Route, TLSComplianceTarget)
-// by detecting the resource type and routing to the appropriate handler. All resource types
-// flow through the controller-runtime work queue for bounded concurrency and automatic retry.
-func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	// TLSComplianceTarget and TLSComplianceReport are cluster-scoped, so their
-	// requests have no namespace and must not be checked against the filter.
+// reconcileObject gets req as obj and passes it to handle. Each watched kind
+// has its own controller and reconcile function (see SetupWithManager),
+// because a request carries only a namespace and name and cannot tell a
+// Service from a same-named Ingress, Route or Gateway API object. Requests
+// from namespaces outside the filter are dropped; cluster-scoped kinds have no
+// namespace and are never filtered here.
+func reconcileObject[T client.Object](
+	ctx context.Context,
+	r *EndpointReconciler,
+	req ctrl.Request,
+	kind string,
+	obj T,
+	handle func(context.Context, T) (ctrl.Result, error),
+) (ctrl.Result, error) {
 	if req.Namespace != "" && r.isNamespaceFiltered(req.Namespace) {
 		return ctrl.Result{}, nil
 	}
@@ -196,63 +204,66 @@ func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	metrics.RecordReconcileInFlightInc()
 	defer metrics.RecordReconcileInFlightDec()
 
-	var svc corev1.Service
-	if err := r.Get(ctx, req.NamespacedName, &svc); err == nil {
-		result, err := r.handleService(ctx, &svc)
-		metrics.RecordReconcileLatency("Service", time.Since(start).Seconds())
-		return result, err
+	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	result, err := handle(ctx, obj)
+	metrics.RecordReconcileLatency(kind, time.Since(start).Seconds())
+	return result, err
+}
 
-	var ing networkingv1.Ingress
-	if err := r.Get(ctx, req.NamespacedName, &ing); err == nil {
-		result, err := r.handleIngress(ctx, &ing)
-		metrics.RecordReconcileLatency("Ingress", time.Since(start).Seconds())
-		return result, err
+func newUnstructured(gvk schema.GroupVersionKind) *unstructured.Unstructured {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(gvk)
+	return obj
+}
+
+func (r *EndpointReconciler) reconcileService(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	return reconcileObject(ctx, r, req, "Service", &corev1.Service{}, r.handleService)
+}
+
+func (r *EndpointReconciler) reconcileIngress(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	return reconcileObject(ctx, r, req, "Ingress", &networkingv1.Ingress{}, r.handleIngress)
+}
+
+func (r *EndpointReconciler) reconcileRoute(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	return reconcileObject(ctx, r, req, "Route", newUnstructured(routeGVK), r.handleRoute)
+}
+
+// gatewayReconciler returns the reconcile function for one Gateway API kind.
+func (r *EndpointReconciler) gatewayReconciler(gvk schema.GroupVersionKind) reconcile.Func {
+	return func(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+		return reconcileObject(ctx, r, req, gvk.Kind, newUnstructured(gvk),
+			func(ctx context.Context, obj *unstructured.Unstructured) (ctrl.Result, error) {
+				return r.handleGatewayResource(ctx, obj, gvk)
+			})
 	}
+}
 
-	if r.RouteAPIAvailable {
-		route := &unstructured.Unstructured{}
-		route.SetGroupVersionKind(routeGVK)
-		if err := r.Get(ctx, req.NamespacedName, route); err == nil {
-			result, err := r.handleRoute(ctx, route)
-			metrics.RecordReconcileLatency("Route", time.Since(start).Seconds())
-			return result, err
-		}
+func (r *EndpointReconciler) reconcileTarget(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	return reconcileObject(ctx, r, req, "TLSComplianceTarget", &securityv1alpha1.TLSComplianceTarget{}, r.handleTarget)
+}
+
+func (r *EndpointReconciler) reconcileReport(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	return reconcileObject(ctx, r, req, "TLSComplianceReport", &securityv1alpha1.TLSComplianceReport{}, r.handleReport)
+}
+
+// handleReport runs a rescan requested with the rescan annotation. Reports
+// whose source is outside the namespace filter get a RescanSkipped event.
+func (r *EndpointReconciler) handleReport(ctx context.Context, report *securityv1alpha1.TLSComplianceReport) (ctrl.Result, error) {
+	if !hasRescanAnnotation(report) {
+		return ctrl.Result{}, nil
 	}
-
-	if len(r.GatewayGVKs) > 0 {
-		for _, gvk := range r.GatewayGVKs {
-			gwObj := &unstructured.Unstructured{}
-			gwObj.SetGroupVersionKind(gvk)
-			if err := r.Get(ctx, req.NamespacedName, gwObj); err == nil {
-				result, err := r.handleGatewayResource(ctx, gwObj, gvk)
-				metrics.RecordReconcileLatency(gvk.Kind, time.Since(start).Seconds())
-				return result, err
-			}
-		}
+	if r.isReportFiltered(report.Spec.SourceKind, report.Spec.SourceNamespace) {
+		r.skipFilteredRescan(ctx, report)
+		return ctrl.Result{}, nil
 	}
+	return r.handleRescan(ctx, report)
+}
 
-	var target securityv1alpha1.TLSComplianceTarget
-	if err := r.Get(ctx, client.ObjectKey{Name: req.Name}, &target); err == nil {
-		result, err := r.handleTarget(ctx, &target)
-		metrics.RecordReconcileLatency("TLSComplianceTarget", time.Since(start).Seconds())
-		return result, err
-	}
-
-	var report securityv1alpha1.TLSComplianceReport
-	if err := r.Get(ctx, client.ObjectKey{Name: req.Name}, &report); err == nil {
-		if _, hasRescan := report.Annotations[securityv1alpha1.RescanAnnotation]; hasRescan {
-			if r.isReportFiltered(report.Spec.SourceKind, report.Spec.SourceNamespace) {
-				r.skipFilteredRescan(ctx, &report)
-				return ctrl.Result{}, nil
-			}
-			result, err := r.handleRescan(ctx, &report)
-			metrics.RecordReconcileLatency("TLSComplianceReport", time.Since(start).Seconds())
-			return result, err
-		}
-	}
-
-	return ctrl.Result{}, nil
+func hasRescanAnnotation(obj client.Object) bool {
+	_, ok := obj.GetAnnotations()[securityv1alpha1.RescanAnnotation]
+	return ok
 }
 
 func (r *EndpointReconciler) handleEndpoints(ctx context.Context, endpoints []endpoint.Endpoint, sourceKind securityv1alpha1.SourceKind) (ctrl.Result, error) {
@@ -567,15 +578,20 @@ func (r *EndpointReconciler) initCheckSemaphore() {
 	})
 }
 
-// SetupWithManager sets up the controller with the Manager.
-// Ingress and Target events are mapped to reconciliation requests that flow
-// through the controller-runtime work queue (bounded concurrency, back-pressure).
-// Route events use WatchesRawSource because the Route API may not be present.
+// SetupWithManager registers one controller per watched kind. Each has its own
+// work queue, so objects of different kinds that share a namespace and name
+// are reconciled independently. --workers sets MaxConcurrentReconciles for
+// each controller; the checkSem worker pool is shared, so it still caps
+// async TLS checks across all of them. Route and Gateway API controllers are
+// registered only when those APIs are present.
 func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.initCheckSemaphore()
 
-	enqueueObject := func(_ context.Context, obj client.Object) []ctrl.Request {
-		return []ctrl.Request{{NamespacedName: client.ObjectKeyFromObject(obj)}}
+	newController := func(name string, obj client.Object, opts ...builder.ForOption) *builder.TypedBuilder[reconcile.Request] {
+		return ctrl.NewControllerManagedBy(mgr).
+			Named("endpoint-"+name).
+			For(obj, opts...).
+			WithOptions(controller.Options{MaxConcurrentReconciles: r.Workers})
 	}
 
 	enqueueOwnerService := func(_ context.Context, obj client.Object) []ctrl.Request {
@@ -589,50 +605,42 @@ func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}}}
 	}
 
-	builder := ctrl.NewControllerManagedBy(mgr).
-		For(&corev1.Service{}).
-		Named("endpoint").
-		WithOptions(controller.Options{MaxConcurrentReconciles: r.Workers}).
-		Watches(&networkingv1.Ingress{}, handler.EnqueueRequestsFromMapFunc(enqueueObject)).
-		Watches(&discoveryv1.EndpointSlice{}, handler.EnqueueRequestsFromMapFunc(enqueueOwnerService)).
-		Watches(&securityv1alpha1.TLSComplianceTarget{}, handler.EnqueueRequestsFromMapFunc(enqueueObject)).
-		Watches(&securityv1alpha1.TLSComplianceReport{},
-			handler.EnqueueRequestsFromMapFunc(enqueueObject),
-			builder.WithPredicates(predicate.AnnotationChangedPredicate{})).
-		// Delete events are not routed through the work queue: they only drop
-		// the report's per-endpoint metric series so reports removed by
-		// kubectl, owner-reference cascades, or a rescan do not leak them.
-		Watches(&securityv1alpha1.TLSComplianceReport{},
-			handler.Funcs{DeleteFunc: r.handleReportDeleted})
-
+	type kindController struct {
+		builder   *builder.TypedBuilder[reconcile.Request]
+		reconcile reconcile.Func
+	}
+	controllers := []kindController{
+		{
+			newController("service", &corev1.Service{}).
+				Watches(&discoveryv1.EndpointSlice{}, handler.EnqueueRequestsFromMapFunc(enqueueOwnerService)),
+			r.reconcileService,
+		},
+		{newController("ingress", &networkingv1.Ingress{}), r.reconcileIngress},
+		{newController("target", &securityv1alpha1.TLSComplianceTarget{}), r.reconcileTarget},
+		{
+			// Only rescan requests are queued. Delete events bypass the queue:
+			// they only drop the report's per-endpoint metric series, so
+			// reports removed by kubectl, owner-reference cascades or a rescan
+			// do not leak them.
+			newController("report", &securityv1alpha1.TLSComplianceReport{},
+				builder.WithPredicates(predicate.AnnotationChangedPredicate{}, predicate.NewPredicateFuncs(hasRescanAnnotation))).
+				Watches(&securityv1alpha1.TLSComplianceReport{}, handler.Funcs{DeleteFunc: r.handleReportDeleted}),
+			r.reconcileReport,
+		},
+	}
 	if r.RouteAPIAvailable {
-		routeObj := &unstructured.Unstructured{}
-		routeObj.SetGroupVersionKind(routeGVK)
-
-		builder = builder.WatchesRawSource(source.Kind(
-			mgr.GetCache(),
-			routeObj,
-			handler.TypedEnqueueRequestsFromMapFunc(func(_ context.Context, obj *unstructured.Unstructured) []ctrl.Request {
-				return []ctrl.Request{{NamespacedName: client.ObjectKeyFromObject(obj)}}
-			}),
-		))
+		controllers = append(controllers, kindController{newController("route", newUnstructured(routeGVK)), r.reconcileRoute})
+	}
+	for _, gvk := range r.GatewayGVKs {
+		controllers = append(controllers, kindController{newController(strings.ToLower(gvk.Kind), newUnstructured(gvk)), r.gatewayReconciler(gvk)})
 	}
 
-	if len(r.GatewayGVKs) > 0 {
-		for _, gvk := range r.GatewayGVKs {
-			gwObj := &unstructured.Unstructured{}
-			gwObj.SetGroupVersionKind(gvk)
-			builder = builder.WatchesRawSource(source.Kind(
-				mgr.GetCache(),
-				gwObj,
-				handler.TypedEnqueueRequestsFromMapFunc(func(_ context.Context, obj *unstructured.Unstructured) []ctrl.Request {
-					return []ctrl.Request{{NamespacedName: client.ObjectKeyFromObject(obj)}}
-				}),
-			))
+	for _, c := range controllers {
+		if err := c.builder.Complete(c.reconcile); err != nil {
+			return err
 		}
 	}
-
-	return builder.Complete(r)
+	return nil
 }
 
 // handleReportDeleted drops the per-endpoint metric series belonging to a
