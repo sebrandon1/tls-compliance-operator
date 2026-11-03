@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
@@ -188,10 +189,13 @@ func waitForRescan(ctx context.Context, c client.Client, name string, timeout ti
 	for {
 		select {
 		case <-waitCtx.Done():
-			return fmt.Errorf("timeout waiting for rescan of %s", name)
+			return fmt.Errorf("timeout waiting for rescan of %s; %s", name, filterHint)
 		case <-time.After(2 * time.Second):
 			var updated securityv1alpha1.TLSComplianceReport
 			if err := c.Get(waitCtx, client.ObjectKey{Name: name}, &updated); err != nil {
+				if apierrors.IsNotFound(err) {
+					return fmt.Errorf("report %s was deleted before its rescan finished; %s", name, filterHint)
+				}
 				return fmt.Errorf("checking rescan status: %w", err)
 			}
 			if _, hasAnnotation := updated.Annotations[securityv1alpha1.RescanAnnotation]; !hasAnnotation {
@@ -205,6 +209,10 @@ func waitForRescan(ctx context.Context, c client.Client, name string, timeout ti
 }
 
 const rescanWaitPollInterval = 2 * time.Second
+
+// filterHint explains the usual reason a rescan never completes: the operator
+// ignores rescans on reports outside its namespace filter and deletes them.
+const filterHint = "reports outside the operator's namespace filter are not rescanned and are deleted by cleanup"
 
 func waitForRescans(ctx context.Context, c client.Client, names []string, timeout time.Duration, writers ...io.Writer) (int, error) {
 	errOut := writerOrDefault(writers, 0, os.Stderr)
@@ -230,7 +238,15 @@ func waitForRescans(ctx context.Context, c client.Client, names []string, timeou
 	check := func() error {
 		for name := range pending {
 			var updated securityv1alpha1.TLSComplianceReport
-			if err := c.Get(waitCtx, client.ObjectKey{Name: name}, &updated); err != nil {
+			err := c.Get(waitCtx, client.ObjectKey{Name: name}, &updated)
+			if apierrors.IsNotFound(err) {
+				delete(pending, name)
+				if _, err := fmt.Fprintf(errOut, "\n%s was deleted before its rescan finished\n", name); err != nil {
+					return err
+				}
+				continue
+			}
+			if err != nil {
 				return fmt.Errorf("checking rescan status: %w", err)
 			}
 			if _, has := updated.Annotations[securityv1alpha1.RescanAnnotation]; !has {
@@ -267,6 +283,9 @@ func waitForRescans(ctx context.Context, c client.Client, names []string, timeou
 				if _, err := fmt.Fprintf(errOut, "Timeout waiting for %s\n", name); err != nil {
 					return completed, err
 				}
+			}
+			if _, err := fmt.Fprintf(errOut, "Note: %s\n", filterHint); err != nil {
+				return completed, err
 			}
 			return completed, nil
 		case <-ticker.C:

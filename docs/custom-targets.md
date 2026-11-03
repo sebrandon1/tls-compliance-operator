@@ -34,7 +34,9 @@ EOF
 ```
 
 The operator picks it up within seconds and creates a corresponding
-`TLSComplianceReport`. You can also create targets with the plugin:
+`TLSComplianceReport`. Targets are cluster-scoped, so the operator's
+`--include-namespaces` / `--exclude-namespaces` filter does not apply to them.
+A Target is scanned even when its host is a Service in a filtered namespace. You can also create targets with the plugin:
 
 ```bash
 kubectl tlsreport target create google.com 443

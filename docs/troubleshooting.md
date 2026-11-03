@@ -52,6 +52,23 @@ Events:
 The operator retries (default 3 retries with 30s backoff) before marking as
 Closed.
 
+## Rescan Never Completes
+
+If `kubectl tlsreport rescan --wait` times out, or the
+`tls-compliance.telco.openshift.io/rescan` annotation stays on a report, the
+report's source namespace is probably outside the operator's namespace filter.
+The operator ignores rescans on those reports, records a `RescanSkipped` event,
+and the next cleanup cycle deletes the report:
+
+```bash
+$ kubectl get events -A --field-selector reason=RescanSkipped
+NAMESPACE   LAST SEEN   TYPE      REASON          OBJECT                                          MESSAGE
+default     46m         Warning   RescanSkipped   tlscompliancereport/10-132-0-31-8443-5b631e06   Rescan ignored: source namespace "openshift-monitoring" is outside the operator's namespace filter
+```
+
+Rescans on `TLSComplianceTarget` reports always run. See
+[Namespace Filtering](configuration.md#namespace-filtering).
+
 ## Pod Not Starting on OpenShift
 
 If the operator pod fails to schedule with SCC errors:
@@ -122,7 +139,7 @@ The operator logs its configuration at startup:
 ```
 INFO  setup  TLS checker configured  {"timeout": "5s", "rateLimit": 10, "rateBurst": 20,
   "scanInterval": "1h0m0s", "cleanupInterval": "5m0s", "certExpiryWarningDays": 30,
-  "includeNamespaces": [], "excludeNamespaces": [], "workers": 5, "maxRetries": 3,
+  "includeNamespaces": {}, "excludeNamespaces": {}, "workers": 5, "maxRetries": 3,
   "retryBackoff": "30s"}
 ```
 

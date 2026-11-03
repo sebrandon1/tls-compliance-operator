@@ -276,6 +276,15 @@ With `--all --wait`, progress is printed to stderr as a running count
 `Rescan completed for x/y reports` line is unchanged. `--wait=false`
 prints only the trigger counts.
 
+The operator ignores rescans on reports whose source namespace is outside its
+`--include-namespaces` / `--exclude-namespaces` filter. It records a
+`RescanSkipped` event, and cleanup deletes those reports. When `--wait` is set:
+
+- A rescan that times out prints a note about the namespace filter.
+- If a report is deleted while you wait, it is listed as deleted and the
+  command keeps waiting for the other reports. It is not counted as completed,
+  so the command exits 1.
+
 ### target
 
 Manage `TLSComplianceTarget` resources for scanning arbitrary host:port

@@ -101,8 +101,6 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 				sourceKind:      cr.Spec.SourceKind,
 				sourceNamespace: cr.Spec.SourceNamespace,
 				sourceName:      cr.Spec.SourceName,
-				host:            cr.Spec.Host,
-				port:            cr.Spec.Port,
 				lastActivity:    lastActivity,
 			})
 		}
@@ -237,8 +235,6 @@ type reportRef struct {
 	sourceKind      securityv1alpha1.SourceKind
 	sourceNamespace string
 	sourceName      string
-	host            string
-	port            int32
 	lastActivity    time.Time
 }
 
@@ -254,7 +250,6 @@ func (r *EndpointReconciler) deleteCleanupReport(ctx context.Context, ref *repor
 	if ttl {
 		metrics.RecordReportTTLDeleted()
 	}
-	metrics.DeleteEndpointMetrics(ref.host, fmt.Sprintf("%d", ref.port))
 }
 
 // collectNamespacedSet paginates a typed list and builds a set of sourceKey(namespace, name) entries.

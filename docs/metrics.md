@@ -4,7 +4,7 @@ All metrics use the `tls_compliance_` prefix.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `tls_compliance_endpoints_total` | Gauge | `status` | Endpoints by compliance status |
+| `tls_compliance_endpoints_total` | Gauge | `status` | Endpoints by compliance status, counting only reports inside the namespace filter |
 | `tls_compliance_check_duration_seconds` | Histogram | - | TLS check duration |
 | `tls_compliance_certificate_expiry_days` | Gauge | `host`, `port` | Days until certificate expiry. Requires `--metrics-per-endpoint`. |
 | `tls_compliance_version_support` | Gauge | `host`, `port`, `version` | TLS version support (1=yes, 0=no). Requires `--metrics-per-endpoint`. |
@@ -30,6 +30,11 @@ All metrics use the `tls_compliance_` prefix.
 
 
 Per-endpoint series (`tls_compliance_certificate_expiry_days`, `tls_compliance_version_support`, `tls_compliance_forward_secrecy`, `tls_compliance_pqc_readiness`) are emitted only when `--metrics-per-endpoint=true`. That flag defaults to `false` because host/port labels create high cardinality on large clusters. Aggregate metrics such as `tls_compliance_endpoints_total` are always emitted.
+
+Per-endpoint series are labeled by `host` and `port` only. Two reports can
+cover the same endpoint, for example a `TLSComplianceTarget` and an Ingress for
+the same hostname. In that case the series are removed only after the last
+report for that host and port is deleted.
 
 ## Example PromQL Queries
 

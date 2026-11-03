@@ -107,7 +107,7 @@ make deploy-run-once-scan IMG=quay.io/bapalm/tls-compliance-operator:v1.1.4 \
 |----------|---------|---------|
 | `SCAN_FORMAT` | `junit` | `csv`, `json`, `yaml`, `junit`, `markdown`, `html`, `sarif` |
 | `SCAN_FILE` | `results.xml` | Any file path |
-| `SCAN_NAMESPACES` | *(all)* | Comma-separated namespace list |
+| `SCAN_NAMESPACES` | *(all)* | Comma-separated namespace list, passed as `--include-namespaces`. The output and exit code cover only these namespaces, even if reports from other namespaces already exist in the cluster |
 | `IMG` | `quay.io/bapalm/tls-compliance-operator:latest` | Any container image (`deploy-run-once-scan` only) |
 | `SCAN_NAMESPACE` | `tls-compliance-scan` | Namespace for the scan Job (`deploy-run-once-scan` only) |
 

@@ -21,6 +21,7 @@ package e2e
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -142,7 +143,9 @@ var _ = Describe("Manager", Ordered, func() {
 		specReport := CurrentSpecReport()
 		if specReport.Failed() {
 			By("Fetching controller manager pod logs")
-			cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", namespace)
+			// controllerPodName is only set by the manager specs and goes stale
+			// after a restart, so read the current pod through the Deployment.
+			cmd := exec.Command("kubectl", "logs", "deployment/"+managerDeployment, "-n", namespace)
 			controllerLogs, err := utils.Run(cmd)
 			if err == nil {
 				_, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerLogs)
@@ -1044,8 +1047,35 @@ spec:
 			keepNS      = "tls-e2e-ns-keep"
 			dropNS      = "tls-e2e-ns-drop"
 			svcName     = "ns-filter-svc"
+			lateTarget  = "ns-filter-late-target"
 			includeFlag = "--include-namespaces=" + keepNS
+			// Exclude-mode phase: keepNS becomes the filtered namespace and
+			// cleanup is paused so its report stays around to be ignored.
+			excludeFlag  = "--exclude-namespaces=" + keepNS
+			blankInclude = "--include-namespaces= , "
+			pauseCleanup = "--cleanup-interval=1h"
+			perEndpoint  = "--metrics-per-endpoint=true"
+			rescanKey    = "tls-compliance.telco.openshift.io/rescan"
+			k8sAPITarget = "test-k8s-api"
+			sharedSvc    = "shared-tls"
+			sharedIng    = sharedSvc + "-ingress"
+			sharedHost   = sharedSvc + "." + dropNS
+			sharedLabel  = `host="` + sharedHost + `"`
+			// The Services have no backing pods, so the first check of a
+			// recreated report would retry for minutes while holding the
+			// report's in-flight claim and defer the rescan past its timeout.
+			noRetries = "--max-retries=0"
 		)
+
+		reportName := func(g Gomega, ns string) string {
+			cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+				"jsonpath={.items[?(@.spec.sourceNamespace==\""+ns+"\")].metadata.name}")
+			output, err := utils.Run(cmd)
+			g.Expect(err).NotTo(HaveOccurred())
+			names := strings.Fields(output)
+			g.Expect(names).To(HaveLen(1), "reports in %s: %v", ns, names)
+			return names[0]
+		}
 
 		reportSources := func(g Gomega) string {
 			cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
@@ -1069,8 +1099,12 @@ spec:
 			kubectlApplyManifest(loadManifest("tlscompliancetarget.yaml"), "TLSComplianceTarget")
 
 			DeferCleanup(func() {
-				removeManagerArg(includeFlag)
-				cmd := exec.Command("kubectl", "delete", "tlstarget", "test-k8s-api", "--ignore-not-found")
+				for _, arg := range []string{includeFlag, excludeFlag, blankInclude, pauseCleanup, noRetries, perEndpoint} {
+					removeManagerArg(arg)
+				}
+				cmd := exec.Command("kubectl", "delete", "clusterrolebinding", metricsRoleBindingName, "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+				cmd = exec.Command("kubectl", "delete", "tlstarget", k8sAPITarget, lateTarget, "--ignore-not-found")
 				_, _ = utils.Run(cmd)
 				for _, ns := range []string{keepNS, dropNS} {
 					cmd = exec.Command("kubectl", "delete", "ns", ns, "--ignore-not-found", "--timeout=60s")
@@ -1102,6 +1136,188 @@ spec:
 				g.Expect(output).To(ContainSubstring("Target,cluster-scoped,test-k8s-api"))
 				g.Expect(output).NotTo(ContainSubstring("Service," + dropNS + "," + svcName))
 			}).WithTimeout(time.Minute).WithPolling(10 * time.Second).Should(Succeed())
+		})
+
+		It("should reconcile a TLSComplianceTarget created while --include-namespaces is set", func() {
+			kubectlApplyManifest(fmt.Sprintf(`apiVersion: security.telco.openshift.io/v1alpha1
+kind: TLSComplianceTarget
+metadata:
+  name: %s
+spec:
+  host: kubernetes.default.svc
+  port: 443
+`, lateTarget), "TLSComplianceTarget")
+
+			Eventually(func(g Gomega) {
+				g.Expect(reportSources(g)).To(ContainSubstring("Target,cluster-scoped," + lateTarget))
+			}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+		})
+
+		It("should honor the rescan annotation on a report inside --include-namespaces", func() {
+			cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+				"jsonpath={.items[?(@.spec.sourceNamespace==\""+keepNS+"\")].metadata.name}")
+			name, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			name = strings.TrimSpace(name)
+			Expect(name).NotTo(BeEmpty())
+
+			cmd = exec.Command("kubectl", "annotate", "tlsreport", name,
+				rescanKey+"=true", "--overwrite")
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("waiting for the operator to consume the annotation")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", name, "-o", "jsonpath={.metadata.annotations}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).NotTo(ContainSubstring(rescanKey))
+			}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+		})
+
+		It("should ignore filtered reports in exclude mode for rescans, the gauge, the plugin and blank flags", func() {
+			By("switching to --exclude-namespaces with a blank --include-namespaces and cleanup paused")
+			removeManagerArg(includeFlag)
+			addManagerArg(pauseCleanup, noRetries, excludeFlag, blankInclude)
+
+			By("warning about the blank include flag without claiming it takes precedence")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "logs", "deployment/"+managerDeployment, "-n", namespace)
+				logs, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(logs).To(ContainSubstring(`--include-namespaces " , " contains no namespace names and is ignored`))
+				g.Expect(logs).NotTo(ContainSubstring("--include-namespaces takes precedence"))
+			}).WithTimeout(time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+
+			By("recreating the report for the namespace that is now inside the filter")
+			var dropReport, keepReport string
+			Eventually(func(g Gomega) {
+				dropReport = reportName(g, dropNS)
+				keepReport = reportName(g, keepNS)
+			}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+
+			By("counting only reports inside the filter in tls_compliance_endpoints_total")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "tlsreport", "-o",
+					"jsonpath={range .items[*]}{.spec.sourceNamespace}{\"\\n\"}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				inFilter := 0
+				for _, ns := range utils.GetNonEmptyLines(output) {
+					if ns != keepNS {
+						inFilter++
+					}
+				}
+				g.Expect(metricSum(g, scrapeMetrics(g), "tls_compliance_endpoints_total")).To(BeNumerically("==", inFilter))
+			}).WithTimeout(3 * time.Minute).WithPolling(15 * time.Second).Should(Succeed())
+
+			plugin := buildPlugin()
+
+			By("completing a plugin rescan --wait on a report inside the filter")
+			cmd := exec.Command(plugin, "rescan", dropReport, "--wait", "--timeout=2m")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), output)
+			Expect(output).To(ContainSubstring("Rescan complete for " + dropReport))
+
+			By("ignoring a rescan on the filtered report and recording RescanSkipped")
+			cmd = exec.Command(plugin, "rescan", keepReport, "--wait", "--timeout=15s")
+			output, err = utils.Run(cmd)
+			Expect(err).To(HaveOccurred())
+			Expect(output).To(ContainSubstring("outside the operator's namespace filter"))
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "events", "-A",
+					"--field-selector", "reason=RescanSkipped,involvedObject.name="+keepReport, "-o", "name")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(utils.GetNonEmptyLines(output)).NotTo(BeEmpty())
+			}).WithTimeout(time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+			cmd = exec.Command("kubectl", "get", "tlsreport", keepReport, "-o", "jsonpath={.metadata.annotations}")
+			output, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(ContainSubstring(rescanKey), "the skipped rescan must leave its annotation")
+
+			By("reporting a report deleted during plugin rescan --wait")
+			wait := exec.Command(plugin, "rescan", keepReport, "--wait", "--timeout=2m")
+			var waitOut bytes.Buffer
+			wait.Stdout, wait.Stderr = &waitOut, &waitOut
+			Expect(wait.Start()).To(Succeed())
+			time.Sleep(3 * time.Second)
+			cmd = exec.Command("kubectl", "delete", "tlsreport", keepReport)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(wait.Wait()).To(HaveOccurred())
+			Expect(waitOut.String()).To(ContainSubstring("was deleted before its rescan finished"))
+		})
+
+		It("should keep per-endpoint metrics while another report covers the same host:port", func() {
+			// A Service and an Ingress whose TLS host is the Service's name
+			// both produce reports for sharedHost:443. Targets cannot be used
+			// here: their dials refuse private addresses such as ClusterIPs.
+			// The Ingress gets its own name because Reconcile resolves a
+			// request as a Service first, so a same-named Ingress is shadowed.
+			By("resuming cleanup and enabling per-endpoint metrics")
+			removeManagerArg(pauseCleanup)
+			addManagerArg(perEndpoint)
+
+			By("serving TLS behind a Service and an Ingress with the same host")
+			kubectlApplyManifest(renderManifest("testserver-pod.yaml", struct {
+				Name, Namespace, Image string
+				Port                  int
+				Env                   map[string]string
+			}{sharedSvc, dropNS, testServerImage, 8443, nil}), "test server pod "+sharedSvc)
+			kubectlApplyManifest(fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: %[1]s
+  namespace: %[2]s
+spec:
+  selector:
+    app: %[1]s
+  ports:
+  - name: https
+    port: 443
+    targetPort: 8443
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: %[4]s
+  namespace: %[2]s
+spec:
+  tls:
+  - hosts:
+    - %[3]s
+  defaultBackend:
+    service:
+      name: %[1]s
+      port:
+        number: 443
+`, sharedSvc, dropNS, sharedHost, sharedIng), "shared Service and Ingress")
+			Eventually(func(g Gomega) {
+				output := reportSources(g)
+				g.Expect(output).To(ContainSubstring("Service," + dropNS + "," + sharedSvc))
+				g.Expect(output).To(ContainSubstring("Ingress," + dropNS + "," + sharedIng))
+				g.Expect(scrapeMetrics(g)).To(ContainSubstring(sharedLabel))
+			}).WithTimeout(3 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
+
+			By("deleting the Ingress while the Service still covers the endpoint")
+			cmd := exec.Command("kubectl", "delete", "ingress", sharedIng, "-n", dropNS)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func(g Gomega) {
+				g.Expect(reportSources(g)).NotTo(ContainSubstring("Ingress," + dropNS + "," + sharedIng))
+			}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+			Consistently(func(g Gomega) {
+				g.Expect(scrapeMetrics(g)).To(ContainSubstring(sharedLabel))
+			}).WithTimeout(30 * time.Second).WithPolling(10 * time.Second).Should(Succeed())
+
+			By("deleting the Service, the last report for the endpoint")
+			cmd = exec.Command("kubectl", "delete", "service,pod", sharedSvc, "-n", dropNS)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func(g Gomega) {
+				g.Expect(scrapeMetrics(g)).NotTo(ContainSubstring(sharedLabel))
+			}).WithTimeout(2 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
 		})
 	})
 
@@ -1237,6 +1453,41 @@ spec:
 			data := runOnceAndReadOutput("e2e-run-once-ns-results.xml", "junit",
 				"--include-namespaces=default")
 			Expect(string(data)).To(ContainSubstring("<testsuites"), "expected JUnit XML output")
+		})
+
+		It("should leave non-compliant reports outside --include-namespaces out of the output and exit code", func() {
+			const leftoverNS = "tls-e2e-run-once-leftover"
+			By("creating a NonCompliant report left over from an earlier, unfiltered run")
+			kubectlApplyManifest(`apiVersion: security.telco.openshift.io/v1alpha1
+kind: TLSComplianceReport
+metadata:
+  name: e2e-run-once-leftover
+spec:
+  host: leftover.example.com
+  port: 443
+  sourceKind: Service
+  sourceNamespace: `+leftoverNS+`
+  sourceName: gone
+`, "leftover TLSComplianceReport")
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "tlsreport", "e2e-run-once-leftover", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+			cmd := exec.Command("kubectl", "patch", "tlsreport", "e2e-run-once-leftover",
+				"--subresource=status", "--type=merge", `-p={"status":{"complianceStatus":"NonCompliant"}}`)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			// runOnceAndReadOutput fails on a non-zero exit, so this also checks
+			// that the leftover NonCompliant report does not set exit code 1.
+			data := runOnceAndReadOutput("e2e-run-once-ns-results.json", "json", "--include-namespaces=default")
+			var results []struct {
+				Namespace string `json:"namespace"`
+			}
+			Expect(json.Unmarshal(data, &results)).To(Succeed())
+			for _, r := range results {
+				Expect(r.Namespace).To(Equal("default"))
+			}
 		})
 
 		It("kubectl tlsreport --fail-on-non-compliant should exit 0 when all compliant", func() {

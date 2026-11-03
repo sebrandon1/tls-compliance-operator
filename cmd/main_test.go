@@ -674,6 +674,23 @@ func TestCheckConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("blank namespace flag warns and is ignored", func(t *testing.T) {
+		cfg := validOperatorConfig()
+		cfg.includeNamespaces = " , "
+		cfg.excludeNamespaces = "ns2"
+		warnings, err := checkConfig(cfg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		joined := strings.Join(warnings, "\n")
+		if !strings.Contains(joined, "--include-namespaces \" , \" contains no namespace names") {
+			t.Errorf("expected blank include warning, got %v", warnings)
+		}
+		if strings.Contains(joined, "takes precedence") {
+			t.Errorf("include precedence warning must not fire for a blank include, got %v", warnings)
+		}
+	})
+
 	t.Run("workers much higher than rate-limit warns", func(t *testing.T) {
 		cfg := validOperatorConfig()
 		cfg.workers = 50

@@ -5982,11 +5982,37 @@ func TestHandleReportDeleted_RemovesEndpointMetrics(t *testing.T) {
 			Port: 8443,
 		},
 	}
-	r := &EndpointReconciler{}
+	r := &EndpointReconciler{Client: fake.NewClientBuilder().WithScheme(newTestScheme()).Build()}
 	r.handleReportDeleted(context.Background(), event.DeleteEvent{Object: report}, nil)
 
 	if hasEndpointSeries(t, host, port) {
 		t.Fatal("expected endpoint series to be removed after the delete")
+	}
+}
+
+func TestHandleReportDeleted_KeepsMetricsForSharedEndpoint(t *testing.T) {
+	const (
+		host = "report-delete-shared-host"
+		port = "8443"
+	)
+	metrics.RecordCertExpiry(host, port, 30)
+
+	spec := securityv1alpha1.TLSComplianceReportSpec{Host: host, Port: 8443}
+	deleted := &securityv1alpha1.TLSComplianceReport{ObjectMeta: metav1.ObjectMeta{Name: "ingress-report"}, Spec: spec}
+	remaining := &securityv1alpha1.TLSComplianceReport{ObjectMeta: metav1.ObjectMeta{Name: "target-report"}, Spec: spec}
+	r := &EndpointReconciler{Client: fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(remaining).Build()}
+
+	r.handleReportDeleted(context.Background(), event.DeleteEvent{Object: deleted}, nil)
+	if !hasEndpointSeries(t, host, port) {
+		t.Fatal("endpoint series removed while another report still covers the endpoint")
+	}
+
+	if err := r.Delete(context.Background(), remaining); err != nil {
+		t.Fatalf("delete remaining report: %v", err)
+	}
+	r.handleReportDeleted(context.Background(), event.DeleteEvent{Object: remaining}, nil)
+	if hasEndpointSeries(t, host, port) {
+		t.Fatal("expected endpoint series removed after the last report is deleted")
 	}
 }
 

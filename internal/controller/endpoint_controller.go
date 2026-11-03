@@ -77,6 +77,7 @@ const (
 	EventReasonRetryExhausted      = "RetryExhausted"
 	EventReasonPQCReady            = "PQCReady"
 	EventReasonPQCNotReady         = "PQCNotReady"
+	EventReasonRescanSkipped       = "RescanSkipped"
 )
 
 var errWorkersBusy = errors.New("TLS check deferred: workers busy")
@@ -185,7 +186,9 @@ func (r *EndpointReconciler) updateWithRetry(ctx context.Context, name string, m
 // by detecting the resource type and routing to the appropriate handler. All resource types
 // flow through the controller-runtime work queue for bounded concurrency and automatic retry.
 func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	if r.isNamespaceFiltered(req.Namespace) {
+	// TLSComplianceTarget and TLSComplianceReport are cluster-scoped, so their
+	// requests have no namespace and must not be checked against the filter.
+	if req.Namespace != "" && r.isNamespaceFiltered(req.Namespace) {
 		return ctrl.Result{}, nil
 	}
 
@@ -239,6 +242,10 @@ func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	var report securityv1alpha1.TLSComplianceReport
 	if err := r.Get(ctx, client.ObjectKey{Name: req.Name}, &report); err == nil {
 		if _, hasRescan := report.Annotations[securityv1alpha1.RescanAnnotation]; hasRescan {
+			if r.isReportFiltered(report.Spec.SourceKind, report.Spec.SourceNamespace) {
+				r.skipFilteredRescan(ctx, &report)
+				return ctrl.Result{}, nil
+			}
 			result, err := r.handleRescan(ctx, &report)
 			metrics.RecordReconcileLatency("TLSComplianceReport", time.Since(start).Seconds())
 			return result, err
@@ -486,6 +493,17 @@ func (r *EndpointReconciler) handleTarget(ctx context.Context, target *securityv
 	return ctrl.Result{}, nil
 }
 
+// skipFilteredRescan leaves the rescan annotation in place on a report outside
+// the namespace filter and says why, since cleanup is about to delete it.
+func (r *EndpointReconciler) skipFilteredRescan(ctx context.Context, report *securityv1alpha1.TLSComplianceReport) {
+	log.FromContext(ctx).Info("ignoring rescan for report outside the namespace filter",
+		"report", report.Name, "sourceNamespace", report.Spec.SourceNamespace)
+	if r.Recorder != nil {
+		r.Recorder.Eventf(report, nil, corev1.EventTypeWarning, EventReasonRescanSkipped, EventActionScan,
+			"Rescan ignored: source namespace %q is outside the operator's namespace filter", report.Spec.SourceNamespace)
+	}
+}
+
 func (r *EndpointReconciler) handleRescan(ctx context.Context, report *securityv1alpha1.TLSComplianceReport) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	logger.Info("rescan requested", "report", report.Name)
@@ -619,11 +637,10 @@ func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // handleReportDeleted drops the per-endpoint metric series belonging to a
 // deleted report. Deletion events reach this handler regardless of who deleted
-// the object; the cleanup loop also calls DeleteEndpointMetrics, and the double
-// delete is harmless because DeleteLabelValues is idempotent. The handler never
-// reports an error: a failed metric delete must not retry or block deletion.
+// the object, including the cleanup loop. The handler never reports an error:
+// a failed metric delete must not retry or block deletion.
 func (r *EndpointReconciler) handleReportDeleted(
-	_ context.Context,
+	ctx context.Context,
 	e event.DeleteEvent,
 	_ workqueue.TypedRateLimitingInterface[reconcile.Request],
 ) {
@@ -631,7 +648,26 @@ func (r *EndpointReconciler) handleReportDeleted(
 	if !ok || report.Spec.Host == "" || report.Spec.Port <= 0 {
 		return
 	}
-	metrics.DeleteEndpointMetrics(report.Spec.Host, fmt.Sprintf("%d", report.Spec.Port))
+	r.releaseEndpointMetrics(ctx, report.Name, report.Spec.Host, report.Spec.Port)
+}
+
+// releaseEndpointMetrics deletes the per-endpoint metrics for host:port once
+// the named report is gone. The metrics are labeled by host and port only, so
+// they stay while another report (for example, a Target and an Ingress for
+// the same address) still covers that endpoint.
+func (r *EndpointReconciler) releaseEndpointMetrics(ctx context.Context, deletedName, host string, port int32) {
+	var reports securityv1alpha1.TLSComplianceReportList
+	if err := r.List(ctx, &reports, client.UnsafeDisableDeepCopy); err != nil {
+		log.FromContext(ctx).Error(err, "listing reports before deleting endpoint metrics", "host", host, "port", port)
+		return
+	}
+	for i := range reports.Items {
+		cr := &reports.Items[i]
+		if cr.Name != deletedName && cr.Spec.Host == host && cr.Spec.Port == port {
+			return
+		}
+	}
+	metrics.DeleteEndpointMetrics(host, fmt.Sprintf("%d", port))
 }
 
 func determineComplianceStatus(result *tlscheck.TLSCheckResult) securityv1alpha1.ComplianceStatus {
@@ -722,6 +758,17 @@ func failureReasonToComplianceStatus(reason tlscheck.FailureReason) securityv1al
 // correctly bracket IPv6 addresses (e.g. "[::1]:443").
 func hostPort(host string, port int32) string {
 	return net.JoinHostPort(host, fmt.Sprintf("%d", port))
+}
+
+// ReportsInFilter returns the reports that the namespace filter keeps.
+func (r *EndpointReconciler) ReportsInFilter(reports []securityv1alpha1.TLSComplianceReport) []securityv1alpha1.TLSComplianceReport {
+	kept := make([]securityv1alpha1.TLSComplianceReport, 0, len(reports))
+	for i := range reports {
+		if !r.isReportFiltered(reports[i].Spec.SourceKind, reports[i].Spec.SourceNamespace) {
+			kept = append(kept, reports[i])
+		}
+	}
+	return kept
 }
 
 // ParseNamespaceList parses a comma-separated namespace string into a map for O(1) lookups.
