@@ -89,7 +89,11 @@ func writeFilteredReports(format string, reports []securityv1alpha1.TLSComplianc
 			writeErr = export.WriteYAML(out, reports)
 		}
 	case "junit":
-		writeErr = export.WriteJUnit(out, reports)
+		opts, err := junitOptions()
+		if err != nil {
+			return err
+		}
+		writeErr = export.WriteJUnitWithOptions(out, reports, opts)
 	case "markdown", "md":
 		writeErr = export.WriteMarkdown(out, reports)
 	case "html":
@@ -102,6 +106,28 @@ func writeFilteredReports(format string, reports []securityv1alpha1.TLSComplianc
 	}
 
 	return checkExitCode(reports)
+}
+
+// junitOptions carries the configured gates into the JUnit report, so a gate
+// failure shows up as a testcase failure instead of only an exit code.
+func junitOptions() (export.JUnitOptions, error) {
+	opts := export.JUnitOptions{RequirePQC: requirePQC}
+	if strings.TrimSpace(expectedGroups) == "" {
+		return opts, nil
+	}
+
+	groups := export.SplitGroups(expectedGroups)
+	if len(groups) == 0 {
+		return export.JUnitOptions{}, fmt.Errorf("--expected-groups contains no group names")
+	}
+	mode, err := export.ParseGroupsMode(groupsMode)
+	if err != nil {
+		return export.JUnitOptions{}, err
+	}
+
+	opts.ExpectedGroups = groups
+	opts.GroupsMode = mode
+	return opts, nil
 }
 
 // evaluateGroupsGate parses the group flags and evaluates them against reports.

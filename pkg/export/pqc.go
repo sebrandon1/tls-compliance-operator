@@ -76,37 +76,68 @@ func EvaluatePQCGate(reports []securityv1alpha1.TLSComplianceReport) PQCGateResu
 
 	for i := range reports {
 		r := &reports[i]
-		endpoint := net.JoinHostPort(r.Spec.Host, strconv.Itoa(int(r.Spec.Port)))
-
-		reason := string(r.Status.ComplianceStatus)
-		if UnscannableStatuses[r.Status.ComplianceStatus] {
+		verdict, reason := classifyPQC(r)
+		switch verdict {
+		case pqcSkipped:
 			result.Skipped++
-			result.SkippedReports = append(result.SkippedReports, fmt.Sprintf("%s (%s)", endpoint, reason))
-			continue
-		}
-
-		if r.Status.PQCReadiness == securityv1alpha1.PQCReadinessNoPQC {
-			result.Skipped++
-			result.SkippedReports = append(result.SkippedReports, fmt.Sprintf("%s (%s)", endpoint, r.Status.PQCReadiness))
-			continue
-		}
-
-		if r.Status.PQCReadiness == securityv1alpha1.PQCReadinessPQCReady {
+			result.SkippedReports = append(result.SkippedReports, fmt.Sprintf("%s (%s)", endpointName(r), reason))
+		case pqcReady:
 			result.Ready++
-			continue
+		case pqcNotReady:
+			result.NotReady++
+			result.NotReadyReports = append(result.NotReadyReports, fmt.Sprintf("%s (%s)", endpointName(r), reason))
 		}
-
-		readiness := string(r.Status.PQCReadiness)
-		if readiness == "" {
-			readiness = "Unknown"
-		}
-		result.NotReady++
-		result.NotReadyReports = append(result.NotReadyReports, fmt.Sprintf("%s (%s)", endpoint, readiness))
 	}
 
 	sort.Strings(result.NotReadyReports)
 	sort.Strings(result.SkippedReports)
 	return result
+}
+
+// pqcVerdict classifies a report for the PQC gate.
+type pqcVerdict int
+
+const (
+	pqcReady pqcVerdict = iota
+	pqcNotReady
+	pqcSkipped
+)
+
+// classifyPQC applies the gate's rules to one report. It is the single
+// implementation of the gate, shared by the aggregate result and the JUnit
+// export so the two can never disagree. The reason is empty for pqcReady.
+func classifyPQC(r *securityv1alpha1.TLSComplianceReport) (pqcVerdict, string) {
+	if UnscannableStatuses[r.Status.ComplianceStatus] {
+		return pqcSkipped, string(r.Status.ComplianceStatus)
+	}
+	if r.Status.PQCReadiness == securityv1alpha1.PQCReadinessNoPQC {
+		return pqcSkipped, string(r.Status.PQCReadiness)
+	}
+	if r.Status.PQCReadiness == securityv1alpha1.PQCReadinessPQCReady {
+		return pqcReady, ""
+	}
+
+	readiness := string(r.Status.PQCReadiness)
+	if readiness == "" {
+		readiness = "Unknown"
+	}
+	return pqcNotReady, readiness
+}
+
+// pqcGateFailures returns, per report index, the readiness that fails the PQC
+// gate. Skipped endpoints are absent: the gate does not assert on them.
+func pqcGateFailures(reports []securityv1alpha1.TLSComplianceReport) map[int]string {
+	failures := make(map[int]string)
+	for i := range reports {
+		if verdict, reason := classifyPQC(&reports[i]); verdict == pqcNotReady {
+			failures[i] = reason
+		}
+	}
+	return failures
+}
+
+func endpointName(r *securityv1alpha1.TLSComplianceReport) string {
+	return net.JoinHostPort(r.Spec.Host, strconv.Itoa(int(r.Spec.Port)))
 }
 
 // WritePQCGate writes a human-readable PQC gate report: the three counts and,

@@ -129,40 +129,11 @@ func EvaluateExpectedGroups(
 	}
 
 	for i := range reports {
-		r := &reports[i]
-		check := GroupCheck{
-			Endpoint: net.JoinHostPort(r.Spec.Host, strconv.Itoa(int(r.Spec.Port))),
-		}
-
-		advertised := advertiseGroups(r)
-		check.Advertised = advertised
-		if len(advertised) == 0 {
-			check.Skipped = true
-			check.SkipReason = string(r.Status.ComplianceStatus)
-			if check.SkipReason == "" {
-				check.SkipReason = "no groups enumerated"
-			}
+		check := evaluateGroupCheck(&reports[i], expected, mode, wantSet)
+		if check.Skipped {
 			result.SkippedN++
 			result.Skipped = append(result.Skipped, check)
 			continue
-		}
-
-		gotSet := make(map[string]bool, len(advertised))
-		for _, group := range advertised {
-			gotSet[normalizeGroupName(group)] = true
-		}
-
-		for _, group := range expected {
-			if !gotSet[normalizeGroupName(group)] {
-				check.Missing = append(check.Missing, group)
-			}
-		}
-		if mode == GroupsModeExact {
-			for _, group := range advertised {
-				if !wantSet[normalizeGroupName(group)] {
-					check.Unexpected = append(check.Unexpected, group)
-				}
-			}
 		}
 
 		result.Checked++
@@ -177,6 +148,73 @@ func EvaluateExpectedGroups(
 	sort.Slice(result.Failures, func(i, j int) bool { return result.Failures[i].Endpoint < result.Failures[j].Endpoint })
 	sort.Slice(result.Skipped, func(i, j int) bool { return result.Skipped[i].Endpoint < result.Skipped[j].Endpoint })
 	return result
+}
+
+// evaluateGroupCheck asserts one report against the expected groups. It is the
+// single implementation of the comparison, shared by the aggregate gate and by
+// the JUnit export so the two can never disagree.
+func evaluateGroupCheck(
+	r *securityv1alpha1.TLSComplianceReport, expected []string, mode GroupsMode, wantSet map[string]bool,
+) GroupCheck {
+	check := GroupCheck{
+		Endpoint: net.JoinHostPort(r.Spec.Host, strconv.Itoa(int(r.Spec.Port))),
+	}
+
+	advertised := advertiseGroups(r)
+	check.Advertised = advertised
+	if len(advertised) == 0 {
+		check.Skipped = true
+		check.SkipReason = string(r.Status.ComplianceStatus)
+		if check.SkipReason == "" {
+			check.SkipReason = "no groups enumerated"
+		}
+		return check
+	}
+
+	gotSet := make(map[string]bool, len(advertised))
+	for _, group := range advertised {
+		gotSet[normalizeGroupName(group)] = true
+	}
+
+	for _, group := range expected {
+		if !gotSet[normalizeGroupName(group)] {
+			check.Missing = append(check.Missing, group)
+		}
+	}
+	if mode == GroupsModeExact {
+		for _, group := range advertised {
+			if !wantSet[normalizeGroupName(group)] {
+				check.Unexpected = append(check.Unexpected, group)
+			}
+		}
+	}
+
+	return check
+}
+
+// groupGateFailures returns, per report index, the reason the group assertion
+// fails that endpoint. Skipped endpoints are absent: nothing was asserted.
+func groupGateFailures(
+	reports []securityv1alpha1.TLSComplianceReport, expected []string, mode GroupsMode,
+) map[int]GroupCheck {
+	failures := make(map[int]GroupCheck)
+	if len(expected) == 0 {
+		return failures
+	}
+
+	wantSet := make(map[string]bool, len(expected))
+	for _, group := range expected {
+		wantSet[normalizeGroupName(group)] = true
+	}
+
+	for i := range reports {
+		check := evaluateGroupCheck(&reports[i], expected, mode, wantSet)
+		if check.Skipped || check.Passed() {
+			continue
+		}
+		failures[i] = check
+	}
+	return failures
 }
 
 // advertiseGroups returns the unique humans-readable group names an endpoint

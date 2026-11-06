@@ -139,3 +139,49 @@ func TestCheckExitCode_FailOnGroupMismatchRequiresGroups(t *testing.T) {
 		t.Fatal("expected an error when --fail-on-group-mismatch is set without --expected-groups")
 	}
 }
+
+func TestJUnitOptions(t *testing.T) {
+	tests := []struct {
+		name       string
+		groups     string
+		mode       string
+		requirePQC bool
+		wantGroups []string
+		wantErr    bool
+	}{
+		{name: "no gates configured"},
+		{name: "pqc only", requirePQC: true},
+		{name: "groups", groups: "X25519MLKEM768,X25519", mode: "exact", wantGroups: []string{"X25519MLKEM768", "X25519"}},
+		{name: "separators only", groups: ",", mode: "contains", wantErr: true},
+		{name: "invalid mode", groups: "X25519", mode: "subset", wantErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			expectedGroups, groupsMode, requirePQC = tc.groups, tc.mode, tc.requirePQC
+			t.Cleanup(func() { expectedGroups, groupsMode, requirePQC = "", "contains", false })
+
+			opts, err := junitOptions()
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected an error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if opts.RequirePQC != tc.requirePQC {
+				t.Errorf("RequirePQC = %v, want %v", opts.RequirePQC, tc.requirePQC)
+			}
+			if len(opts.ExpectedGroups) != len(tc.wantGroups) {
+				t.Fatalf("ExpectedGroups = %v, want %v", opts.ExpectedGroups, tc.wantGroups)
+			}
+			for i := range tc.wantGroups {
+				if opts.ExpectedGroups[i] != tc.wantGroups[i] {
+					t.Errorf("ExpectedGroups[%d] = %q, want %q", i, opts.ExpectedGroups[i], tc.wantGroups[i])
+				}
+			}
+		})
+	}
+}
