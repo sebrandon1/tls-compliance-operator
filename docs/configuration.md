@@ -142,6 +142,40 @@ args:
 | `--retry-backoff` | `TLS_COMPLIANCE_RETRY_BACKOFF` | duration | `30s` | Base backoff duration between retries. Actual delay is `base * 2^attempt` (30s, 60s, 120s for the default). On clusters with many unreachable endpoints, increasing this reduces wasted checks. |
 | `--max-backoff` | `TLS_COMPLIANCE_MAX_BACKOFF` | duration | `5m` | Maximum backoff duration between retries. Caps exponential growth so retries don't wait indefinitely. |
 
+## Webhook Notifications
+
+Kubernetes Events are visible only inside the cluster. Setting `--notify-webhook`
+also POSTs a JSON payload to one or more endpoints whenever an endpoint's
+compliance status or PQC readiness changes.
+
+| Flag | Env Var | Type | Default | Description |
+|------|---------|------|---------|-------------|
+| `--notify-webhook` | `TLS_COMPLIANCE_NOTIFY_WEBHOOK` | string (repeatable) | `""` | Absolute http(s) URL to POST status transitions to. Repeat the flag, or give a comma-separated list in one flag or env var. Invalid URLs fail startup. |
+| `--notify-timeout` | `TLS_COMPLIANCE_NOTIFY_TIMEOUT` | duration | `5s` | Timeout for one delivery attempt. Must be greater than zero. |
+| `--notify-retries` | `TLS_COMPLIANCE_NOTIFY_RETRIES` | int | `2` | Extra attempts after a failed delivery, with linear backoff. Range: 0-10. |
+
+The payload is:
+
+```json
+{
+  "reportName": "web-443-abcd1234",
+  "namespace": "prod",
+  "host": "web.example.com",
+  "port": 443,
+  "oldStatus": "Compliant",
+  "newStatus": "NonCompliant",
+  "oldPQCReadiness": "PQCReady",
+  "newPQCReadiness": "TLS13Capable",
+  "timestamp": "2026-11-06T20:00:00Z"
+}
+```
+
+Delivery is best effort and runs off the reconcile path: a slow or unavailable
+receiver never blocks a scan or causes a reconcile error. An endpoint's first
+measurement (`""` or `Pending` old status) is not a transition, so enabling
+webhooks does not produce a burst for every existing report. Every webhook
+delivery is counted in `tls_compliance_notifications_total{result}`.
+
 ## OpenShift Integration
 
 | Flag | Env Var | Type | Default | Description |
