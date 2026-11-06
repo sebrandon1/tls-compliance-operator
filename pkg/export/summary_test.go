@@ -591,6 +591,57 @@ func TestComputeSummary_TLSAdherence(t *testing.T) {
 	}
 }
 
+func TestComputeSummary_TLSProfileSource(t *testing.T) {
+	now := time.Now()
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				TLSProfileSource: "Override",
+			},
+		},
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{SourceKind: securityv1alpha1.SourceKindService},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				TLSProfileSource: "Cluster",
+			},
+		},
+	}
+
+	s := ComputeSummary(reports, now)
+	if s.TLSProfileSource != "Override" {
+		t.Errorf("expected first non-empty TLSProfileSource=Override, got %q", s.TLSProfileSource)
+	}
+}
+
+func TestWriteSummary_TLSProfileSource(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:       "example.com",
+				Port:       443,
+				SourceKind: securityv1alpha1.SourceKindService,
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+				TLSProfileSource: "Override",
+			},
+		},
+	}
+
+	var sb strings.Builder
+	if err := WriteSummary(&sb, reports); err != nil {
+		t.Fatalf("WriteSummary() error = %v", err)
+	}
+
+	out := sb.String()
+	if !strings.Contains(out, "Profile Source:") || !strings.Contains(out, "Override") {
+		t.Errorf("summary missing profile source:\n%s", out)
+	}
+}
+
 func TestComputeSummary_TLSAdherenceEmpty(t *testing.T) {
 	now := time.Now()
 	reports := []securityv1alpha1.TLSComplianceReport{

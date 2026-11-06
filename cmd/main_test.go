@@ -764,6 +764,27 @@ func TestCheckConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("valid tls-profile-type accepted", func(t *testing.T) {
+		for _, profileType := range []string{"Old", "Intermediate", "Modern"} {
+			cfg := validOperatorConfig()
+			cfg.tlsProfileType = profileType
+			if _, err := checkConfig(cfg); err != nil {
+				t.Errorf("checkConfig() with --tls-profile-type=%s error = %v, want nil", profileType, err)
+			}
+		}
+	})
+
+	t.Run("invalid tls-profile-type rejected", func(t *testing.T) {
+		for _, profileType := range []string{"Custom", "old", "bogus"} {
+			cfg := validOperatorConfig()
+			cfg.tlsProfileType = profileType
+			_, err := checkConfig(cfg)
+			if err == nil || !strings.Contains(err.Error(), "tls-profile-type") {
+				t.Errorf("checkConfig() with --tls-profile-type=%s error = %v, want tls-profile-type error", profileType, err)
+			}
+		}
+	})
+
 	t.Run("workers proportional to rate-limit no warning", func(t *testing.T) {
 		cfg := validOperatorConfig()
 		cfg.workers = 5

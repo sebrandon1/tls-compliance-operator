@@ -91,6 +91,7 @@ type operatorConfig struct {
 	excludeNamespaces      string
 	certExpiryWarningDays  int
 	profileRefreshInterval time.Duration
+	tlsProfileType         string
 	workers                int
 	maxRetries             int
 	retryBackoff           time.Duration
@@ -157,6 +158,8 @@ func parseFlags() *operatorConfig {
 		"Number of days before certificate expiry to emit a warning")
 	flag.DurationVar(&cfg.profileRefreshInterval, "profile-refresh-interval", 5*time.Minute,
 		"Interval for refreshing OpenShift TLS security profile configuration (OpenShift only)")
+	flag.StringVar(&cfg.tlsProfileType, "tls-profile-type", "",
+		"Force a built-in TLS security profile (Old, Intermediate, Modern) and skip reading OpenShift config; for HyperShift")
 	flag.IntVar(&cfg.workers, "workers", 5,
 		"Number of concurrent workers for periodic TLS scans (1-50)")
 	flag.IntVar(&cfg.maxRetries, "max-retries", 3,
@@ -358,6 +361,12 @@ func checkConfig(cfg *operatorConfig) (warnings []string, _ error) {
 		warnings = append(warnings, "WARNING: --require-pqc only affects the --run-once exit code; it is ignored in periodic mode")
 	}
 
+	if cfg.tlsProfileType != "" {
+		if err := tlsprofile.ValidateProfileType(cfg.tlsProfileType); err != nil {
+			return nil, fmt.Errorf("invalid --tls-profile-type: %w", err)
+		}
+	}
+
 	if cfg.clientCertPath != "" && cfg.clientKeyPath == "" {
 		return warnings, fmt.Errorf("--client-cert requires --client-key to also be set")
 	}
@@ -473,21 +482,33 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 	}
 
 	var profileFetcher *tlsprofile.Fetcher
-	_, err = restMapper.RESTMapping(schema.GroupKind{
-		Group: "config.openshift.io",
-		Kind:  "APIServer",
-	}, "v1")
-	if err == nil {
-		setupLog.Info("OpenShift Config API detected, enabling TLS security profile monitoring")
-		profileFetcher = tlsprofile.NewFetcher(mgr.GetClient())
-
-		// Fetch profiles synchronously, before the manager (and therefore the
-		// first scan) starts. In --run-once mode this is the only fetch; in
-		// manager mode StartPeriodicRefresh only re-fetches on later ticks.
-		// A failure here is non-fatal: scanning continues without profile data.
-		profileFetcher.RefreshAll(ctx)
+	if cfg.tlsProfileType != "" {
+		// Override mode: the APIServer CR may not be visible (HyperShift), so
+		// apply the named built-in profile and never touch the cluster config.
+		profileFetcher, err = tlsprofile.NewStaticFetcher(tlsprofile.ProfileType(cfg.tlsProfileType))
+		if err != nil {
+			setupLog.Error(err, "invalid --tls-profile-type")
+			os.Exit(1)
+		}
+		setupLog.Info("TLS security profile override enabled, skipping OpenShift config reads",
+			"profileType", cfg.tlsProfileType)
 	} else {
-		setupLog.Info("OpenShift Config API not detected, skipping TLS security profile monitoring")
+		_, err = restMapper.RESTMapping(schema.GroupKind{
+			Group: "config.openshift.io",
+			Kind:  "APIServer",
+		}, "v1")
+		if err == nil {
+			setupLog.Info("OpenShift Config API detected, enabling TLS security profile monitoring")
+			profileFetcher = tlsprofile.NewFetcher(mgr.GetClient())
+
+			// Fetch profiles synchronously, before the manager (and therefore the
+			// first scan) starts. In --run-once mode this is the only fetch; in
+			// manager mode StartPeriodicRefresh only re-fetches on later ticks.
+			// A failure here is non-fatal: scanning continues without profile data.
+			profileFetcher.RefreshAll(ctx)
+		} else {
+			setupLog.Info("OpenShift Config API not detected, skipping TLS security profile monitoring")
+		}
 	}
 
 	fipsEnabled := fips.Detect()
@@ -760,6 +781,7 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_EXCLUDE_NAMESPACES", "exclude-namespaces"},
 	{"TLS_COMPLIANCE_CERT_EXPIRY_WARNING_DAYS", "cert-expiry-warning-days"},
 	{"TLS_COMPLIANCE_PROFILE_REFRESH_INTERVAL", "profile-refresh-interval"},
+	{"TLS_COMPLIANCE_TLS_PROFILE_TYPE", "tls-profile-type"},
 	{"TLS_COMPLIANCE_MAX_RETRIES", "max-retries"},
 	{"TLS_COMPLIANCE_RETRY_BACKOFF", "retry-backoff"},
 	{"TLS_COMPLIANCE_MAX_BACKOFF", "max-backoff"},
@@ -881,6 +903,10 @@ func validateEnvValue(flagName, value string) error {
 	case "scan-window-timezone":
 		if _, err := time.LoadLocation(value); err != nil {
 			return fmt.Errorf("invalid IANA timezone: %w", err)
+		}
+	case "tls-profile-type":
+		if err := tlsprofile.ValidateProfileType(value); err != nil {
+			return err
 		}
 	}
 	return nil

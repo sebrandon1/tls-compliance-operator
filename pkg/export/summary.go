@@ -98,6 +98,7 @@ type Summary struct {
 	ByGrade               map[string]int
 	FIPSDetected          bool
 	TLSAdherence          string
+	TLSProfileSource      string
 	ForwardSecrecyCount   int
 	MLKEMProbeCount       int
 	CompliancePercent     float64
@@ -152,6 +153,9 @@ func ComputeSummary(reports []securityv1alpha1.TLSComplianceReport, now time.Tim
 		}
 		if s.TLSAdherence == "" && r.Status.TLSAdherence != "" {
 			s.TLSAdherence = r.Status.TLSAdherence
+		}
+		if s.TLSProfileSource == "" && r.Status.TLSProfileSource != "" {
+			s.TLSProfileSource = r.Status.TLSProfileSource
 		}
 		if r.Status.PQCReadiness != "" {
 			s.ByPQCReadiness[r.Status.PQCReadiness]++
@@ -257,10 +261,15 @@ func WriteSummary(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) e
 		}
 	}
 
-	if s.TLSAdherence != "" {
+	if s.TLSAdherence != "" || s.TLSProfileSource != "" {
 		ew.printf("\nTLS Security Profile\n")
 		ew.printf("--------------------\n")
-		ew.printf("TLS Adherence:\t%s\n", s.TLSAdherence)
+		if s.TLSProfileSource != "" {
+			ew.printf("Profile Source:\t%s\n", s.TLSProfileSource)
+		}
+		if s.TLSAdherence != "" {
+			ew.printf("TLS Adherence:\t%s\n", s.TLSAdherence)
+		}
 	}
 
 	if len(s.ByPQCReadiness) > 0 {
