@@ -58,6 +58,12 @@ func main() {
 		log.Fatalf("Failed to build TLS config: %v", err)
 	}
 
+	if cfg.starttlsProtocol != "" {
+		log.Printf("Serving %s STARTTLS on %s (min=%s max=%s)", cfg.starttlsProtocol, addr, cfg.minVersion, cfg.maxVersion)
+		log.Fatal(serveSTARTTLS(addr, cfg.starttlsProtocol, tlsCfg))
+		return
+	}
+
 	server := &http.Server{
 		Addr:      addr,
 		Handler:   mux,
@@ -69,26 +75,28 @@ func main() {
 }
 
 type config struct {
-	minVersion      string
-	maxVersion      string
-	tlsEnabled      bool
-	mtlsRequired    bool
-	disableMLKEM    bool
-	port            int
-	certExpired     bool
-	certExpiryHours int
-	certCN          string
+	starttlsProtocol string
+	minVersion       string
+	maxVersion       string
+	tlsEnabled       bool
+	mtlsRequired     bool
+	disableMLKEM     bool
+	port             int
+	certExpired      bool
+	certExpiryHours  int
+	certCN           string
 }
 
 func loadConfig() config {
 	cfg := config{
-		minVersion:   envOrDefault("TLS_MIN_VERSION", "1.2"),
-		maxVersion:   envOrDefault("TLS_MAX_VERSION", "1.3"),
-		tlsEnabled:   envOrDefault("TLS_ENABLED", "true") == "true",
-		mtlsRequired: envOrDefault("MTLS_REQUIRED", "false") == "true",
-		disableMLKEM: envOrDefault("DISABLE_MLKEM", "false") == "true",
-		certExpired:  envOrDefault("CERT_EXPIRED", "false") == "true",
-		certCN:       envOrDefault("CERT_CN", "tls-test-server"),
+		minVersion:       envOrDefault("TLS_MIN_VERSION", "1.2"),
+		maxVersion:       envOrDefault("TLS_MAX_VERSION", "1.3"),
+		tlsEnabled:       envOrDefault("TLS_ENABLED", "true") == "true",
+		mtlsRequired:     envOrDefault("MTLS_REQUIRED", "false") == "true",
+		disableMLKEM:     envOrDefault("DISABLE_MLKEM", "false") == "true",
+		certExpired:      envOrDefault("CERT_EXPIRED", "false") == "true",
+		certCN:           envOrDefault("CERT_CN", "tls-test-server"),
+		starttlsProtocol: envOrDefault("STARTTLS_PROTOCOL", ""),
 	}
 
 	if h := os.Getenv("CERT_EXPIRY_HOURS"); h != "" {
@@ -173,12 +181,12 @@ func generateCA(cn string) (*caBundle, error) {
 	}
 
 	template := &x509.Certificate{
-		SerialNumber: newSerial(),
-		Subject:      pkix.Name{CommonName: cn},
-		NotBefore:    time.Now().Add(-1 * time.Hour),
-		NotAfter:     time.Now().Add(10 * 365 * 24 * time.Hour),
-		KeyUsage:     x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-		IsCA:         true,
+		SerialNumber:          newSerial(),
+		Subject:               pkix.Name{CommonName: cn},
+		NotBefore:             time.Now().Add(-1 * time.Hour),
+		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		IsCA:                  true,
 		BasicConstraintsValid: true,
 	}
 

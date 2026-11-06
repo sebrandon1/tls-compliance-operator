@@ -7,6 +7,7 @@ WORKDIR /app
 
 COPY go.mod ./
 COPY main.go ./
+COPY starttls.go ./
 
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o tls-test-server .
 
