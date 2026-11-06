@@ -48,9 +48,11 @@ func TestWriteJUnit_CompliantPass(t *testing.T) {
 	reports := []securityv1alpha1.TLSComplianceReport{
 		{
 			Spec: securityv1alpha1.TLSComplianceReportSpec{
-				Host:       "secure.example",
-				Port:       443,
-				SourceKind: securityv1alpha1.SourceKindService,
+				Host:            "secure.example",
+				Port:            443,
+				SourceKind:      securityv1alpha1.SourceKindService,
+				SourceNamespace: "prod",
+				SourceName:      "web",
 			},
 			Status: securityv1alpha1.TLSComplianceReportStatus{
 				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
@@ -83,7 +85,7 @@ func TestWriteJUnit_CompliantPass(t *testing.T) {
 	if suite.TestCases[0].Failure != nil {
 		t.Error("expected no failure for compliant endpoint")
 	}
-	if suite.TestCases[0].Name != "secure.example:443" {
+	if suite.TestCases[0].Name != "ns/prod Service/web port/443" {
 		t.Errorf("unexpected test name: %s", suite.TestCases[0].Name)
 	}
 	if suite.TestCases[0].ClassName != "Service" {

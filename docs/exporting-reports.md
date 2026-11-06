@@ -327,6 +327,42 @@ kubectl tlsreport junit > tls-results.xml
 Most CI systems (Jenkins, GitLab CI, GitHub Actions) can ingest JUnit XML and
 display test results natively.
 
+**Test case naming** is keyed by workload identity, not by IP, so runs can be
+diffed even when pods are recreated:
+
+```
+ns/<namespace> <kind>/<name> port/<port>
+```
+
+Examples:
+
+```
+ns/prod Service/web port/443
+ns/prod Ingress/public-api port/8443
+ns/prod ReplicaSet/web-6b7f9c4d5 port/8443
+```
+
+For Pod sources the operator records the pod's owning controller
+(`status.workloadKind` / `status.workloadName`) at scan time, so the case name
+does not change when the pod is deleted and recreated. Pods without an owner
+reference fall back to `Pod/<pod-name>`.
+
+Each case also carries properties rather than packing detail into the name:
+
+| Property | Meaning |
+|---|---|
+| `endpoint` | `host:port` as scanned (the previous `classname` data is also still available) |
+| `complianceStatus` | Compliance status |
+| `cipherGrade` | Overall cipher grade, when computed |
+| `pqcReadiness` | PQC readiness level, when computed |
+| `certNotAfter` | Certificate expiry, RFC 3339, when available |
+
+Cases that assert TLS profile adherence are suffixed with
+`[OCPFeatureGate:TLSAdherence]`, matching upstream `tls-scanner` so existing
+gate tooling recognizes them. `classname` remains the source kind. Duplicate
+case names (one workload exposing the same port twice) get a ` #2`, ` #3`
+suffix.
+
 See [CI/CD Integration](ci-integration.md) for full pipeline examples
 (GitHub Actions, Jenkins, Prow, Tekton, run-once scan mode).
 

@@ -772,6 +772,7 @@ func (r *EndpointReconciler) scanPodEndpoints(ctx context.Context) error {
 			}
 
 			endpoints := endpoint.ExtractFromPod(pod)
+			workloadKind, workloadName := podWorkloadOwner(pod)
 			for j := range endpoints {
 				if err := r.processEndpoint(ctx, &endpoints[j]); err != nil {
 					logger.Error(err, "failed to process pod endpoint",
@@ -780,8 +781,17 @@ func (r *EndpointReconciler) scanPodEndpoints(ctx context.Context) error {
 					continue
 				}
 
+				crName := endpoint.GenerateCRName(&endpoints[j])
+				if workloadKind != "" {
+					if err := r.updateStatusWithRetry(ctx, crName, func(cr *securityv1alpha1.TLSComplianceReport) {
+						cr.Status.WorkloadKind = workloadKind
+						cr.Status.WorkloadName = workloadName
+					}); err != nil && !apierrors.IsNotFound(err) {
+						logger.Error(err, "failed to record workload owner", "name", crName)
+					}
+				}
+
 				if pod.Spec.HostNetwork {
-					crName := endpoint.GenerateCRName(&endpoints[j])
 					if err := r.updateWithRetry(ctx, crName, func(cr *securityv1alpha1.TLSComplianceReport) {
 						labels := cr.Labels
 						if labels == nil {
@@ -796,6 +806,23 @@ func (r *EndpointReconciler) scanPodEndpoints(ctx context.Context) error {
 			}
 		}
 	})
+}
+
+// podWorkloadOwner returns the kind and name of the pod's controlling workload,
+// taken from its owner reference. The referenced object is not fetched: the
+// owner reference is enough to name the workload, and its name (unlike the pod
+// name) survives pod recreation.
+func podWorkloadOwner(pod *corev1.Pod) (string, string) {
+	for i := range pod.OwnerReferences {
+		owner := &pod.OwnerReferences[i]
+		if owner.Controller != nil && *owner.Controller {
+			return owner.Kind, owner.Name
+		}
+	}
+	if len(pod.OwnerReferences) > 0 {
+		return pod.OwnerReferences[0].Kind, pod.OwnerReferences[0].Name
+	}
+	return "", ""
 }
 
 // scanAllEndpoints re-checks all existing TLSComplianceReport CRs using a worker pool.
