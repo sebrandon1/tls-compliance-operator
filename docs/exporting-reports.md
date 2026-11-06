@@ -78,6 +78,26 @@ the full CR for archival, automation, or compliance history export.
 kubectl tlsreport junit
 ```
 
+One testcase per endpoint. Cases that assert profile adherence carry the
+`[OCPFeatureGate:TLSAdherence]` tag and names are keyed by
+namespace/workload/port, so recreating a pod does not rename a case.
+
+When a gate is enabled, its verdict is written as a testcase failure, so a CI
+system reading the report shows the same result as the exit code rather than a
+green case beside a failed job:
+
+```
+$ kubectl tlsreport junit --expected-groups X25519MLKEM768 --fail-on-group-mismatch
+<testcase name="ns/openshift-multus Service/multus-admission-controller port/443 [OCPFeatureGate:TLSAdherence]" classname="Service">
+  <failure message="Expected groups: missing X25519MLKEM768">multus-admission-controller.openshift-multus:443 advertised: X25519</failure>
+</testcase>
+```
+
+`--require-pqc` produces `PQC gate: <readiness> (want PQCReady)`. Endpoints a
+gate skips (unscannable, or no groups enumerated) are left as they are: nothing
+was asserted about them. A case that already fails for its compliance status
+keeps that failure.
+
 **Markdown** (for GitHub issues, wikis, and documentation):
 
 ```bash

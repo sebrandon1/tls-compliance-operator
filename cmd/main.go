@@ -784,7 +784,7 @@ func writeRunOnceOutput(reports []securityv1alpha1.TLSComplianceReport, cfg *ope
 	case "yaml":
 		return export.WriteYAML(w, reports)
 	case "junit":
-		return export.WriteJUnit(w, reports)
+		return export.WriteJUnitWithOptions(w, reports, junitOptions(cfg))
 	case "markdown":
 		return export.WriteMarkdown(w, reports)
 	case "html":
@@ -794,6 +794,18 @@ func writeRunOnceOutput(reports []securityv1alpha1.TLSComplianceReport, cfg *ope
 	default:
 		return fmt.Errorf("unknown output format: %s", cfg.outputFormat)
 	}
+}
+
+// junitOptions carries the configured gates into the JUnit report, so a gate
+// failure shows up as a testcase failure instead of only an exit code.
+func junitOptions(cfg *operatorConfig) export.JUnitOptions {
+	opts := export.JUnitOptions{RequirePQC: cfg.requirePQC}
+	if cfg.expectedGroups != "" {
+		opts.ExpectedGroups = export.SplitGroups(cfg.expectedGroups)
+		// The mode was validated in validateConfig, which exits on an unknown value.
+		opts.GroupsMode, _ = export.ParseGroupsMode(cfg.groupsMode)
+	}
+	return opts
 }
 
 // envFlagMapping maps environment variable names to their corresponding flag names.

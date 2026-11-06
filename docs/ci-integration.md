@@ -66,6 +66,10 @@ In run-once mode the gate is logged with the same counts:
 bin/manager --run-once --require-pqc --output-format junit --output-file results.xml
 ```
 
+The verdict is also written into the JUnit report: every endpoint the gate fails
+becomes a failing testcase, so a CI system reading the report shows the same
+result as the exit code.
+
 ### Group assertion
 
 `--expected-groups` asserts the TLS named groups an endpoint advertises. Add
@@ -79,7 +83,8 @@ bin/manager --run-once --expected-groups X25519MLKEM768,X25519 --fail-on-group-m
 
 `--expected-groups-mode exact` requires set equality instead of a subset.
 Endpoints whose groups cannot be enumerated (no TLS, mTLS required, unreachable,
-TLS 1.2 only) are skipped and counted, not failed. See
+TLS 1.2 only) are skipped and counted, not failed. Exported JUnit marks each
+endpoint that fails the assertion as a failing testcase. See
 [kubectl tlsreport](kubectl-tlsreport.md#asserting-tls-named-groups).
 
 ## Run-Once Scan Mode

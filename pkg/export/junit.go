@@ -70,15 +70,44 @@ type JUnitFailure struct {
 	Text    string `xml:",chardata"`
 }
 
+// JUnitOptions carries the CI gates whose verdicts should appear in the report.
+// Without them a gate failure is visible only as a process exit code, so a CI
+// system reading the JUnit shows the endpoint as passing.
+type JUnitOptions struct {
+	// RequirePQC marks endpoints that are not PQCReady as failures.
+	RequirePQC bool
+	// ExpectedGroups asserts advertised TLS named groups. Empty disables it.
+	ExpectedGroups []string
+	// GroupsMode selects how ExpectedGroups is compared.
+	GroupsMode GroupsMode
+}
+
 // WriteJUnit writes TLSComplianceReport items as JUnit XML to the given writer.
 func WriteJUnit(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) error {
+	return WriteJUnitWithOptions(w, reports, JUnitOptions{})
+}
+
+// WriteJUnitWithOptions writes JUnit XML, reflecting the enabled CI gates as
+// testcase failures. Endpoints the gates skip are left alone: nothing was
+// asserted about them.
+func WriteJUnitWithOptions(
+	w io.Writer, reports []securityv1alpha1.TLSComplianceReport, opts JUnitOptions,
+) error {
 	var failures int
 	var totalDuration time.Duration
 	cases := make([]JUnitTestCase, 0, len(reports))
 	seenNames := make(map[string]int, len(reports))
+	gateFailures := gateFailuresByReport(reports, opts)
 
 	for i := range reports {
 		tc := reportToTestCase(&reports[i])
+		// A compliance failure is already reported; the gate verdict would add
+		// detail to a case that is failing either way.
+		if tc.Failure == nil {
+			if gateFailure := gateFailures[i]; gateFailure != nil {
+				tc.Failure = gateFailure
+			}
+		}
 		makeUniqueCaseName(&tc, seenNames)
 		if tc.Failure != nil {
 			failures++
@@ -116,6 +145,65 @@ func WriteJUnit(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) err
 	}
 
 	return nil
+}
+
+// gateFailuresByReport maps a report index to the failure the enabled gates
+// raise against it. Both gates can fire on the same endpoint, so their messages
+// are combined rather than one masking the other.
+func gateFailuresByReport(
+	reports []securityv1alpha1.TLSComplianceReport, opts JUnitOptions,
+) map[int]*JUnitFailure {
+	var pqcFailures map[int]string
+	if opts.RequirePQC {
+		pqcFailures = pqcGateFailures(reports)
+	}
+	var groupFailures map[int]GroupCheck
+	if len(opts.ExpectedGroups) > 0 {
+		groupFailures = groupGateFailures(reports, opts.ExpectedGroups, opts.GroupsMode)
+	}
+
+	failures := make(map[int]*JUnitFailure)
+	for i := range reports {
+		var messages, details []string
+
+		if readiness, ok := pqcFailures[i]; ok {
+			messages = append(messages, fmt.Sprintf("PQC gate: %s (want PQCReady)", readiness))
+			details = append(details, fmt.Sprintf(
+				"%s is %s; the gate requires PQCReady (TLS 1.3 with ML-KEM)", endpointName(&reports[i]), readiness))
+		}
+
+		if check, ok := groupFailures[i]; ok {
+			messages = append(messages, groupFailureMessage(&check))
+			details = append(details, groupFailureDetail(&check))
+		}
+
+		if len(messages) > 0 {
+			failures[i] = &JUnitFailure{
+				Message: strings.Join(messages, "; "),
+				Text:    strings.Join(details, "\n"),
+			}
+		}
+	}
+	return failures
+}
+
+func groupFailureMessage(check *GroupCheck) string {
+	var parts []string
+	if len(check.Missing) > 0 {
+		parts = append(parts, "missing "+strings.Join(check.Missing, ", "))
+	}
+	if len(check.Unexpected) > 0 {
+		parts = append(parts, "unexpected "+strings.Join(check.Unexpected, ", "))
+	}
+	return "Expected groups: " + strings.Join(parts, "; ")
+}
+
+func groupFailureDetail(check *GroupCheck) string {
+	advertised := strings.Join(check.Advertised, ", ")
+	if advertised == "" {
+		advertised = "none"
+	}
+	return fmt.Sprintf("%s advertised: %s", check.Endpoint, advertised)
 }
 
 // CaseName builds the stable, workload-keyed name for a report:
