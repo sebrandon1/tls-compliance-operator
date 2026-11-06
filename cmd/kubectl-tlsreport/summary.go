@@ -18,6 +18,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -63,6 +64,15 @@ func runSummary(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 		if err := export.WritePQCGate(cmd.OutOrStdout(), export.EvaluatePQCGate(reports)); err != nil {
+			return err
+		}
+	}
+
+	if strings.TrimSpace(expectedGroups) != "" {
+		if _, err := fmt.Fprintln(cmd.OutOrStdout()); err != nil {
+			return err
+		}
+		if err := writeGroupsGate(cmd.OutOrStdout(), reports); err != nil {
 			return err
 		}
 	}

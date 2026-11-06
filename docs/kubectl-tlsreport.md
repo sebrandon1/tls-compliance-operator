@@ -59,6 +59,9 @@ These flags are available on all subcommands:
 | `--sort-by` | | Sort results (host, port, compliance, expiry, grade, pqc) |
 | `--selector` | `-l` | Label selector to filter reports |
 | `--fail-on-non-compliant` | | Exit with code 1 if any non-compliant endpoints are found |
+| `--expected-groups` | | Comma-separated TLS groups every scannable endpoint must advertise (e.g. `X25519MLKEM768,X25519`) |
+| `--expected-groups-mode` | | How `--expected-groups` is compared: `contains` (default, subset) or `exact` (set equality) |
+| `--fail-on-group-mismatch` | | Exit with code 1 when the advertised groups do not satisfy `--expected-groups`; requires `--expected-groups` |
 | `--kubeconfig` | | Path to kubeconfig file |
 | `--context` | | Kubeconfig context to use |
 
@@ -430,6 +433,48 @@ kubectl-tlsreport completion powershell | Out-String | Invoke-Expression
 
 To load completions permanently, add the `source` line to your shell profile
 (e.g. `~/.bashrc`, `~/.zshrc`).
+
+## Asserting TLS Named Groups
+
+`--expected-groups` asserts the key exchange groups an endpoint advertises,
+independently of the cluster TLS profile. Group names are compared
+case-insensitively and ignore `-`/`_`, so `X25519MLKEM768`, `x25519mlkem768`
+and `x25519_mlkem768` are equivalent. Profile names map to Go names too
+(`secp256r1` matches `CurveP256`).
+
+```bash
+# Require hybrid ML-KEM plus classic X25519; extras are allowed
+kubectl tlsreport summary --expected-groups X25519MLKEM768,X25519
+
+# Require exactly these two groups, no others
+kubectl tlsreport summary --expected-groups X25519MLKEM768,X25519 \
+  --expected-groups-mode exact
+
+# Fail the pipeline on mismatch
+kubectl tlsreport junit --expected-groups X25519MLKEM768,X25519 \
+  --fail-on-group-mismatch > results.xml
+```
+
+The assertion block is written to stderr for export formats so stdout stays
+machine-readable, and to stdout for `summary`:
+
+```
+Expected Groups (contains)
+-----------------------
+  Expected:	X25519MLKEM768, X25519
+  Checked:	12
+  Passed:	9
+  Failed:	2
+  Skipped:	1
+
+  legacy.example.com:8443
+    missing:	X25519MLKEM768
+```
+
+Endpoints whose groups could not be enumerated — no TLS, mTLS required,
+unreachable, or TLS 1.2 only (no TLS 1.3 group negotiation) — are **skipped**
+and listed. They never fail the assertion; the skip count keeps the result
+honest. An empty `--expected-groups` disables the assertion entirely.
 
 ## CI Gating with --fail-on-non-compliant
 

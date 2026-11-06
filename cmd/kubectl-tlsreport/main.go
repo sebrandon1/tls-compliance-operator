@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/sebrandon1/go-toolbox/cobrautil"
@@ -81,17 +82,20 @@ func init() {
 var version = "dev"
 
 var (
-	filterOpts         export.FilterOptions
-	sortBy             string
-	kubeconfig         string
-	kubecontext        string
-	labelSelector      string
-	outputFormat       string
-	targetOutputFormat string
-	failOnNonCompliant bool
-	requirePQC         bool
-	rawExport          bool
-	clientBuilder      = buildClient
+	filterOpts          export.FilterOptions
+	sortBy              string
+	kubeconfig          string
+	kubecontext         string
+	labelSelector       string
+	outputFormat        string
+	targetOutputFormat  string
+	failOnNonCompliant  bool
+	requirePQC          bool
+	expectedGroups      string
+	groupsMode          string
+	failOnGroupMismatch bool
+	rawExport           bool
+	clientBuilder       = buildClient
 )
 
 type exitCodeError struct {
@@ -112,7 +116,29 @@ func checkExitCode(reports []securityv1alpha1.TLSComplianceReport) error {
 			return exitCodeError{code: 1}
 		}
 	}
+
+	if failOnGroupMismatch {
+		result, err := evaluateGroupsGate(reports)
+		if err != nil {
+			return err
+		}
+		if !result.Passed() {
+			return exitCodeError{code: 1}
+		}
+	}
 	return nil
+}
+
+// parseExpectedGroups splits the --expected-groups flag into group names.
+func parseExpectedGroups() ([]string, error) {
+	if strings.TrimSpace(expectedGroups) == "" {
+		return nil, fmt.Errorf("--fail-on-group-mismatch requires --expected-groups")
+	}
+	groups := export.SplitGroups(expectedGroups)
+	if len(groups) == 0 {
+		return nil, fmt.Errorf("--expected-groups contains no group names")
+	}
+	return groups, nil
 }
 
 func main() {
@@ -163,6 +189,12 @@ Use --kubeconfig and --context to target a specific cluster.`,
 		"Exit with code 1 if any non-compliant endpoints are found (NonCompliant, NoTLS, PlaintextHTTP)")
 	rootCmd.PersistentFlags().BoolVar(&requirePQC, "require-pqc", false,
 		"Exit with code 1 unless every scannable endpoint is PQCReady (TLS 1.3 with ML-KEM); unscannable endpoints are skipped")
+	rootCmd.PersistentFlags().StringVar(&expectedGroups, "expected-groups", "",
+		"Comma-separated TLS groups the endpoints must advertise (e.g. X25519MLKEM768,X25519)")
+	rootCmd.PersistentFlags().StringVar(&groupsMode, "expected-groups-mode", "contains",
+		"How --expected-groups is compared: contains (subset) or exact (set equality)")
+	rootCmd.PersistentFlags().BoolVar(&failOnGroupMismatch, "fail-on-group-mismatch", false,
+		"Exit with code 1 when the advertised groups do not satisfy --expected-groups")
 	rootCmd.Flags().BoolVar(&rawExport, "raw", false, "Export full TLSComplianceReport objects instead of the flattened schema (json and yaml only)")
 
 	rootCmd.AddCommand(newSummaryCmd())

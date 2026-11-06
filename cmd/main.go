@@ -109,6 +109,9 @@ type operatorConfig struct {
 	logFormat              string
 	runOnce                bool
 	requirePQC             bool
+	expectedGroups         string
+	groupsMode             string
+	failOnGroupMismatch    bool
 	outputFormat           string
 	outputFile             string
 	shutdownDrainTimeout   time.Duration
@@ -194,6 +197,12 @@ func parseFlags() *operatorConfig {
 		"Perform a single scan of all endpoints and exit (0=compliant, 1=non-compliant, 2=error)")
 	flag.BoolVar(&cfg.requirePQC, "require-pqc", false,
 		"With --run-once, exit 1 unless every scannable endpoint is PQCReady (TLS 1.3 with ML-KEM); unscannable endpoints are skipped")
+	flag.StringVar(&cfg.expectedGroups, "expected-groups", "",
+		"Comma-separated TLS groups every scannable endpoint must advertise (e.g. X25519MLKEM768,X25519)")
+	flag.StringVar(&cfg.groupsMode, "expected-groups-mode", "contains",
+		"How --expected-groups is compared: contains (subset) or exact (set equality)")
+	flag.BoolVar(&cfg.failOnGroupMismatch, "fail-on-group-mismatch", false,
+		"With --run-once, exit 1 when the advertised groups do not satisfy --expected-groups")
 	flag.StringVar(&cfg.outputFormat, "output-format", "",
 		"Write scan results in this format (csv, json, yaml, junit, markdown, html, sarif); defaults to stdout")
 	flag.StringVar(&cfg.outputFile, "output-file", "",
@@ -272,6 +281,11 @@ func validateConfig(cfg *operatorConfig) {
 			"end", cfg.scanWindowEnd,
 			"timezone", cfg.scanWindowTimezone,
 		)
+	}
+
+	if _, err := export.ParseGroupsMode(cfg.groupsMode); err != nil {
+		setupLog.Error(err, "invalid --expected-groups-mode")
+		os.Exit(1)
 	}
 
 	warnings, err := checkConfig(cfg)
@@ -720,6 +734,22 @@ func runOnceAndExit(ctx context.Context, cancel context.CancelFunc, mgr ctrl.Man
 		}
 	}
 
+	if cfg.expectedGroups != "" {
+		groups := export.SplitGroups(cfg.expectedGroups)
+		// The mode was validated in validateConfig, which exits on an unknown value.
+		mode, _ := export.ParseGroupsMode(cfg.groupsMode)
+		result := export.EvaluateExpectedGroups(reports, groups, mode)
+		setupLog.Info("expected groups assertion",
+			"mode", result.Mode, "checked", result.Checked,
+			"passed", result.PassedN, "failed", result.FailedN, "skipped", result.SkippedN)
+		if cfg.failOnGroupMismatch && !result.Passed() {
+			if exitCode == 0 {
+				exitCode = 1
+			}
+			setupLog.Info("advertised TLS groups do not satisfy --expected-groups", "exitCode", exitCode)
+		}
+	}
+
 	if cfg.outputFormat != "" {
 		if err := writeRunOnceOutput(reports, cfg); err != nil {
 			setupLog.Error(err, "failed to write output")
@@ -798,6 +828,8 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_LOG_FORMAT", "log-format"},
 	{"TLS_COMPLIANCE_RUN_ONCE", "run-once"},
 	{"TLS_COMPLIANCE_REQUIRE_PQC", "require-pqc"},
+	{"TLS_COMPLIANCE_EXPECTED_GROUPS", "expected-groups"},
+	{"TLS_COMPLIANCE_EXPECTED_GROUPS_MODE", "expected-groups-mode"},
 	{"TLS_COMPLIANCE_OUTPUT_FORMAT", "output-format"},
 	{"TLS_COMPLIANCE_OUTPUT_FILE", "output-file"},
 	{"TLS_COMPLIANCE_SHUTDOWN_DRAIN_TIMEOUT", "shutdown-drain-timeout"},
@@ -882,7 +914,7 @@ func validateEnvValue(flagName, value string) error {
 		if value != "text" && value != "json" {
 			return fmt.Errorf("must be text or json, got %q", value)
 		}
-	case "run-once", "require-pqc", "scan-all-ports", "enumerate-ciphers", "detect-cipher-preference", "metrics-per-endpoint":
+	case "run-once", "require-pqc", "fail-on-group-mismatch", "scan-all-ports", "enumerate-ciphers", "detect-cipher-preference", "metrics-per-endpoint":
 		if value != "true" && value != "false" && value != "1" && value != "0" {
 			return fmt.Errorf("must be true or false, got %q", value)
 		}
