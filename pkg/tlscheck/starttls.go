@@ -23,7 +23,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"strconv"
 	"strings"
 
 	"golang.org/x/sync/errgroup"
@@ -36,15 +38,83 @@ const (
 	starttlsProtocolIMAP
 	starttlsProtocolLDAP
 	starttlsProtocolPostgres
+	starttlsProtocolMySQL
+	starttlsProtocolPOP3
+	starttlsProtocolLMTP
+	starttlsProtocolXMPP
+	starttlsProtocolXMPPServer
+	starttlsProtocolNNTP
+	starttlsProtocolSieve
+	starttlsProtocolFTP
 )
+
+// starttlsProtocolNames maps the --starttls-ports protocol names to their
+// implementation.
+var starttlsProtocolNames = map[string]starttlsProtocol{
+	"smtp":        starttlsProtocolSMTP,
+	"imap":        starttlsProtocolIMAP,
+	"ldap":        starttlsProtocolLDAP,
+	"postgres":    starttlsProtocolPostgres,
+	"mysql":       starttlsProtocolMySQL,
+	"pop3":        starttlsProtocolPOP3,
+	"lmtp":        starttlsProtocolLMTP,
+	"xmpp":        starttlsProtocolXMPP,
+	"xmpp-server": starttlsProtocolXMPPServer,
+	"nntp":        starttlsProtocolNNTP,
+	"sieve":       starttlsProtocolSieve,
+	"ftp":         starttlsProtocolFTP,
+}
 
 // defaultSTARTTLSPorts maps well-known STARTTLS port numbers to their protocol.
 var defaultSTARTTLSPorts = map[int]starttlsProtocol{
+	21:   starttlsProtocolFTP,
+	24:   starttlsProtocolLMTP,
 	25:   starttlsProtocolSMTP,
-	587:  starttlsProtocolSMTP,
+	110:  starttlsProtocolPOP3,
+	119:  starttlsProtocolNNTP,
 	143:  starttlsProtocolIMAP,
 	389:  starttlsProtocolLDAP,
+	587:  starttlsProtocolSMTP,
+	3306: starttlsProtocolMySQL,
+	3307: starttlsProtocolMySQL,
+	4190: starttlsProtocolSieve,
+	5222: starttlsProtocolXMPP,
+	5269: starttlsProtocolXMPPServer,
 	5432: starttlsProtocolPostgres,
+}
+
+// ParseSTARTTLSPorts parses a --starttls-ports value of the form
+// "proto=port[:port][,proto=port...]". An entry with the same port appearing
+// later overrides an earlier one.
+func ParseSTARTTLSPorts(spec string) (map[int]string, error) {
+	overrides := make(map[int]string)
+	for _, entry := range strings.Split(spec, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+
+		name, ports, found := strings.Cut(entry, "=")
+		if !found {
+			return nil, fmt.Errorf("invalid --starttls-ports entry %q: want proto=port[:port]", entry)
+		}
+		name = strings.ToLower(strings.TrimSpace(name))
+		if _, ok := starttlsProtocolNames[name]; !ok {
+			return nil, fmt.Errorf("unknown STARTTLS protocol %q", name)
+		}
+
+		for _, rawPort := range strings.Split(ports, ":") {
+			port, err := strconv.Atoi(strings.TrimSpace(rawPort))
+			if err != nil || port < 1 || port > 65535 {
+				return nil, fmt.Errorf("invalid port %q in --starttls-ports entry %q", rawPort, entry)
+			}
+			overrides[port] = name
+		}
+	}
+	if len(overrides) == 0 {
+		return nil, errors.New("--starttls-ports contains no port mappings")
+	}
+	return overrides, nil
 }
 
 // resolveSTARTTLS returns the STARTTLS protocol for a port, checking
@@ -52,6 +122,11 @@ var defaultSTARTTLSPorts = map[int]starttlsProtocol{
 func (c *TLSChecker) resolveSTARTTLS(port int) (starttlsProtocol, bool) {
 	if proto, ok := c.starttlsOverride[port]; ok {
 		return proto, ok
+	}
+	if name, ok := c.STARTTLSPorts[port]; ok {
+		if proto, ok := starttlsProtocolNames[name]; ok {
+			return proto, true
+		}
 	}
 	proto, ok := defaultSTARTTLSPorts[port]
 	return proto, ok
@@ -69,6 +144,20 @@ func upgradeSTARTTLS(conn net.Conn, proto starttlsProtocol) error {
 		return upgradeLDAP(conn)
 	case starttlsProtocolPostgres:
 		return upgradePostgres(conn)
+	case starttlsProtocolMySQL:
+		return upgradeMySQL(conn)
+	case starttlsProtocolPOP3:
+		return upgradePOP3(conn)
+	case starttlsProtocolLMTP:
+		return upgradeLMTP(conn)
+	case starttlsProtocolXMPP, starttlsProtocolXMPPServer:
+		return upgradeXMPP(conn)
+	case starttlsProtocolNNTP:
+		return upgradeNNTP(conn)
+	case starttlsProtocolSieve:
+		return upgradeSieve(conn)
+	case starttlsProtocolFTP:
+		return upgradeFTP(conn)
 	default:
 		return fmt.Errorf("starttls: unknown protocol %d", proto)
 	}
@@ -322,4 +411,193 @@ func (c *TLSChecker) probeSTARTTLS(ctx context.Context, addr, host string, proto
 		return nil
 	}
 	return result
+}
+
+// mysqlClientCapabilities requests protocol 4.1, secure connection and plugin
+// auth alongside CLIENT_SSL, matching what a modern client sends.
+const mysqlClientCapabilities uint32 = 0x0200 | 0x0800 | 0x8000 | 0x00080000
+
+// upgradeMySQL reads the server handshake and replies with an SSLRequest packet
+// carrying CLIENT_SSL. MySQL starts TLS immediately after that packet, so a nil
+// return means the connection is ready for a TLS handshake.
+func upgradeMySQL(conn net.Conn) error {
+	header := make([]byte, 4)
+	if _, err := io.ReadFull(conn, header); err != nil {
+		return fmt.Errorf("mysql: read handshake header: %w", err)
+	}
+	length := int(header[0]) | int(header[1])<<8 | int(header[2])<<16
+	if length < 1 || length > 1<<16 {
+		return fmt.Errorf("mysql: invalid handshake length %d", length)
+	}
+	payload := make([]byte, length)
+	if _, err := io.ReadFull(conn, payload); err != nil {
+		return fmt.Errorf("mysql: read handshake payload: %w", err)
+	}
+	if payload[0] != 0x0a {
+		return fmt.Errorf("mysql: unexpected handshake protocol version %d", payload[0])
+	}
+
+	// SSLRequest: 4-byte packet header (32-byte payload, sequence 1) followed by
+	// capability flags, max packet size, charset and 23 reserved bytes.
+	request := make([]byte, 4+32)
+	request[0] = 32
+	request[3] = 1
+	binary.LittleEndian.PutUint32(request[4:8], mysqlClientCapabilities)
+	binary.LittleEndian.PutUint32(request[8:12], 1<<24)
+	request[12] = 0x21 // utf8_general_ci
+	if _, err := conn.Write(request); err != nil {
+		return fmt.Errorf("mysql: write SSLRequest: %w", err)
+	}
+	return nil
+}
+
+func upgradePOP3(conn net.Conn) error {
+	r := bufio.NewReader(conn)
+	line, err := r.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("pop3: greeting: %w", err)
+	}
+	if !strings.HasPrefix(strings.ToUpper(line), "+OK") {
+		return fmt.Errorf("pop3: unexpected greeting: %q", line)
+	}
+	if _, err := fmt.Fprintf(conn, "STLS\r\n"); err != nil {
+		return fmt.Errorf("pop3: stls write: %w", err)
+	}
+	line, err = r.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("pop3: stls response: %w", err)
+	}
+	if !strings.HasPrefix(strings.ToUpper(line), "+OK") {
+		return fmt.Errorf("pop3: stls refused: %q", line)
+	}
+	return nil
+}
+
+// upgradeLMTP mirrors SMTP: LHLO advertises STARTTLS the same way EHLO does.
+func upgradeLMTP(conn net.Conn) error {
+	r := bufio.NewReader(conn)
+	if err := expectSMTP220(r); err != nil {
+		return fmt.Errorf("lmtp: greeting: %w", err)
+	}
+	if _, err := fmt.Fprintf(conn, "LHLO localhost\r\n"); err != nil {
+		return fmt.Errorf("lmtp: lhlo write: %w", err)
+	}
+	if err := expectSMTPSTARTTLSCap(r); err != nil {
+		return fmt.Errorf("lmtp: capability: %w", err)
+	}
+	if _, err := fmt.Fprintf(conn, "STARTTLS\r\n"); err != nil {
+		return fmt.Errorf("lmtp: starttls write: %w", err)
+	}
+	if err := expectSMTP220(r); err != nil {
+		return fmt.Errorf("lmtp: starttls response: %w", err)
+	}
+	return nil
+}
+
+// upgradeXMPP negotiates STARTTLS by opening a stream and waiting for the
+// server to advertise <starttls> before requesting it.
+func upgradeXMPP(conn net.Conn) error {
+	r := bufio.NewReader(conn)
+	if _, err := fmt.Fprintf(conn,
+		"<stream:stream to='localhost' xmlns='jabber:client' "+
+			"xmlns:stream='http://etherx.jabber.org/streams' version='1.0'>"); err != nil {
+		return fmt.Errorf("xmpp: stream write: %w", err)
+	}
+	if err := readUntil(r, "<starttls", 8192); err != nil {
+		return fmt.Errorf("xmpp: starttls not advertised: %w", err)
+	}
+	if _, err := fmt.Fprintf(conn, "<starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>"); err != nil {
+		return fmt.Errorf("xmpp: starttls write: %w", err)
+	}
+	if err := readUntil(r, "<proceed", 8192); err != nil {
+		return fmt.Errorf("xmpp: starttls refused: %w", err)
+	}
+	return nil
+}
+
+// readUntil consumes bytes until want appears, failing after limit bytes.
+func readUntil(r *bufio.Reader, want string, limit int) error {
+	read := 0
+	var seen strings.Builder
+	for read < limit {
+		b, err := r.ReadByte()
+		if err != nil {
+			return err
+		}
+		read++
+		seen.WriteByte(b)
+		if strings.Contains(seen.String(), want) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%q not found within %d bytes", want, limit)
+}
+
+func upgradeNNTP(conn net.Conn) error {
+	r := bufio.NewReader(conn)
+	line, err := r.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("nntp: greeting: %w", err)
+	}
+	if !strings.HasPrefix(line, "200") && !strings.HasPrefix(line, "201") {
+		return fmt.Errorf("nntp: unexpected greeting: %q", line)
+	}
+	if _, err := fmt.Fprintf(conn, "STARTTLS\r\n"); err != nil {
+		return fmt.Errorf("nntp: starttls write: %w", err)
+	}
+	line, err = r.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("nntp: starttls response: %w", err)
+	}
+	if !strings.HasPrefix(line, "382") {
+		return fmt.Errorf("nntp: starttls refused: %q", line)
+	}
+	return nil
+}
+
+func upgradeSieve(conn net.Conn) error {
+	r := bufio.NewReader(conn)
+	// The greeting is one or more capability lines ending with "OK".
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("sieve: greeting: %w", err)
+		}
+		if strings.HasPrefix(strings.ToUpper(line), "OK") {
+			break
+		}
+	}
+	if _, err := fmt.Fprintf(conn, "STARTTLS\r\n"); err != nil {
+		return fmt.Errorf("sieve: starttls write: %w", err)
+	}
+	line, err := r.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("sieve: starttls response: %w", err)
+	}
+	if !strings.HasPrefix(strings.ToUpper(line), "OK") {
+		return fmt.Errorf("sieve: starttls refused: %q", line)
+	}
+	return nil
+}
+
+func upgradeFTP(conn net.Conn) error {
+	r := bufio.NewReader(conn)
+	line, err := r.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("ftp: greeting: %w", err)
+	}
+	if !strings.HasPrefix(line, "220") {
+		return fmt.Errorf("ftp: unexpected greeting: %q", line)
+	}
+	if _, err := fmt.Fprintf(conn, "AUTH TLS\r\n"); err != nil {
+		return fmt.Errorf("ftp: auth tls write: %w", err)
+	}
+	line, err = r.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("ftp: auth tls response: %w", err)
+	}
+	if !strings.HasPrefix(line, "234") {
+		return fmt.Errorf("ftp: AUTH TLS refused: %q", line)
+	}
+	return nil
 }

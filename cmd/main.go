@@ -107,6 +107,8 @@ type operatorConfig struct {
 	notifyWebhooks         stringList
 	notifyTimeout          time.Duration
 	notifyRetries          int
+	starttlsPortsStr       string
+	starttlsPorts          map[int]string
 	enumerateCiphers       bool
 	detectCipherPreference bool
 	namespaceRateLimitsStr string
@@ -195,6 +197,9 @@ func parseFlags() *operatorConfig {
 		"Maximum backoff duration between retries (caps exponential growth)")
 	flag.StringVar(&cfg.extraTLSPortsStr, "extra-tls-ports", "",
 		"Comma-separated list of additional port numbers to treat as TLS endpoints (e.g., 9443,6380,5671)")
+	flag.StringVar(&cfg.starttlsPortsStr, "starttls-ports", "",
+		"Override STARTTLS port mappings as proto=port[:port][,proto=port...] "+
+			"(protocols: smtp, imap, ldap, postgres, mysql, pop3, lmtp, xmpp, xmpp-server, nntp, sieve, ftp)")
 	flag.BoolVar(&cfg.scanAllPorts, "scan-all-ports", false,
 		"Scan all declared TCP ports on pods and services, not just known TLS ports")
 	flag.StringVar(&cfg.clientCertPath, "client-cert", "",
@@ -285,6 +290,15 @@ func validateConfig(cfg *operatorConfig) {
 	if cfg.notifyRetries < 0 || cfg.notifyRetries > 10 {
 		setupLog.Error(nil, "--notify-retries must be between 0 and 10")
 		os.Exit(1)
+	}
+	if cfg.starttlsPortsStr != "" {
+		overrides, err := tlscheck.ParseSTARTTLSPorts(cfg.starttlsPortsStr)
+		if err != nil {
+			setupLog.Error(err, "invalid --starttls-ports value")
+			os.Exit(1)
+		}
+		cfg.starttlsPorts = overrides
+		setupLog.Info("STARTTLS port overrides configured", "mappings", cfg.starttlsPortsStr)
 	}
 
 	if cfg.extraTLSPortsStr != "" {
@@ -586,6 +600,7 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 	baseChecker := tlscheck.NewTLSChecker(cfg.tlsCheckTimeout)
 	baseChecker.EnumerateCiphers = cfg.enumerateCiphers
 	baseChecker.DetectCipherPreference = cfg.detectCipherPreference
+	baseChecker.STARTTLSPorts = cfg.starttlsPorts
 	if cfg.clientCertPath != "" && cfg.clientKeyPath != "" {
 		clientCert, err := tls.LoadX509KeyPair(cfg.clientCertPath, cfg.clientKeyPath)
 		if err != nil {
@@ -994,6 +1009,9 @@ func validateEnvValue(flagName, value string) error {
 		return validateIntRange(value, 0, 10)
 	case "extra-tls-ports":
 		_, err := parsePortList(value)
+		return err
+	case "starttls-ports":
+		_, err := tlscheck.ParseSTARTTLSPorts(value)
 		return err
 	case "log-format":
 		if value != "text" && value != "json" {
