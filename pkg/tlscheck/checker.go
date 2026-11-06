@@ -144,10 +144,10 @@ type versionProbeResult struct {
 	serverPrefersOwnCiphers *bool
 }
 
-// verifyTrust re-handshakes with the endpoint and validates the presented chain
-// against TrustRoots, including the hostname. The handshake itself stays
-// non-verifying so the chain is reported instead of aborting the connection;
-// x509.Verify applies the trust decision.
+// verifyTrust re-handshakes with the endpoint using TrustRoots as the root set.
+// The handshake itself performs the chain and hostname verification, so a
+// certificate failure surfaces as a verification error and no check has to be
+// disabled.
 func (c *TLSChecker) verifyTrust(ctx context.Context, addr, host string) (bool, string) {
 	conn, stop, err := c.dialProbe(ctx, addr)
 	if err != nil {
@@ -157,28 +157,11 @@ func (c *TLSChecker) verifyTrust(ctx context.Context, addr, host string) (bool, 
 	defer stop()
 
 	tlsConn := tls.Client(conn, &tls.Config{
-		ServerName:         host,
-		InsecureSkipVerify: true, // lgtm[go/disabled-certificate-check] — chain is verified below
-		MinVersion:         tls.VersionTLS10,
+		ServerName: host,
+		RootCAs:    c.TrustRoots,
+		MinVersion: tls.VersionTLS10,
 	})
 	if err := tlsConn.HandshakeContext(ctx); err != nil {
-		return false, err.Error()
-	}
-
-	state := tlsConn.ConnectionState()
-	if len(state.PeerCertificates) == 0 {
-		return false, "server presented no certificate"
-	}
-
-	intermediates := x509.NewCertPool()
-	for _, cert := range state.PeerCertificates[1:] {
-		intermediates.AddCert(cert)
-	}
-	if _, err := state.PeerCertificates[0].Verify(x509.VerifyOptions{
-		Roots:         c.TrustRoots,
-		Intermediates: intermediates,
-		DNSName:       host,
-	}); err != nil {
 		return false, err.Error()
 	}
 	return true, ""
