@@ -99,6 +99,9 @@ type TLSChecker struct {
 	// DetectCipherPreference probes whether a TLS 1.2 server chooses its own
 	// cipher order instead of following the client's offered order.
 	DetectCipherPreference bool
+	// STARTTLSPorts overrides the built-in STARTTLS port map, keyed by port
+	// and valued by protocol name (see ParseSTARTTLSPorts).
+	STARTTLSPorts map[int]string
 	// starttlsOverride maps port numbers to STARTTLS protocols; used in tests
 	// to register arbitrary ports without modifying the built-in port map.
 	starttlsOverride map[int]starttlsProtocol
