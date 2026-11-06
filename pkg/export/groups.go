@@ -181,17 +181,27 @@ func EvaluateExpectedGroups(
 
 // advertiseGroups returns the unique humans-readable group names an endpoint
 // advertised, in a stable order.
+//
+// NegotiatedCurves is a map, so it is sorted before deduplication. Without
+// that, two spellings of the same group (e.g. X25519MLKEM768 and
+// x25519_mlkem768) would collapse to whichever one map iteration happened to
+// yield first, making the result vary between runs.
 func advertiseGroups(r *securityv1alpha1.TLSComplianceReport) []string {
 	if len(r.Status.NegotiatedCurves) == 0 {
 		return nil
 	}
 
-	seen := make(map[string]bool, len(r.Status.NegotiatedCurves))
-	var groups []string
+	curves := make([]string, 0, len(r.Status.NegotiatedCurves))
 	for _, curve := range r.Status.NegotiatedCurves {
-		if curve == "" {
-			continue
+		if curve != "" {
+			curves = append(curves, curve)
 		}
+	}
+	sort.Strings(curves)
+
+	seen := make(map[string]bool, len(curves))
+	groups := make([]string, 0, len(curves))
+	for _, curve := range curves {
 		key := normalizeGroupName(curve)
 		if seen[key] {
 			continue
@@ -199,7 +209,6 @@ func advertiseGroups(r *securityv1alpha1.TLSComplianceReport) []string {
 		seen[key] = true
 		groups = append(groups, curve)
 	}
-	sort.Strings(groups)
 	return groups
 }
 

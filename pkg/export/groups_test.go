@@ -187,6 +187,8 @@ func TestEvaluateExpectedGroups_EmptyExpectationIsNoGate(t *testing.T) {
 }
 
 func TestAdvertiseGroups_DedupesAndSkipsEmpty(t *testing.T) {
+	// Both spellings normalize to the same group; the canonical uppercase
+	// spelling must survive regardless of map iteration order.
 	r := makeCurveReport("a.example.com", securityv1alpha1.ComplianceStatusCompliant, map[string]string{
 		"TLS 1.3": "X25519MLKEM768",
 		"TLS 1.2": "x25519_mlkem768",
@@ -194,14 +196,16 @@ func TestAdvertiseGroups_DedupesAndSkipsEmpty(t *testing.T) {
 		"TLS 1.0": "X25519",
 	})
 
-	got := advertiseGroups(&r)
-	want := []string{"X25519", "X25519MLKEM768"}
-	if len(got) != len(want) {
-		t.Fatalf("advertiseGroups() = %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("advertiseGroups()[%d] = %q, want %q", i, got[i], want[i])
+	for i := 0; i < 20; i++ {
+		got := advertiseGroups(&r)
+		want := []string{"X25519", "X25519MLKEM768"}
+		if len(got) != len(want) {
+			t.Fatalf("advertiseGroups() = %v, want %v", got, want)
+		}
+		for j := range want {
+			if got[j] != want[j] {
+				t.Fatalf("advertiseGroups()[%d] = %q, want %q", j, got[j], want[j])
+			}
 		}
 	}
 }
