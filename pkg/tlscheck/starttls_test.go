@@ -23,6 +23,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -63,7 +64,92 @@ func serveSTARTTLS(conn net.Conn, proto starttlsProtocol, cert tls.Certificate) 
 		serveLDAP(conn, cert)
 	case starttlsProtocolPostgres:
 		servePostgres(conn, cert)
+	case starttlsProtocolMySQL:
+		serveMySQL(conn, cert)
+	case starttlsProtocolPOP3:
+		servePOP3(conn, cert)
+	case starttlsProtocolLMTP:
+		serveLMTP(conn, cert)
+	case starttlsProtocolXMPP, starttlsProtocolXMPPServer:
+		serveXMPP(conn, cert)
+	case starttlsProtocolNNTP:
+		serveNNTP(conn, cert)
+	case starttlsProtocolSieve:
+		serveSieve(conn, cert)
+	case starttlsProtocolFTP:
+		serveFTP(conn, cert)
 	}
+}
+
+// tlsServerUpgrade hands conn to a TLS server and completes the handshake.
+func tlsServerUpgrade(conn net.Conn, cert tls.Certificate) {
+	upgraded := tls.Server(conn, &tls.Config{Certificates: []tls.Certificate{cert}})
+	_ = upgraded.Handshake()
+}
+
+func serveMySQL(conn net.Conn, cert tls.Certificate) {
+	// Initial handshake: 4-byte header, then protocol version 10 and filler.
+	payload := []byte{0x0a, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00}
+	header := []byte{byte(len(payload)), 0, 0, 0}
+	_, _ = conn.Write(header)
+	_, _ = conn.Write(payload)
+
+	// Consume the SSLRequest (4-byte header + 32-byte payload).
+	request := make([]byte, 36)
+	_, _ = io.ReadFull(conn, request)
+	tlsServerUpgrade(conn, cert)
+}
+
+func servePOP3(conn net.Conn, cert tls.Certificate) {
+	fmt.Fprintf(conn, "+OK POP3 ready\r\n")
+	r := bufio.NewReader(conn)
+	_, _ = r.ReadString('\n') // consume STLS
+	fmt.Fprintf(conn, "+OK Begin TLS negotiation\r\n")
+	tlsServerUpgrade(conn, cert)
+}
+
+func serveLMTP(conn net.Conn, cert tls.Certificate) {
+	fmt.Fprintf(conn, "220 test.example.com LMTP\r\n")
+	r := bufio.NewReader(conn)
+	_, _ = r.ReadString('\n') // consume LHLO
+	fmt.Fprintf(conn, "250-test.example.com\r\n250-STARTTLS\r\n250 OK\r\n")
+	_, _ = r.ReadString('\n') // consume STARTTLS
+	fmt.Fprintf(conn, "220 Go ahead\r\n")
+	tlsServerUpgrade(conn, cert)
+}
+
+func serveXMPP(conn net.Conn, cert tls.Certificate) {
+	r := bufio.NewReader(conn)
+	_, _ = r.ReadString('>') // consume the stream header
+	fmt.Fprintf(conn, "<stream:features><starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>"+
+		"</stream:features>")
+	_, _ = r.ReadString('>') // consume the starttls request
+	fmt.Fprintf(conn, "<proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>")
+	tlsServerUpgrade(conn, cert)
+}
+
+func serveNNTP(conn net.Conn, cert tls.Certificate) {
+	fmt.Fprintf(conn, "200 NNTP ready\r\n")
+	r := bufio.NewReader(conn)
+	_, _ = r.ReadString('\n') // consume STARTTLS
+	fmt.Fprintf(conn, "382 Continue with TLS\r\n")
+	tlsServerUpgrade(conn, cert)
+}
+
+func serveSieve(conn net.Conn, cert tls.Certificate) {
+	fmt.Fprintf(conn, "OK Sieve ready\r\n")
+	r := bufio.NewReader(conn)
+	_, _ = r.ReadString('\n') // consume STARTTLS
+	fmt.Fprintf(conn, "OK Begin TLS negotiation\r\n")
+	tlsServerUpgrade(conn, cert)
+}
+
+func serveFTP(conn net.Conn, cert tls.Certificate) {
+	fmt.Fprintf(conn, "220 FTP ready\r\n")
+	r := bufio.NewReader(conn)
+	_, _ = r.ReadString('\n') // consume AUTH TLS
+	fmt.Fprintf(conn, "234 Proceed with negotiation\r\n")
+	tlsServerUpgrade(conn, cert)
 }
 
 func serveSMTP(conn net.Conn, cert tls.Certificate) {
@@ -722,5 +808,119 @@ func TestUpgradeSTARTTLS_SSLRequest(t *testing.T) {
 	}
 	if magic != 80877103 {
 		t.Errorf("SSLRequest magic = %d, want 80877103", magic)
+	}
+}
+
+func TestCheckEndpoint_STARTTLS_NewProtocols(t *testing.T) {
+	protocols := []struct {
+		name  string
+		proto starttlsProtocol
+	}{
+		{"mysql", starttlsProtocolMySQL},
+		{"pop3", starttlsProtocolPOP3},
+		{"lmtp", starttlsProtocolLMTP},
+		{"xmpp", starttlsProtocolXMPP},
+		{"xmpp-server", starttlsProtocolXMPPServer},
+		{"nntp", starttlsProtocolNNTP},
+		{"sieve", starttlsProtocolSieve},
+		{"ftp", starttlsProtocolFTP},
+	}
+
+	for _, tt := range protocols {
+		t.Run(tt.name, func(t *testing.T) {
+			cert, _ := generateTestCert(t)
+			host, port, cleanup := startSTARTTLSServer(t, tt.proto, cert)
+			defer cleanup()
+
+			checker := checkerWithSTARTTLSOverride(3*time.Second, port, tt.proto)
+			result, err := checker.CheckEndpoint(context.Background(), host, port)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.FailureReason != FailureReasonNone {
+				t.Errorf("want FailureReasonNone, got %q", result.FailureReason)
+			}
+			if !result.SupportsTLS12 && !result.SupportsTLS13 {
+				t.Error("expected TLS 1.2 or 1.3 support via STARTTLS")
+			}
+		})
+	}
+}
+
+func TestParseSTARTTLSPorts(t *testing.T) {
+	tests := []struct {
+		name    string
+		spec    string
+		want    map[int]string
+		wantErr bool
+	}{
+		{
+			name: "single protocol and port",
+			spec: "mysql=3306",
+			want: map[int]string{3306: "mysql"},
+		},
+		{
+			name: "multiple ports for one protocol",
+			spec: "mysql=3306:3307",
+			want: map[int]string{3306: "mysql", 3307: "mysql"},
+		},
+		{
+			name: "multiple protocols",
+			spec: "smtp=2525,ftp=2121",
+			want: map[int]string{2525: "smtp", 2121: "ftp"},
+		},
+		{
+			name: "later entry overrides an earlier port",
+			spec: "smtp=2525,imap=2525",
+			want: map[int]string{2525: "imap"},
+		},
+		{
+			name: "case and whitespace are normalized",
+			spec: " MySQL = 3306 ",
+			want: map[int]string{3306: "mysql"},
+		},
+		{name: "unknown protocol", spec: "gopher=70", wantErr: true},
+		{name: "missing separator", spec: "mysql", wantErr: true},
+		{name: "port out of range", spec: "mysql=70000", wantErr: true},
+		{name: "non-numeric port", spec: "mysql=abc", wantErr: true},
+		{name: "empty spec", spec: " , ", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseSTARTTLSPorts(tt.spec)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ParseSTARTTLSPorts(%q) = %v, want error", tt.spec, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for port, name := range tt.want {
+				if got[port] != name {
+					t.Errorf("port %d = %q, want %q", port, got[port], name)
+				}
+			}
+		})
+	}
+}
+
+func TestResolveSTARTTLS_FlagOverrideBeatsDefault(t *testing.T) {
+	c := NewTLSChecker(time.Second)
+	c.STARTTLSPorts = map[int]string{3306: "ftp"}
+
+	proto, ok := c.resolveSTARTTLS(3306)
+	if !ok || proto != starttlsProtocolFTP {
+		t.Errorf("resolveSTARTTLS(3306) = %v, %v; want the flag override (ftp)", proto, ok)
+	}
+
+	// An unmapped port still uses the built-in table.
+	if proto, ok := c.resolveSTARTTLS(5432); !ok || proto != starttlsProtocolPostgres {
+		t.Errorf("resolveSTARTTLS(5432) = %v, %v; want the default postgres", proto, ok)
 	}
 }

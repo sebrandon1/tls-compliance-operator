@@ -21,6 +21,17 @@ If a flag is set on the command line, its environment variable is ignored.
 | `--enumerate-ciphers` | `TLS_COMPLIANCE_ENUMERATE_CIPHERS` | bool | `true` | Enumerate all supported cipher suites per TLS version. When enabled, the operator performs multiple handshakes to discover every cipher suite each TLS version accepts. Disable for faster scans if you only need the first negotiated cipher. |
 | `--detect-cipher-preference` | `TLS_COMPLIANCE_DETECT_CIPHER_PREFERENCE` | bool | `false` | Detect whether TLS 1.2 endpoints prefer their own cipher order. Performs two extra handshakes offering the first two discovered suites in opposite orders; requires `--enumerate-ciphers` to have found at least two suites. The result is recorded as `status.serverPrefersOwnCiphers` on the report. |
 | `--metrics-per-endpoint` | `TLS_COMPLIANCE_METRICS_PER_ENDPOINT` | bool | `false` | Emit per-endpoint Prometheus metrics (certificate expiry, TLS version support, PQC readiness, forward secrecy). Leave off on large clusters (2000+ endpoints) to avoid high metric cardinality and Prometheus memory usage. Aggregate metrics (`tls_compliance_endpoints_total`) are always emitted regardless of this setting. |
+| `--starttls-ports` | `TLS_COMPLIANCE_STARTTLS_PORTS` | string | `""` | Override the built-in STARTTLS port map: `proto=port[:port][,proto=port...]`. Supported protocols: `smtp`, `imap`, `ldap`, `postgres`, `mysql`, `pop3`, `lmtp`, `xmpp`, `xmpp-server`, `nntp`, `sieve`, `ftp`. An entry whose port repeats later overrides the earlier one. Unknown protocols, malformed entries, and ports outside 1-65535 fail startup. |
+
+STARTTLS is attempted only after the plaintext probes classify an endpoint as
+`NoTLS` or `Unreachable`, and the per-probe context deadline still applies to
+the cleartext exchange. Built-in STARTTLS ports: SMTP 25/587, IMAP 143, LDAP
+389, PostgreSQL 5432, MySQL/MariaDB 3306/3307, POP3 110, LMTP 24, XMPP 5222,
+XMPP-server 5269, NNTP 119, Sieve 4190, FTP 21. Telnet has no standardized
+STARTTLS negotiation and is not scanned.
+
+The `kubectl tlsreport` plugin only reads `TLSComplianceReport`s, so this flag
+applies to the manager only.
 
 ### Scan Window
 
