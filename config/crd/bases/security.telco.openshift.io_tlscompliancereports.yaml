@@ -700,6 +700,18 @@ spec:
                 - tls12
                 - tls13
                 type: object
+              workloadKind:
+                description: |-
+                  WorkloadKind is the kind of the workload controller that owns a Pod
+                  source (ReplicaSet, DaemonSet, StatefulSet, Job), taken from the pod's
+                  owner reference. Empty for non-Pod sources and for pods without an owner.
+                type: string
+              workloadName:
+                description: |-
+                  WorkloadName is the name of the owning workload controller for a Pod
+                  source. Unlike the pod name it survives pod recreation, which makes
+                  exported test names stable across runs.
+                type: string
             type: object
         required:
         - spec

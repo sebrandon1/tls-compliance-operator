@@ -20,7 +20,9 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
@@ -44,12 +46,23 @@ type JUnitTestSuite struct {
 
 // JUnitTestCase represents a single test case.
 type JUnitTestCase struct {
-	XMLName   xml.Name      `xml:"testcase"`
-	Name      string        `xml:"name,attr"`
-	ClassName string        `xml:"classname,attr"`
-	Time      string        `xml:"time,attr,omitempty"`
-	Failure   *JUnitFailure `xml:"failure,omitempty"`
+	XMLName    xml.Name        `xml:"testcase"`
+	Name       string          `xml:"name,attr"`
+	ClassName  string          `xml:"classname,attr"`
+	Time       string          `xml:"time,attr,omitempty"`
+	Properties []JUnitProperty `xml:"properties>property,omitempty"`
+	Failure    *JUnitFailure   `xml:"failure,omitempty"`
 }
+
+// JUnitProperty is a single testcase property.
+type JUnitProperty struct {
+	Name  string `xml:"name,attr"`
+	Value string `xml:"value,attr"`
+}
+
+// JUnitAdherenceTag marks cases that assert TLS profile adherence, using the
+// same tag upstream tls-scanner emits so existing gate tooling recognizes them.
+const JUnitAdherenceTag = "[OCPFeatureGate:TLSAdherence]"
 
 // JUnitFailure represents a test failure.
 type JUnitFailure struct {
@@ -62,9 +75,11 @@ func WriteJUnit(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) err
 	var failures int
 	var totalDuration time.Duration
 	cases := make([]JUnitTestCase, 0, len(reports))
+	seenNames := make(map[string]int, len(reports))
 
 	for i := range reports {
 		tc := reportToTestCase(&reports[i])
+		makeUniqueCaseName(&tc, seenNames)
 		if tc.Failure != nil {
 			failures++
 		}
@@ -103,11 +118,57 @@ func WriteJUnit(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) err
 	return nil
 }
 
+// CaseName builds the stable, workload-keyed name for a report:
+// "ns/<namespace> <kind>/<name> port/<port>". Pod sources use the owning
+// workload recorded at scan time, so recreating a pod does not rename the case.
+func CaseName(r *securityv1alpha1.TLSComplianceReport) string {
+	kind := string(r.Spec.SourceKind)
+	name := r.Spec.SourceName
+	if r.Status.WorkloadKind != "" {
+		kind = r.Status.WorkloadKind
+		name = r.Status.WorkloadName
+	}
+
+	var b strings.Builder
+	if r.Spec.SourceNamespace != "" {
+		b.WriteString("ns/")
+		b.WriteString(r.Spec.SourceNamespace)
+		b.WriteString(" ")
+	}
+	b.WriteString(kind)
+	b.WriteString("/")
+	b.WriteString(name)
+	b.WriteString(" port/")
+	b.WriteString(strconv.Itoa(int(r.Spec.Port)))
+	return b.String()
+}
+
+// assertsAdherence reports whether the report carries a TLS profile compliance
+// result, meaning the case asserts profile adherence.
+func assertsAdherence(r *securityv1alpha1.TLSComplianceReport) bool {
+	return r.Status.APIServerProfileCompliance != nil ||
+		r.Status.IngressProfileCompliance != nil ||
+		r.Status.KubeletProfileCompliance != nil
+}
+
+// makeUniqueCaseName disambiguates duplicate names (one workload exposing the
+// same port through several endpoints) by appending " #2", " #3", ...
+func makeUniqueCaseName(tc *JUnitTestCase, seen map[string]int) {
+	seen[tc.Name]++
+	if n := seen[tc.Name]; n > 1 {
+		tc.Name = fmt.Sprintf("%s #%d", tc.Name, n)
+	}
+}
+
 func reportToTestCase(r *securityv1alpha1.TLSComplianceReport) JUnitTestCase {
-	name := r.Spec.Host + ":" + strconv.Itoa(int(r.Spec.Port))
+	name := CaseName(r)
+	if assertsAdherence(r) {
+		name += " " + JUnitAdherenceTag
+	}
 	tc := JUnitTestCase{
-		Name:      name,
-		ClassName: string(r.Spec.SourceKind),
+		Name:       name,
+		ClassName:  string(r.Spec.SourceKind),
+		Properties: junitProperties(r),
 	}
 
 	if r.Status.ScanDuration != "" {
@@ -156,6 +217,27 @@ func reportToTestCase(r *securityv1alpha1.TLSComplianceReport) JUnitTestCase {
 	}
 
 	return tc
+}
+
+// junitProperties keeps per-endpoint detail out of the case name.
+func junitProperties(r *securityv1alpha1.TLSComplianceReport) []JUnitProperty {
+	props := []JUnitProperty{
+		{Name: "endpoint", Value: net.JoinHostPort(r.Spec.Host, strconv.Itoa(int(r.Spec.Port)))},
+		{Name: "complianceStatus", Value: string(r.Status.ComplianceStatus)},
+	}
+	if r.Status.OverallCipherGrade != "" {
+		props = append(props, JUnitProperty{Name: "cipherGrade", Value: r.Status.OverallCipherGrade})
+	}
+	if r.Status.PQCReadiness != "" {
+		props = append(props, JUnitProperty{Name: "pqcReadiness", Value: string(r.Status.PQCReadiness)})
+	}
+	if r.Status.CertificateInfo != nil && r.Status.CertificateInfo.NotAfter != nil {
+		props = append(props, JUnitProperty{
+			Name:  "certNotAfter",
+			Value: r.Status.CertificateInfo.NotAfter.UTC().Format(time.RFC3339),
+		})
+	}
+	return props
 }
 
 // formatJUnitTime formats a duration as seconds with three decimal places,

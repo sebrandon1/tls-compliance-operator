@@ -354,6 +354,18 @@ type TLSComplianceReportStatus struct {
 	// +optional
 	KubeletProfileCompliance *TLSProfileComplianceResult `json:"kubeletProfileCompliance,omitempty"`
 
+	// WorkloadKind is the kind of the workload controller that owns a Pod
+	// source (ReplicaSet, DaemonSet, StatefulSet, Job), taken from the pod's
+	// owner reference. Empty for non-Pod sources and for pods without an owner.
+	// +optional
+	WorkloadKind string `json:"workloadKind,omitempty"`
+
+	// WorkloadName is the name of the owning workload controller for a Pod
+	// source. Unlike the pod name it survives pod recreation, which makes
+	// exported test names stable across runs.
+	// +optional
+	WorkloadName string `json:"workloadName,omitempty"`
+
 	// TLSAdherence is the OpenShift APIServer TLS adherence mode
 	// (e.g. LegacyAdheringComponentsOnly, StrictAllComponents).
 	// Empty on non-OpenShift clusters or when the field is not set.
