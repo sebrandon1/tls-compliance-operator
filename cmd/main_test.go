@@ -738,6 +738,32 @@ func TestCheckConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("require-pqc without run-once warns", func(t *testing.T) {
+		cfg := validOperatorConfig()
+		cfg.requirePQC = true
+		cfg.runOnce = false
+		warnings, err := checkConfig(cfg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(warnings) != 1 || !strings.Contains(warnings[0], "--require-pqc") {
+			t.Errorf("expected one --require-pqc warning, got %v", warnings)
+		}
+	})
+
+	t.Run("require-pqc with run-once no warning", func(t *testing.T) {
+		cfg := validOperatorConfig()
+		cfg.requirePQC = true
+		cfg.runOnce = true
+		warnings, err := checkConfig(cfg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(warnings) != 0 {
+			t.Errorf("unexpected warnings: %v", warnings)
+		}
+	})
+
 	t.Run("workers proportional to rate-limit no warning", func(t *testing.T) {
 		cfg := validOperatorConfig()
 		cfg.workers = 5

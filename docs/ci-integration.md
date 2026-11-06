@@ -20,6 +20,53 @@ Both modes use the same exit code semantics:
 Infrastructure statuses like Timeout and Unreachable do not trigger exit code 1.
 This prevents transient network issues from failing your CI pipeline.
 
+### PQC-only gate
+
+`--require-pqc` changes what exit code 1 means: instead of general compliance,
+the scan fails unless every **scannable** endpoint is `PQCReady` (TLS 1.3 with
+hybrid ML-KEM key exchange). It is available on `--run-once` and as a
+persistent flag on every `kubectl tlsreport` subcommand.
+
+| Readiness | Result |
+|---|---|
+| `PQCReady` | pass |
+| `TLS13Capable` (TLS 1.3, no ML-KEM) | fail |
+| `LegacyTLS` (TLS 1.2 or older only) | fail |
+| empty / unknown readiness | fail |
+
+**Unscannable endpoints are skipped, not failed.** A report is skipped when its
+compliance status is `Timeout`, `Unreachable`, `Closed`, `Filtered`,
+`MutualTLSRequired`, `Pending`, `Unknown`, or `PlaintextHTTP`, or when its
+readiness is `NoPQC` (no TLS was detected). This mirrors upstream
+`tls-scanner`'s `SkipUnscannable` behavior, and keeps the PQC gate orthogonal to
+`--fail-on-non-compliant` — combine both flags if you want a pipeline that
+fails on either.
+
+Skipped endpoints are always counted and listed, so nothing passes silently:
+
+```bash
+kubectl tlsreport summary --require-pqc
+```
+
+```
+PQC Gate
+--------
+  Ready:      12
+  Not Ready:  2
+  Skipped:    3
+
+Not PQC-ready endpoints:
+  legacy.example.com:8443 (LegacyTLS)
+  tls13.example.com:9443 (TLS13Capable)
+```
+
+In run-once mode the gate is logged with the same counts:
+
+```bash
+bin/manager --run-once --require-pqc --output-format junit --output-file results.xml
+```
+
+
 ## Run-Once Scan Mode
 
 The `--run-once` flag tells the operator to perform a single full scan and exit
@@ -40,6 +87,7 @@ bin/manager --run-once \
 | `--output-format` | `TLS_COMPLIANCE_OUTPUT_FORMAT` | Output format: `csv`, `json`, `yaml`, `junit`, `markdown`, `html`, `sarif` |
 | `--output-file` | `TLS_COMPLIANCE_OUTPUT_FILE` | Path to write results (defaults to stdout) |
 | `--scan-all-ports` | `TLS_COMPLIANCE_SCAN_ALL_PORTS` | Scan all declared TCP container ports on pods, not just known TLS ports |
+| `--require-pqc` | `TLS_COMPLIANCE_REQUIRE_PQC` | Exit 1 unless every scannable endpoint is `PQCReady` (see [PQC-only gate](#pqc-only-gate)) |
 
 In run-once mode, leader election, health probes, and metrics serving are
 automatically disabled since they are not needed for a one-shot scan.
