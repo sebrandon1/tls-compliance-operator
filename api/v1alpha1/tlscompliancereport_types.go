@@ -152,6 +152,13 @@ type CertificateInfo struct {
 	// IPAddresses lists IP SANs on the certificate
 	// +optional
 	IPAddresses []string `json:"ipAddresses,omitempty"`
+	// Trusted reports whether the certificate chain verified against the
+	// configured --ca-cert bundle. Absent when trust verification is disabled.
+	// +optional
+	Trusted *bool `json:"trusted,omitempty"`
+	// TrustError explains why certificate chain verification failed
+	// +optional
+	TrustError string `json:"trustError,omitempty"`
 }
 
 // TLSProfileComplianceResult contains the result of checking an endpoint

@@ -19,6 +19,7 @@ package tlscheck
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -99,6 +100,11 @@ type TLSChecker struct {
 	// DetectCipherPreference probes whether a TLS 1.2 server chooses its own
 	// cipher order instead of following the client's offered order.
 	DetectCipherPreference bool
+	// TrustRoots, when non-nil, makes each successful check additionally verify
+	// the server certificate chain against these roots and record the verdict
+	// on the certificate details. Probing stays non-verifying by default: the
+	// operator reports capabilities, not trust.
+	TrustRoots *x509.CertPool
 	// starttlsOverride maps port numbers to STARTTLS protocols; used in tests
 	// to register arbitrary ports without modifying the built-in port map.
 	starttlsOverride map[int]starttlsProtocol
@@ -136,6 +142,31 @@ type versionProbeResult struct {
 	err                     error
 	cipherSuites            []string
 	serverPrefersOwnCiphers *bool
+	peerCerts               []*x509.Certificate
+}
+
+// verifyPeerChain validates the chain the server presented during one of the
+// capability probes against roots, including the hostname. The probe handshake
+// is non-verifying by design, so the decision is made here with the chain that
+// handshake already captured: no second connection is needed and no TLS
+// behavior changes.
+func verifyPeerChain(peerCerts []*x509.Certificate, roots *x509.CertPool, host string) (bool, string) {
+	if len(peerCerts) == 0 {
+		return false, "server presented no certificate"
+	}
+
+	intermediates := x509.NewCertPool()
+	for _, cert := range peerCerts[1:] {
+		intermediates.AddCert(cert)
+	}
+	if _, err := peerCerts[0].Verify(x509.VerifyOptions{
+		Roots:         roots,
+		Intermediates: intermediates,
+		DNSName:       host,
+	}); err != nil {
+		return false, err.Error()
+	}
+	return true, ""
 }
 
 // CheckEndpoint checks the TLS configuration of an endpoint.
@@ -154,7 +185,8 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 		g.Go(func() error {
 			pr := &probeResults[i]
 			pr.name = vi.name
-			pr.supported, pr.cipherID, pr.cipherSuite, pr.curveName, pr.alpnProto, pr.cert, pr.err = c.tryTLSVersion(gctx, addr, host, vi.version)
+			pr.supported, pr.cipherID, pr.cipherSuite, pr.curveName, pr.alpnProto, pr.cert, pr.peerCerts, pr.err =
+				c.tryTLSVersion(gctx, addr, host, vi.version)
 			if pr.supported && pr.err == nil && pr.cipherSuite != "" && c.EnumerateCiphers && vi.version < tls.VersionTLS13 {
 				pr.cipherSuites = c.enumerateCiphers(gctx, addr, host, vi.version, pr.cipherID)
 				if c.DetectCipherPreference && vi.version == tls.VersionTLS12 {
@@ -208,6 +240,11 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 			}
 			if pr.cert != nil && result.Certificate == nil {
 				result.Certificate = pr.cert
+				if c.TrustRoots != nil {
+					trusted, trustErr := verifyPeerChain(pr.peerCerts, c.TrustRoots, host)
+					result.Certificate.Trusted = &trusted
+					result.Certificate.TrustError = trustErr
+				}
 			}
 		} else if pr.supported && pr.err != nil {
 			anySuccess = true
@@ -320,7 +357,10 @@ func isMTLSError(err error) bool {
 }
 
 // tryTLSVersion attempts to connect with a specific TLS version
-func (c *TLSChecker) tryTLSVersion(ctx context.Context, addr, serverName string, version uint16) (supported bool, cipherSuiteID uint16, cipherSuite string, curveName string, alpnProto string, cert *CertificateDetails, err error) {
+func (c *TLSChecker) tryTLSVersion(
+	ctx context.Context, addr, serverName string, version uint16,
+) (supported bool, cipherSuiteID uint16, cipherSuite string, curveName string, alpnProto string,
+	cert *CertificateDetails, peerCerts []*x509.Certificate, err error) {
 	dialer := &tls.Dialer{
 		NetDialer: c.netDialer(ctx),
 		Config: &tls.Config{
@@ -338,14 +378,14 @@ func (c *TLSChecker) tryTLSVersion(ctx context.Context, addr, serverName string,
 	rawConn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		if isMTLSError(err) {
-			return true, 0, "", "", "", nil, err
+			return true, 0, "", "", "", nil, nil, err
 		}
-		return false, 0, "", "", "", nil, err
+		return false, 0, "", "", "", nil, nil, err
 	}
 	defer rawConn.Close()
 	conn, ok := rawConn.(*tls.Conn)
 	if !ok {
-		return false, 0, "", "", "", nil, fmt.Errorf("unexpected connection type from TLS dialer")
+		return false, 0, "", "", "", nil, nil, fmt.Errorf("unexpected connection type from TLS dialer")
 	}
 	state := conn.ConnectionState()
 	cipherSuiteName := tls.CipherSuiteName(state.CipherSuite)
@@ -362,7 +402,7 @@ func (c *TLSChecker) tryTLSVersion(ctx context.Context, addr, serverName string,
 		certDetails.ChainLength = len(state.PeerCertificates)
 	}
 
-	return true, state.CipherSuite, cipherSuiteName, curve, state.NegotiatedProtocol, certDetails, nil
+	return true, state.CipherSuite, cipherSuiteName, curve, state.NegotiatedProtocol, certDetails, state.PeerCertificates, nil
 }
 
 func (c *TLSChecker) enumerateCiphers(ctx context.Context, addr, serverName string, version, firstCipherID uint16) []string {

@@ -134,6 +134,20 @@ args:
 | `--client-cert` | `TLS_COMPLIANCE_CLIENT_CERT` | string | `""` | Path to a PEM-encoded client certificate for mTLS endpoint probing. When configured alongside `--client-key`, the operator presents this certificate during TLS handshakes. This allows probing endpoints that require mutual TLS, which would otherwise report `MutualTLSRequired`. |
 | `--client-key` | `TLS_COMPLIANCE_CLIENT_KEY` | string | `""` | Path to a PEM-encoded client private key for mTLS endpoint probing. Must be provided with `--client-cert`. |
 
+## Certificate Trust Verification
+
+TLS probing is non-verifying by default: the operator reports what an endpoint
+supports, so `InsecureSkipVerify` is intentional. Setting `--ca-cert` adds a
+second, opt-in check.
+
+| Flag | Env Var | Type | Default | Description |
+|------|---------|------|---------|-------------|
+| `--ca-cert` | `TLS_COMPLIANCE_CA_CERT` | string | `""` | Path to a PEM-encoded CA bundle. When set, every successful check re-handshakes with the endpoint and verifies the presented chain (including the hostname) against this bundle. The verdict is recorded as `status.certificateInfo.trusted` and, on failure, `status.certificateInfo.trustError`. The bundle must contain at least one PEM certificate or the manager exits at startup. |
+
+Trust verification never changes `ComplianceStatus`: an untrusted chain is
+recorded on the certificate, not treated as a TLS compliance failure. Alert on
+`trusted: "false"` in the report or via the exported reports.
+
 ## Retry Behavior
 
 | Flag | Env Var | Type | Default | Description |
