@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -54,6 +55,11 @@ func runExport(cmd *cobra.Command, args []string) error {
 	}
 
 	export.SortReports(reports, sortBy)
+
+	// Keep stdout machine-readable: the group assertion goes to stderr.
+	if err := writeGroupsGate(cmd.ErrOrStderr(), reports); err != nil {
+		return err
+	}
 
 	return writeFilteredReports(format, reports, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
@@ -96,4 +102,29 @@ func writeFilteredReports(format string, reports []securityv1alpha1.TLSComplianc
 	}
 
 	return checkExitCode(reports)
+}
+
+// evaluateGroupsGate parses the group flags and evaluates them against reports.
+func evaluateGroupsGate(reports []securityv1alpha1.TLSComplianceReport) (export.GroupsGateResult, error) {
+	groups, err := parseExpectedGroups()
+	if err != nil {
+		return export.GroupsGateResult{}, err
+	}
+	mode, err := export.ParseGroupsMode(groupsMode)
+	if err != nil {
+		return export.GroupsGateResult{}, err
+	}
+	return export.EvaluateExpectedGroups(reports, groups, mode), nil
+}
+
+// writeGroupsGate prints the --expected-groups assertion when one is configured.
+func writeGroupsGate(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) error {
+	if strings.TrimSpace(expectedGroups) == "" {
+		return nil
+	}
+	result, err := evaluateGroupsGate(reports)
+	if err != nil {
+		return err
+	}
+	return export.WriteGroupsGate(w, &result)
 }

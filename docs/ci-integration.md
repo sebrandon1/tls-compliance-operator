@@ -66,6 +66,21 @@ In run-once mode the gate is logged with the same counts:
 bin/manager --run-once --require-pqc --output-format junit --output-file results.xml
 ```
 
+### Group assertion
+
+`--expected-groups` asserts the TLS named groups an endpoint advertises. Add
+`--fail-on-group-mismatch` to turn a mismatch into exit code 1, in both
+`kubectl tlsreport` and run-once mode:
+
+```bash
+kubectl tlsreport junit --expected-groups X25519MLKEM768,X25519 --fail-on-group-mismatch > results.xml
+bin/manager --run-once --expected-groups X25519MLKEM768,X25519 --fail-on-group-mismatch
+```
+
+`--expected-groups-mode exact` requires set equality instead of a subset.
+Endpoints whose groups cannot be enumerated (no TLS, mTLS required, unreachable,
+TLS 1.2 only) are skipped and counted, not failed. See
+[kubectl tlsreport](kubectl-tlsreport.md#asserting-tls-named-groups).
 
 ## Run-Once Scan Mode
 
