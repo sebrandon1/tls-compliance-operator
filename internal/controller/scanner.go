@@ -302,6 +302,7 @@ type checkOutcome struct {
 	oldPQCReadiness     securityv1alpha1.PQCReadiness
 	forwardSecrecy      bool
 	pqcReadiness        securityv1alpha1.PQCReadiness
+	overallGrade        string
 }
 
 type noRetriesKey struct{}
@@ -563,6 +564,7 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 		oldPQCReadiness:     oldPQCReadiness,
 		forwardSecrecy:      forwardSecrecy,
 		pqcReadiness:        pqcReadiness,
+		overallGrade:        overallGrade,
 	}
 }
 

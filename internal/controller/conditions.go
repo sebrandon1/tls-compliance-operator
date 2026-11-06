@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -89,6 +90,7 @@ func (r *EndpointReconciler) recordCheckMetrics(ctx context.Context, crName, hos
 		metrics.RecordVersionSupport(host, portStr, "1.3", result.SupportsTLS13)
 		metrics.RecordForwardSecrecy(host, portStr, outcome.forwardSecrecy)
 		metrics.RecordPQCReadiness(host, portStr, outcome.pqcReadiness)
+		metrics.RecordCipherGrade(host, portStr, outcome.overallGrade)
 		if result.Certificate != nil {
 			metrics.RecordCertExpiry(host, portStr, float64(result.Certificate.DaysUntilExpiry))
 		}
@@ -145,6 +147,13 @@ func (r *EndpointReconciler) checkProfileCompliance(cr *securityv1alpha1.TLSComp
 			DisallowedCiphers: compResult.DisallowedCiphers,
 			GroupsCompliant:   compResult.GroupsCompliant,
 			DisallowedGroups:  compResult.DisallowedGroups,
+		}
+
+		if r.MetricsPerEndpoint {
+			metrics.RecordProfileCompliance(
+				cr.Spec.Host, strconv.Itoa(int(cr.Spec.Port)),
+				string(component), compResult.ProfileType, compResult.Compliant,
+			)
 		}
 
 		switch component {
