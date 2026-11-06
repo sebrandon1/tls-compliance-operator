@@ -5,22 +5,33 @@
 # Configurable via environment or Make variables:
 #   IMG              - operator image (default: quay.io/bapalm/tls-compliance-operator:latest)
 #   SCAN_NAMESPACE   - namespace for the Job (default: tls-compliance-scan)
-#   SCAN_FORMAT      - output format: csv|json|yaml|junit|markdown (default: junit)
+#   SCAN_FORMAT      - output format: csv|json|yaml|junit|markdown|html|sarif (default: junit)
 #   SCAN_FILE        - local path for results (default: results.xml)
 #   SCAN_NAMESPACES  - comma-separated namespaces to scan (default: all)
+#   EXTRA_ARGS       - additional manager flags, space separated
+#                      (e.g. "--require-pqc --expected-groups X25519MLKEM768")
+#   KEEPER_IMAGE     - sidecar image that keeps the pod alive after the scan so
+#                      the results file can be copied out. Override for
+#                      air-gapped clusters.
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 IMG="${IMG:-quay.io/bapalm/tls-compliance-operator:latest}"
 SCAN_NAMESPACE="${SCAN_NAMESPACE:-tls-compliance-scan}"
 SCAN_FORMAT="${SCAN_FORMAT:-junit}"
 SCAN_FILE="${SCAN_FILE:-results.xml}"
 SCAN_NAMESPACES="${SCAN_NAMESPACES:-}"
+EXTRA_ARGS="${EXTRA_ARGS:-}"
+KEEPER_IMAGE="${KEEPER_IMAGE:-registry.access.redhat.com/ubi9/ubi-minimal:latest}"
 KUBECTL="${KUBECTL:-kubectl}"
 
 JOB_NAME="tls-compliance-scan"
 SA_NAME="tco-scanner"
 ROLE_NAME="tco-scanner-role"
 BINDING_NAME="tco-scanner-binding"
+SCAN_TIMEOUT_SECONDS="${SCAN_TIMEOUT_SECONDS:-600}"
 
 cleanup() {
   echo "Cleaning up..."
@@ -32,66 +43,38 @@ cleanup() {
 trap cleanup EXIT
 
 echo "==> Creating namespace and RBAC..."
+# A previous run's namespace may still be terminating; creating objects in it
+# fails with "unable to create new content in namespace ... being terminated".
+if [[ "$(${KUBECTL} get namespace "${SCAN_NAMESPACE}" -o jsonpath='{.status.phase}' 2>/dev/null || true)" == "Terminating" ]]; then
+  echo "==> Waiting for namespace ${SCAN_NAMESPACE} to finish terminating..."
+  ${KUBECTL} wait --for=delete namespace/"${SCAN_NAMESPACE}" --timeout=300s 2>/dev/null || true
+fi
 ${KUBECTL} create namespace "${SCAN_NAMESPACE}" --dry-run=client -o yaml | ${KUBECTL} apply -f -
 ${KUBECTL} create serviceaccount "${SA_NAME}" -n "${SCAN_NAMESPACE}" --dry-run=client -o yaml | ${KUBECTL} apply -f -
 
-# RBAC rules match config/rbac/role.yaml — update both when changing markers.
-${KUBECTL} apply -f - <<EOF
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: ${ROLE_NAME}
-rules:
-  - apiGroups: [""]
-    resources: [events]
-    verbs: [create, patch]
-  - apiGroups: [""]
-    resources: [pods, services]
-    verbs: [get, list, watch]
-  - apiGroups: [config.openshift.io]
-    resources: [apiservers]
-    verbs: [get, list, watch]
-  - apiGroups: [discovery.k8s.io]
-    resources: [endpointslices]
-    verbs: [get, list, watch]
-  - apiGroups: [gateway.networking.k8s.io]
-    resources: [gateways, httproutes, tlsroutes]
-    verbs: [get, list, watch]
-  - apiGroups: [machineconfiguration.openshift.io]
-    resources: [kubeletconfigs]
-    verbs: [get, list, watch]
-  - apiGroups: [networking.k8s.io]
-    resources: [ingresses]
-    verbs: [get, list, watch]
-  - apiGroups: [operator.openshift.io]
-    resources: [ingresscontrollers]
-    verbs: [get, list, watch]
-  - apiGroups: [route.openshift.io]
-    resources: [routes]
-    verbs: [get, list, watch]
-  - apiGroups: [security.telco.openshift.io]
-    resources: [tlscompliancereports]
-    verbs: [create, delete, get, list, patch, update, watch]
-  - apiGroups: [security.telco.openshift.io]
-    resources: [tlscompliancereports/finalizers]
-    verbs: [update]
-  - apiGroups: [security.telco.openshift.io]
-    resources: [tlscompliancereports/status, tlscompliancetargets/status]
-    verbs: [get, patch, update]
-  - apiGroups: [security.telco.openshift.io]
-    resources: [tlscompliancetargets]
-    verbs: [get, list, watch]
-EOF
+# The operator's generated ClusterRole is the single source of truth, applied
+# under a scan-owned name so cleanup can remove it. Copying the rules by hand is
+# what let them drift before.
+sed "s/^  name: manager-role\$/  name: ${ROLE_NAME}/" "${REPO_ROOT}/config/rbac/role.yaml" |
+  ${KUBECTL} apply -f -
 
 ${KUBECTL} create clusterrolebinding "${BINDING_NAME}" \
   --clusterrole="${ROLE_NAME}" \
   --serviceaccount="${SCAN_NAMESPACE}:${SA_NAME}" \
   --dry-run=client -o yaml | ${KUBECTL} apply -f -
 
-EXTRA_ARGS=""
 if [[ -n "${SCAN_NAMESPACES}" ]]; then
-  EXTRA_ARGS="--include-namespaces=${SCAN_NAMESPACES}"
+  EXTRA_ARGS="${EXTRA_ARGS} --include-namespaces=${SCAN_NAMESPACES}"
 fi
+
+# One YAML list item per flag: a single scalar would be passed to the binary as
+# one malformed argument.
+ARGS_YAML=""
+while IFS= read -r flag; do
+  if [[ -n "${flag}" ]]; then
+    ARGS_YAML="${ARGS_YAML}            - ${flag}"$'\n'
+  fi
+done < <(printf '%s\n' --run-once "--output-format=${SCAN_FORMAT}" --output-file=/results/report ${EXTRA_ARGS})
 
 echo "==> Deploying scan Job (image: ${IMG})..."
 ${KUBECTL} apply -f - <<EOF
@@ -111,10 +94,15 @@ spec:
           image: ${IMG}
           imagePullPolicy: Always
           args:
-            - --run-once
-            - --output-format=${SCAN_FORMAT}
-            - --output-file=/results/report
-            ${EXTRA_ARGS:+- ${EXTRA_ARGS}}
+${ARGS_YAML}          volumeMounts:
+            - name: results
+              mountPath: /results
+        # Retrieving the report needs a running container, so keep the pod alive
+        # after the scan container exits; the emptyDir dies with the pod.
+        - name: keeper
+          image: ${KEEPER_IMAGE}
+          imagePullPolicy: IfNotPresent
+          command: ["sleep", "infinity"]
           volumeMounts:
             - name: results
               mountPath: /results
@@ -124,47 +112,46 @@ spec:
 EOF
 
 echo "==> Waiting for scan to complete..."
-WAIT_FAILED=false
-if ! ${KUBECTL} wait --for=condition=complete job/"${JOB_NAME}" \
-    -n "${SCAN_NAMESPACE}" --timeout=600s 2>/dev/null; then
-  WAIT_FAILED=true
+POD=""
+for _ in $(seq 1 60); do
+  POD=$(${KUBECTL} get pods -n "${SCAN_NAMESPACE}" \
+    -l job-name="${JOB_NAME}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+  [[ -n "${POD}" ]] && break
+  sleep 2
+done
+if [[ -z "${POD}" ]]; then
+  echo "ERROR: scan pod never started." >&2
+  exit 2
 fi
 
-POD=$(${KUBECTL} get pods -n "${SCAN_NAMESPACE}" \
-  -l job-name="${JOB_NAME}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-
-if [[ "${WAIT_FAILED}" == "true" ]]; then
-  FAILED=$(${KUBECTL} get job "${JOB_NAME}" -n "${SCAN_NAMESPACE}" \
-    -o jsonpath='{.status.failed}' 2>/dev/null || echo "0")
-  FAILED="${FAILED:-0}"
-  if [[ -n "${POD}" ]]; then
-    echo "==> Job logs:"
-    ${KUBECTL} logs "${POD}" -n "${SCAN_NAMESPACE}" --tail=50 2>/dev/null || true
-  fi
-  if [[ "${FAILED}" -gt 0 ]]; then
-    echo "Scan found non-compliant endpoints (exit code 1)."
-  else
-    echo "ERROR: Scan timed out or failed to start."
+EXIT_CODE=""
+DEADLINE=$((SECONDS + SCAN_TIMEOUT_SECONDS))
+while :; do
+  EXIT_CODE=$(${KUBECTL} get pod "${POD}" -n "${SCAN_NAMESPACE}" -o jsonpath='{.status.containerStatuses[?(@.name=="scanner")].state.terminated.exitCode}' 2>/dev/null || true)
+  [[ -n "${EXIT_CODE}" ]] && break
+  if (( SECONDS >= DEADLINE )); then
+    echo "ERROR: scan did not finish within ${SCAN_TIMEOUT_SECONDS}s." >&2
+    ${KUBECTL} get pod "${POD}" -n "${SCAN_NAMESPACE}" -o wide >&2 || true
     exit 2
   fi
+  sleep 5
+done
+
+# Plain `cat` rather than `kubectl cp`: cp shells out to `tar`, which minimal
+# sidecar images do not carry. Every export format is text.
+if ! ${KUBECTL} exec -n "${SCAN_NAMESPACE}" "${POD}" -c keeper -- cat /results/report > "${SCAN_FILE}"; then
+  rm -f "${SCAN_FILE}"
+  echo "ERROR: could not retrieve results from ${POD}:/results/report" >&2
+  echo "==> Job logs:"
+  ${KUBECTL} logs "${POD}" -n "${SCAN_NAMESPACE}" -c scanner --tail=50 2>/dev/null || true
+  exit 2
 fi
 
-EXIT_CODE=0
-if [[ -n "${POD}" ]]; then
-  EXIT_CODE=$(${KUBECTL} get pod "${POD}" -n "${SCAN_NAMESPACE}" \
-    -o jsonpath='{.status.containerStatuses[0].state.terminated.exitCode}' 2>/dev/null || echo "2")
-  if [[ -z "${EXIT_CODE}" ]]; then
-    echo "ERROR: Container did not terminate."
-    exit 2
-  fi
-  ${KUBECTL} cp "${SCAN_NAMESPACE}/${POD}:/results/report" "${SCAN_FILE}" 2>/dev/null || true
+if [[ "${EXIT_CODE}" != "0" ]]; then
+  echo "==> Job logs:"
+  ${KUBECTL} logs "${POD}" -n "${SCAN_NAMESPACE}" -c scanner --tail=50 2>/dev/null || true
 fi
 
-if [[ -f "${SCAN_FILE}" ]]; then
-  echo "==> Results written to ${SCAN_FILE}"
-else
-  echo "WARNING: Could not retrieve results file."
-fi
-
+echo "==> Results written to ${SCAN_FILE}"
 echo "==> Scan exit code: ${EXIT_CODE}"
 exit "${EXIT_CODE}"

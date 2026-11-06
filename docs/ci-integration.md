@@ -171,8 +171,21 @@ make deploy-run-once-scan IMG=quay.io/bapalm/tls-compliance-operator:v1.1.4 \
 | `SCAN_FORMAT` | `junit` | `csv`, `json`, `yaml`, `junit`, `markdown`, `html`, `sarif` |
 | `SCAN_FILE` | `results.xml` | Any file path |
 | `SCAN_NAMESPACES` | *(all)* | Comma-separated namespace list, passed as `--include-namespaces`. The output and exit code cover only these namespaces, even if reports from other namespaces already exist in the cluster |
-| `IMG` | `quay.io/bapalm/tls-compliance-operator:latest` | Any container image (`deploy-run-once-scan` only) |
 | `SCAN_NAMESPACE` | `tls-compliance-scan` | Namespace for the scan Job (`deploy-run-once-scan` only) |
+| `EXTRA_ARGS` | *(none)* | Additional manager flags, space separated, e.g. `"--require-pqc"` or `"--expected-groups X25519MLKEM768 --fail-on-group-mismatch"` |
+| `KEEPER_IMAGE` | `registry.access.redhat.com/ubi9/ubi-minimal:latest` | Sidecar that keeps the scan pod alive after the scan so the results file can be copied out. Override for air-gapped clusters |
+| `SCAN_TIMEOUT_SECONDS` | `600` | How long to wait for the scan to finish |
+| `IMG` | `quay.io/bapalm/tls-compliance-operator:latest` | Any container image (`deploy-run-once-scan` only) |
+
+Passing gates through the deploy script:
+
+```bash
+make deploy-run-once-scan \
+  EXTRA_ARGS="--require-pqc --expected-groups X25519MLKEM768 --fail-on-group-mismatch"
+```
+
+The script exits with the scan's own exit code, so a failing gate fails the
+pipeline, and the report is still written to `SCAN_FILE` either way.
 
 Infrastructure statuses like Timeout and Unreachable do not trigger exit
 code 1, preventing transient network issues from failing your CI pipeline.
