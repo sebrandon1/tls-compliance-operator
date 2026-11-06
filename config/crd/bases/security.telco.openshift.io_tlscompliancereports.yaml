@@ -241,6 +241,15 @@ spec:
                   subject:
                     description: Subject is the certificate subject
                     type: string
+                  trustError:
+                    description: TrustError explains why certificate chain verification
+                      failed
+                    type: string
+                  trusted:
+                    description: |-
+                      Trusted reports whether the certificate chain verified against the
+                      configured --ca-cert bundle. Absent when trust verification is disabled.
+                    type: boolean
                 type: object
               checkCount:
                 description: CheckCount is the number of TLS checks performed

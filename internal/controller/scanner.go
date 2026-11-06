@@ -542,6 +542,8 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 				SerialNumber:       result.Certificate.SerialNumber,
 				Fingerprint:        result.Certificate.Fingerprint,
 				IPAddresses:        result.Certificate.IPAddresses,
+				Trusted:            result.Certificate.Trusted,
+				TrustError:         result.Certificate.TrustError,
 			}
 		}
 

@@ -19,6 +19,7 @@ package tlscheck
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -99,6 +100,11 @@ type TLSChecker struct {
 	// DetectCipherPreference probes whether a TLS 1.2 server chooses its own
 	// cipher order instead of following the client's offered order.
 	DetectCipherPreference bool
+	// TrustRoots, when non-nil, makes each successful check additionally verify
+	// the server certificate chain against these roots and record the verdict
+	// on the certificate details. Probing stays non-verifying by default: the
+	// operator reports capabilities, not trust.
+	TrustRoots *x509.CertPool
 	// starttlsOverride maps port numbers to STARTTLS protocols; used in tests
 	// to register arbitrary ports without modifying the built-in port map.
 	starttlsOverride map[int]starttlsProtocol
@@ -136,6 +142,46 @@ type versionProbeResult struct {
 	err                     error
 	cipherSuites            []string
 	serverPrefersOwnCiphers *bool
+}
+
+// verifyTrust re-handshakes with the endpoint and validates the presented chain
+// against TrustRoots, including the hostname. The handshake itself stays
+// non-verifying so the chain is reported instead of aborting the connection;
+// x509.Verify applies the trust decision.
+func (c *TLSChecker) verifyTrust(ctx context.Context, addr, host string) (bool, string) {
+	conn, stop, err := c.dialProbe(ctx, addr)
+	if err != nil {
+		return false, err.Error()
+	}
+	defer func() { _ = conn.Close() }()
+	defer stop()
+
+	tlsConn := tls.Client(conn, &tls.Config{
+		ServerName:         host,
+		InsecureSkipVerify: true, // lgtm[go/disabled-certificate-check] — chain is verified below
+		MinVersion:         tls.VersionTLS10,
+	})
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		return false, err.Error()
+	}
+
+	state := tlsConn.ConnectionState()
+	if len(state.PeerCertificates) == 0 {
+		return false, "server presented no certificate"
+	}
+
+	intermediates := x509.NewCertPool()
+	for _, cert := range state.PeerCertificates[1:] {
+		intermediates.AddCert(cert)
+	}
+	if _, err := state.PeerCertificates[0].Verify(x509.VerifyOptions{
+		Roots:         c.TrustRoots,
+		Intermediates: intermediates,
+		DNSName:       host,
+	}); err != nil {
+		return false, err.Error()
+	}
+	return true, ""
 }
 
 // CheckEndpoint checks the TLS configuration of an endpoint.
@@ -215,6 +261,12 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 		} else if pr.err != nil {
 			lastErrors = append(lastErrors, pr.err)
 		}
+	}
+
+	if c.TrustRoots != nil && result.Certificate != nil {
+		trusted, trustErr := c.verifyTrust(ctx, addr, host)
+		result.Certificate.Trusted = &trusted
+		result.Certificate.TrustError = trustErr
 	}
 
 	if result.SupportsTLS13 && ctx.Err() == nil {
