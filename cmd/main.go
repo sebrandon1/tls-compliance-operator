@@ -107,6 +107,7 @@ type operatorConfig struct {
 	maxHistoryEntries      int
 	logFormat              string
 	runOnce                bool
+	requirePQC             bool
 	outputFormat           string
 	outputFile             string
 	shutdownDrainTimeout   time.Duration
@@ -188,6 +189,8 @@ func parseFlags() *operatorConfig {
 		"Log output format: text or json")
 	flag.BoolVar(&cfg.runOnce, "run-once", false,
 		"Perform a single scan of all endpoints and exit (0=compliant, 1=non-compliant, 2=error)")
+	flag.BoolVar(&cfg.requirePQC, "require-pqc", false,
+		"With --run-once, exit 1 unless every scannable endpoint is PQCReady (TLS 1.3 with ML-KEM); unscannable endpoints are skipped")
 	flag.StringVar(&cfg.outputFormat, "output-format", "",
 		"Write scan results in this format (csv, json, yaml, junit, markdown, html, sarif); defaults to stdout")
 	flag.StringVar(&cfg.outputFile, "output-file", "",
@@ -349,6 +352,10 @@ func checkConfig(cfg *operatorConfig) (warnings []string, _ error) {
 		if length, err := controller.ScanWindowLength(cfg.scanWindowStart, cfg.scanWindowEnd); err == nil && cfg.scanInterval > length {
 			warnings = append(warnings, fmt.Sprintf("WARNING: --scan-interval (%s) is longer than the scan window (%s); periodic scans will run once at window open via catch-up", cfg.scanInterval, length))
 		}
+	}
+
+	if cfg.requirePQC && !cfg.runOnce {
+		warnings = append(warnings, "WARNING: --require-pqc only affects the --run-once exit code; it is ignored in periodic mode")
 	}
 
 	if cfg.clientCertPath != "" && cfg.clientKeyPath == "" {
@@ -681,6 +688,17 @@ func runOnceAndExit(ctx context.Context, cancel context.CancelFunc, mgr ctrl.Man
 		setupLog.Info("non-compliant endpoints detected", "exitCode", exitCode)
 	}
 
+	if exitCode == 0 && cfg.requirePQC {
+		gate := export.EvaluatePQCGate(reports)
+		setupLog.Info("PQC gate results",
+			"ready", gate.Ready, "notReady", gate.NotReady, "skipped", gate.Skipped)
+		if !gate.Passed() {
+			exitCode = 1
+			setupLog.Info("endpoints are not PQC-ready", "exitCode", exitCode,
+				"notReady", gate.NotReadyReports)
+		}
+	}
+
 	if cfg.outputFormat != "" {
 		if err := writeRunOnceOutput(reports, cfg); err != nil {
 			setupLog.Error(err, "failed to write output")
@@ -757,6 +775,7 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_MAX_HISTORY_ENTRIES", "max-history-entries"},
 	{"TLS_COMPLIANCE_LOG_FORMAT", "log-format"},
 	{"TLS_COMPLIANCE_RUN_ONCE", "run-once"},
+	{"TLS_COMPLIANCE_REQUIRE_PQC", "require-pqc"},
 	{"TLS_COMPLIANCE_OUTPUT_FORMAT", "output-format"},
 	{"TLS_COMPLIANCE_OUTPUT_FILE", "output-file"},
 	{"TLS_COMPLIANCE_SHUTDOWN_DRAIN_TIMEOUT", "shutdown-drain-timeout"},
@@ -841,7 +860,7 @@ func validateEnvValue(flagName, value string) error {
 		if value != "text" && value != "json" {
 			return fmt.Errorf("must be text or json, got %q", value)
 		}
-	case "run-once", "scan-all-ports", "enumerate-ciphers", "detect-cipher-preference", "metrics-per-endpoint":
+	case "run-once", "require-pqc", "scan-all-ports", "enumerate-ciphers", "detect-cipher-preference", "metrics-per-endpoint":
 		if value != "true" && value != "false" && value != "1" && value != "0" {
 			return fmt.Errorf("must be true or false, got %q", value)
 		}

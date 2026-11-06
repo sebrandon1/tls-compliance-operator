@@ -89,6 +89,7 @@ var (
 	outputFormat       string
 	targetOutputFormat string
 	failOnNonCompliant bool
+	requirePQC         bool
 	rawExport          bool
 	clientBuilder      = buildClient
 )
@@ -104,6 +105,12 @@ func (e exitCodeError) Error() string {
 func checkExitCode(reports []securityv1alpha1.TLSComplianceReport) error {
 	if failOnNonCompliant && export.HasNonCompliantReports(reports) {
 		return exitCodeError{code: 1}
+	}
+	if requirePQC {
+		result := export.EvaluatePQCGate(reports)
+		if !result.Passed() {
+			return exitCodeError{code: 1}
+		}
 	}
 	return nil
 }
@@ -154,6 +161,8 @@ Use --kubeconfig and --context to target a specific cluster.`,
 	rootCmd.PersistentFlags().StringVarP(&labelSelector, "selector", "l", "", "Label selector to filter reports (e.g. host-network=true)")
 	rootCmd.PersistentFlags().BoolVar(&failOnNonCompliant, "fail-on-non-compliant", false,
 		"Exit with code 1 if any non-compliant endpoints are found (NonCompliant, NoTLS, PlaintextHTTP)")
+	rootCmd.PersistentFlags().BoolVar(&requirePQC, "require-pqc", false,
+		"Exit with code 1 unless every scannable endpoint is PQCReady (TLS 1.3 with ML-KEM); unscannable endpoints are skipped")
 	rootCmd.Flags().BoolVar(&rawExport, "raw", false, "Export full TLSComplianceReport objects instead of the flattened schema (json and yaml only)")
 
 	rootCmd.AddCommand(newSummaryCmd())

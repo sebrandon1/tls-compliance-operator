@@ -159,6 +159,7 @@ args:
 | Flag | Env Var | Type | Default | Description |
 |------|---------|------|---------|-------------|
 | `--run-once` | `TLS_COMPLIANCE_RUN_ONCE` | bool | `false` | Perform a single full scan and exit. Exit code 0 = all compliant, 1 = non-compliant found, 2 = scan error. Automatically disables leader election, metrics, and health probes. See [CI Integration Guide](ci-integration.md) for examples. |
+| `--require-pqc` | `TLS_COMPLIANCE_REQUIRE_PQC` | bool | `false` | With `--run-once`, exit 1 unless every scannable endpoint is `PQCReady` (TLS 1.3 with hybrid ML-KEM). Unscannable endpoints are skipped and counted, never silently passed. Ignored outside run-once mode. See [PQC-Only Gate](pqc-mlkem.md#pqc-only-gate). |
 | `--output-format` | `TLS_COMPLIANCE_OUTPUT_FORMAT` | string | `""` | Write scan results in this format when using `--run-once`. Supported: `csv`, `json`, `yaml`, `junit`, `markdown`, `html`, `sarif`. Results go to stdout unless `--output-file` is set. |
 | `--output-file` | `TLS_COMPLIANCE_OUTPUT_FILE` | string | `""` | Path to write scan results. Requires `--output-format`. |
 | `--shutdown-drain-timeout` | `TLS_COMPLIANCE_SHUTDOWN_DRAIN_TIMEOUT` | duration | `30s` | How long to wait for in-flight TLS checks to complete on shutdown before forcing exit. |

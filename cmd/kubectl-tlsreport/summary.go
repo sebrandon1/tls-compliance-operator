@@ -17,6 +17,8 @@ limitations under the License.
 package main
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 
 	"github.com/sebrandon1/tls-compliance-operator/pkg/export"
@@ -55,5 +57,15 @@ func runSummary(cmd *cobra.Command, _ []string) error {
 	if err := export.WriteSummary(cmd.OutOrStdout(), reports); err != nil {
 		return err
 	}
+
+	if requirePQC {
+		if _, err := fmt.Fprintln(cmd.OutOrStdout()); err != nil {
+			return err
+		}
+		if err := export.WritePQCGate(cmd.OutOrStdout(), export.EvaluatePQCGate(reports)); err != nil {
+			return err
+		}
+	}
+
 	return checkExitCode(reports)
 }

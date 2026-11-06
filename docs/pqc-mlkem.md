@@ -173,6 +173,36 @@ Sort by PQC readiness:
 kubectl tlsreport csv --sort-by pqc
 ```
 
+## PQC-Only Gate
+
+Use `--require-pqc` to make PQC readiness a pass/fail condition rather than
+just a report field. It exits 1 unless every **scannable** endpoint is
+`PQCReady`, and is available on `--run-once` and every `kubectl tlsreport`
+subcommand:
+
+```bash
+# Fail a pipeline when any scannable endpoint is not PQC-ready
+kubectl tlsreport summary --require-pqc
+
+# Same gate on a one-shot operator scan
+bin/manager --run-once --require-pqc --output-format junit --output-file results.xml
+```
+
+| Readiness | Gate result |
+|---|---|
+| `PQCReady` | pass |
+| `TLS13Capable` | fail |
+| `LegacyTLS` | fail |
+| empty / unknown | fail |
+| `NoPQC` (no TLS detected) | skipped |
+
+Endpoints are also skipped when their compliance status is `Timeout`,
+`Unreachable`, `Closed`, `Filtered`, `MutualTLSRequired`, `Pending`, `Unknown`,
+or `PlaintextHTTP`. Skipped endpoints never fail the gate, and they are always
+counted and listed in the summary so a skip is never silent — see the
+[CI integration guide](ci-integration.md#pqc-only-gate) for the full exit-code
+table and sample output.
+
 ## Summary View
 
 `kubectl tlsreport summary` includes a PQC readiness section:
