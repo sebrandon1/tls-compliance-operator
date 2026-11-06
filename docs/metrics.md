@@ -27,6 +27,7 @@ All metrics use the `tls_compliance_` prefix.
 | `tls_compliance_fips_mode_enabled` | Gauge | - | Whether the cluster is running in FIPS mode (1=yes, 0=no) |
 | `tls_compliance_worker_pool_in_use` | Gauge | - | Worker pool slots currently in use |
 | `tls_compliance_endpoints_discovered_total` | Counter | `source_kind`, `namespace` | Endpoints discovered by source kind and namespace |
+| `tls_compliance_notifications_total` | Counter | `result` | Webhook delivery attempts by result (`success`, `error`) |
 
 
 Per-endpoint series (`tls_compliance_certificate_expiry_days`, `tls_compliance_version_support`, `tls_compliance_forward_secrecy`, `tls_compliance_pqc_readiness`) are emitted only when `--metrics-per-endpoint=true`. That flag defaults to `false` because host/port labels create high cardinality on large clusters. Aggregate metrics such as `tls_compliance_endpoints_total` are always emitted.

@@ -30,6 +30,11 @@ const (
 	ResultSuccess    = "success"
 	ResultError      = "error"
 	ErrorTypeProcess = "process"
+
+	// NotificationSuccess marks a webhook delivery the receiver accepted.
+	NotificationSuccess = "success"
+	// NotificationError marks a webhook delivery that failed or was rejected.
+	NotificationError = "error"
 )
 
 var (
@@ -253,6 +258,16 @@ var (
 			Help:      "Total number of TLS checks skipped because the endpoint circuit breaker is open",
 		},
 	)
+
+	// NotificationsTotal tracks webhook deliveries by outcome
+	NotificationsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: MetricsNamespace,
+			Name:      "notifications_total",
+			Help:      "Total number of notification webhook deliveries by result",
+		},
+		[]string{"result"},
+	)
 )
 
 func init() {
@@ -280,6 +295,7 @@ func init() {
 		ReconcileByResourceTotal,
 		CheckErrorsTotal,
 		CircuitOpenSkippedTotal,
+		NotificationsTotal,
 	)
 }
 
@@ -445,4 +461,9 @@ func RecordCheckError(reason string) {
 // RecordCircuitOpenSkipped records a TLS check skipped because the circuit is open
 func RecordCircuitOpenSkipped() {
 	CircuitOpenSkippedTotal.Inc()
+}
+
+// RecordNotification records a webhook delivery outcome.
+func RecordNotification(result string) {
+	NotificationsTotal.WithLabelValues(result).Inc()
 }
