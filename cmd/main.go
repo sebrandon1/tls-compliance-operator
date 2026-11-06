@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -49,6 +50,7 @@ import (
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 	"github.com/sebrandon1/tls-compliance-operator/internal/controller"
 	"github.com/sebrandon1/tls-compliance-operator/internal/metrics"
+	"github.com/sebrandon1/tls-compliance-operator/internal/notify"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/endpoint"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/export"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/fips"
@@ -102,6 +104,9 @@ type operatorConfig struct {
 	clientCertPath         string
 	clientKeyPath          string
 	caCertPath             string
+	notifyWebhooks         stringList
+	notifyTimeout          time.Duration
+	notifyRetries          int
 	enumerateCiphers       bool
 	detectCipherPreference bool
 	namespaceRateLimitsStr string
@@ -122,6 +127,21 @@ type operatorConfig struct {
 	scanWindowTimezone     string
 
 	zapOpts zap.Options
+}
+
+// stringList collects a repeatable string flag. Values containing commas are
+// split so a single env var can configure several entries at once.
+type stringList []string
+
+func (s *stringList) String() string { return strings.Join(*s, ",") }
+
+func (s *stringList) Set(value string) error {
+	for _, part := range strings.Split(value, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			*s = append(*s, part)
+		}
+	}
+	return nil
 }
 
 func parseFlags() *operatorConfig {
@@ -184,6 +204,12 @@ func parseFlags() *operatorConfig {
 	flag.StringVar(&cfg.caCertPath, "ca-cert", "",
 		"Path to a PEM-encoded CA bundle. When set, each checked endpoint's certificate chain "+
 			"is also verified against this bundle and the result recorded on the report")
+	flag.Var(&cfg.notifyWebhooks, "notify-webhook",
+		"Webhook URL to POST compliance status changes to (repeatable; comma-separated values on one flag are accepted)")
+	flag.DurationVar(&cfg.notifyTimeout, "notify-timeout", 5*time.Second,
+		"Timeout for a single webhook delivery attempt")
+	flag.IntVar(&cfg.notifyRetries, "notify-retries", 2,
+		"Extra webhook delivery attempts after a failure (0-10)")
 	flag.BoolVar(&cfg.enumerateCiphers, "enumerate-ciphers", true,
 		"Enumerate all supported cipher suites per TLS version (disable for faster scans)")
 	flag.BoolVar(&cfg.detectCipherPreference, "detect-cipher-preference", false,
@@ -245,6 +271,22 @@ func parseFlags() *operatorConfig {
 }
 
 func validateConfig(cfg *operatorConfig) {
+	for _, raw := range cfg.notifyWebhooks {
+		parsed, err := url.Parse(raw)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			setupLog.Error(nil, "invalid --notify-webhook URL: must be an absolute http(s) URL", "url", raw)
+			os.Exit(1)
+		}
+	}
+	if cfg.notifyTimeout <= 0 {
+		setupLog.Error(nil, "--notify-timeout must be greater than zero")
+		os.Exit(1)
+	}
+	if cfg.notifyRetries < 0 || cfg.notifyRetries > 10 {
+		setupLog.Error(nil, "--notify-retries must be between 0 and 10")
+		os.Exit(1)
+	}
+
 	if cfg.extraTLSPortsStr != "" {
 		ports, err := parsePortList(cfg.extraTLSPortsStr)
 		if err != nil {
@@ -604,12 +646,20 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 		setupLog.Info("per-namespace rate limits configured", "namespaces", cfg.namespaceRateLimitsStr)
 	}
 
+	var notifier *notify.Notifier
+	if len(cfg.notifyWebhooks) > 0 {
+		notifier = notify.NewNotifier(cfg.notifyWebhooks, cfg.notifyTimeout, cfg.notifyRetries)
+		setupLog.Info("compliance webhook notifications enabled",
+			"webhooks", len(cfg.notifyWebhooks), "timeout", cfg.notifyTimeout, "retries", cfg.notifyRetries)
+	}
+
 	endpointReconciler := &controller.EndpointReconciler{
 		Client:                mgr.GetClient(),
 		APIReader:             mgr.GetAPIReader(),
 		Scheme:                mgr.GetScheme(),
 		TLSChecker:            checker,
 		Recorder:              mgr.GetEventRecorder("tls-compliance-controller"),
+		Notifier:              notifier,
 		IncludeNamespaces:     includedNS,
 		ExcludeNamespaces:     excludedNS,
 		CertExpiryDays:        cfg.certExpiryWarningDays,
@@ -855,6 +905,9 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_CLIENT_CERT", "client-cert"},
 	{"TLS_COMPLIANCE_CLIENT_KEY", "client-key"},
 	{"TLS_COMPLIANCE_CA_CERT", "ca-cert"},
+	{"TLS_COMPLIANCE_NOTIFY_WEBHOOK", "notify-webhook"},
+	{"TLS_COMPLIANCE_NOTIFY_TIMEOUT", "notify-timeout"},
+	{"TLS_COMPLIANCE_NOTIFY_RETRIES", "notify-retries"},
 	{"TLS_COMPLIANCE_REPORT_RETENTION_DAYS", "report-retention-days"},
 	{"TLS_COMPLIANCE_MAX_HISTORY_ENTRIES", "max-history-entries"},
 	{"TLS_COMPLIANCE_LOG_FORMAT", "log-format"},
@@ -919,7 +972,7 @@ func resolveEnvConfig(fs *flag.FlagSet, lookupEnv func(string) (string, bool)) [
 // validateEnvValue performs type-appropriate validation for known flag types.
 func validateEnvValue(flagName, value string) error {
 	switch flagName {
-	case "scan-interval", "cleanup-interval", "tls-check-timeout", "profile-refresh-interval", "retry-backoff", "max-backoff":
+	case "scan-interval", "cleanup-interval", "tls-check-timeout", "profile-refresh-interval", "retry-backoff", "max-backoff", "notify-timeout":
 		if _, err := time.ParseDuration(value); err != nil {
 			return fmt.Errorf("invalid duration: %w", err)
 		}
@@ -937,7 +990,7 @@ func validateEnvValue(flagName, value string) error {
 		return validateIntRange(value, 1, 365)
 	case "workers":
 		return validateIntRange(value, 1, 50)
-	case "max-retries":
+	case "max-retries", "notify-retries":
 		return validateIntRange(value, 0, 10)
 	case "extra-tls-ports":
 		_, err := parsePortList(value)

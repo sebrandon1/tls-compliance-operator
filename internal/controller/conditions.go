@@ -31,6 +31,7 @@ import (
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 	"github.com/sebrandon1/tls-compliance-operator/internal/metrics"
+	"github.com/sebrandon1/tls-compliance-operator/internal/notify"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlscheck"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlsprofile"
 )
@@ -99,7 +100,52 @@ func (r *EndpointReconciler) recordCheckMetrics(ctx context.Context, crName, hos
 	var cr securityv1alpha1.TLSComplianceReport
 	if err := r.Get(ctx, client.ObjectKey{Name: crName}, &cr); err == nil {
 		r.emitComplianceEvents(&cr, outcome.oldComplianceStatus, outcome.oldPQCReadiness, result)
+		r.notifyStatusChange(ctx, &cr, outcome.oldComplianceStatus, outcome.oldPQCReadiness)
 	}
+}
+
+// complianceStatusChanged reports whether a compliance transition is
+// notification-worthy. The first measurement of an endpoint (empty or Pending
+// old status) is not a change.
+func complianceStatusChanged(oldStatus, newStatus securityv1alpha1.ComplianceStatus) bool {
+	return oldStatus != "" && oldStatus != securityv1alpha1.ComplianceStatusPending && oldStatus != newStatus
+}
+
+// pqcReadinessChanged reports whether a post-quantum readiness transition
+// happened, ignoring the first measurement.
+func pqcReadinessChanged(oldReadiness, newReadiness securityv1alpha1.PQCReadiness) bool {
+	return oldReadiness != "" && oldReadiness != newReadiness
+}
+
+// notifyStatusChange posts status transitions to the configured webhooks.
+// Delivery runs off the reconcile path so a slow or unavailable receiver never
+// holds a worker or fails a scan.
+func (r *EndpointReconciler) notifyStatusChange(
+	ctx context.Context, cr *securityv1alpha1.TLSComplianceReport,
+	oldStatus securityv1alpha1.ComplianceStatus, oldPQCReadiness securityv1alpha1.PQCReadiness,
+) {
+	if r.Notifier == nil {
+		return
+	}
+	if !complianceStatusChanged(oldStatus, cr.Status.ComplianceStatus) &&
+		!pqcReadinessChanged(oldPQCReadiness, cr.Status.PQCReadiness) {
+		return
+	}
+
+	event := notify.Event{
+		ReportName: cr.Name,
+		Namespace:  cr.Namespace,
+		Host:       cr.Spec.Host,
+		Port:       cr.Spec.Port,
+		OldStatus:  string(oldStatus),
+		NewStatus:  string(cr.Status.ComplianceStatus),
+		OldPQC:     string(oldPQCReadiness),
+		NewPQC:     string(cr.Status.PQCReadiness),
+		Timestamp:  time.Now().UTC(),
+	}
+
+	logger := log.FromContext(ctx).WithName("notify")
+	go r.Notifier.Deliver(context.WithoutCancel(ctx), logger, &event)
 }
 
 // updateRetryStatus updates the CR with intermediate retry status information
@@ -305,13 +351,12 @@ func (r *EndpointReconciler) emitComplianceEvents(cr *securityv1alpha1.TLSCompli
 			"Endpoint %s only supports legacy TLS versions (no TLS 1.2 or 1.3)", hostPort(cr.Spec.Host, cr.Spec.Port))
 	}
 
-	if oldStatus != "" && oldStatus != cr.Status.ComplianceStatus &&
-		oldStatus != securityv1alpha1.ComplianceStatusPending {
+	if complianceStatusChanged(oldStatus, cr.Status.ComplianceStatus) {
 		r.Recorder.Eventf(cr, nil, corev1.EventTypeWarning, EventReasonComplianceChanged, EventActionScan,
 			"Compliance status changed from %s to %s for %s", oldStatus, cr.Status.ComplianceStatus, hostPort(cr.Spec.Host, cr.Spec.Port))
 	}
 
-	if oldPQCReadiness != "" && oldPQCReadiness != cr.Status.PQCReadiness {
+	if pqcReadinessChanged(oldPQCReadiness, cr.Status.PQCReadiness) {
 		if cr.Status.PQCReadiness == securityv1alpha1.PQCReadinessPQCReady {
 			r.Recorder.Eventf(cr, nil, corev1.EventTypeNormal, EventReasonPQCReady, EventActionScan,
 				"Endpoint %s is now post-quantum ready (TLS 1.3 + hybrid ML-KEM)", hostPort(cr.Spec.Host, cr.Spec.Port))

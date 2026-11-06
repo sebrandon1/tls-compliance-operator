@@ -18,8 +18,11 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,6 +46,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	"github.com/sebrandon1/tls-compliance-operator/internal/notify"
 
 	dto "github.com/prometheus/client_model/go"
 
@@ -6142,4 +6147,75 @@ func TestCleanupLoop_NilElectedStartsImmediately(t *testing.T) {
 	// A nil channel means "no leader election to wait for" (single replica).
 	reconciler.StartCleanupLoop(ctx, 20*time.Millisecond, nil)
 	waitForReportDeletion(t, fakeClient, "orphaned-cr")
+}
+
+func TestNotifyStatusChange(t *testing.T) {
+	received := make(chan notify.Event, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var event notify.Event
+		if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
+			t.Errorf("invalid webhook payload: %v", err)
+		}
+		received <- event
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	r := &EndpointReconciler{
+		Notifier: notify.NewNotifier([]string{server.URL}, 2*time.Second, 0),
+	}
+	cr := &securityv1alpha1.TLSComplianceReport{
+		ObjectMeta: metav1.ObjectMeta{Name: "web-443-abcd1234", Namespace: "prod"},
+		Spec: securityv1alpha1.TLSComplianceReportSpec{
+			Host: "web.example.com",
+			Port: 443,
+		},
+		Status: securityv1alpha1.TLSComplianceReportStatus{
+			ComplianceStatus: securityv1alpha1.ComplianceStatusNonCompliant,
+		},
+	}
+
+	// The first measurement of an endpoint is not a transition.
+	r.notifyStatusChange(context.Background(), cr, "", "")
+	select {
+	case event := <-received:
+		t.Fatalf("unexpected webhook for an initial measurement: %+v", event)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// A Pending old status is also an initial measurement.
+	r.notifyStatusChange(context.Background(), cr, securityv1alpha1.ComplianceStatusPending, "")
+	select {
+	case event := <-received:
+		t.Fatalf("unexpected webhook for the Pending -> measured transition: %+v", event)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	r.notifyStatusChange(context.Background(), cr, securityv1alpha1.ComplianceStatusCompliant, "")
+
+	select {
+	case event := <-received:
+		if event.ReportName != "web-443-abcd1234" || event.Namespace != "prod" {
+			t.Errorf("unexpected event identity: %+v", event)
+		}
+		if event.OldStatus != "Compliant" || event.NewStatus != "NonCompliant" {
+			t.Errorf("unexpected transition: %+v", event)
+		}
+		if event.Host != "web.example.com" || event.Port != 443 {
+			t.Errorf("unexpected endpoint: %+v", event)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected a webhook for the compliance transition")
+	}
+}
+
+func TestNotifyStatusChange_NoNotifierIsNoop(t *testing.T) {
+	r := &EndpointReconciler{}
+	cr := &securityv1alpha1.TLSComplianceReport{
+		Status: securityv1alpha1.TLSComplianceReportStatus{
+			ComplianceStatus: securityv1alpha1.ComplianceStatusNonCompliant,
+		},
+	}
+	// Must not panic without a configured notifier.
+	r.notifyStatusChange(context.Background(), cr, securityv1alpha1.ComplianceStatusCompliant, "")
 }

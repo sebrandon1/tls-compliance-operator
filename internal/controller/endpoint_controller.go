@@ -51,6 +51,7 @@ import (
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 	"github.com/sebrandon1/tls-compliance-operator/internal/metrics"
+	"github.com/sebrandon1/tls-compliance-operator/internal/notify"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/endpoint"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/hostvalidation"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlscheck"
@@ -95,6 +96,7 @@ type EndpointReconciler struct {
 	Scheme                *runtime.Scheme
 	TLSChecker            tlscheck.Checker
 	Recorder              events.EventRecorder
+	Notifier              *notify.Notifier
 	IncludeNamespaces     map[string]bool
 	ExcludeNamespaces     map[string]bool
 	CertExpiryDays        int
