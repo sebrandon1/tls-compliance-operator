@@ -17,6 +17,8 @@ limitations under the License.
 package metrics
 
 import (
+	"slices"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
@@ -31,6 +33,10 @@ const (
 	ResultError      = "error"
 	ErrorTypeProcess = "process"
 )
+
+// cipherGrades is the fixed cipher grade scale. Only these values are ever
+// published, so a malformed grade cannot create an unbounded label set.
+var cipherGrades = []string{"A", "B", "C", "D", "F"}
 
 var (
 	// EndpointsTotal tracks total endpoints by compliance status
@@ -91,6 +97,28 @@ var (
 			Help:      "Post-quantum cryptography readiness (1=current status, 0=not)",
 		},
 		[]string{"host", "port", "readiness"},
+	)
+
+	// ProfileCompliance tracks whether an endpoint complies with the TLS
+	// security profile configured for a component (1=compliant, 0=not).
+	ProfileCompliance = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: MetricsNamespace,
+			Name:      "profile_compliant",
+			Help:      "Whether the endpoint complies with the component's TLS security profile (1=compliant, 0=not)",
+		},
+		[]string{"host", "port", "component", "profile"},
+	)
+
+	// CipherGrade tracks the worst cipher grade seen for an endpoint. Exactly
+	// one grade in the fixed scale is 1; the rest are 0.
+	CipherGrade = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: MetricsNamespace,
+			Name:      "cipher_grade",
+			Help:      "Worst cipher suite grade for the endpoint (1=current grade)",
+		},
+		[]string{"host", "port", "grade"},
 	)
 
 	// ReconcileTotal tracks reconciliation attempts
@@ -263,6 +291,8 @@ func init() {
 		VersionSupport,
 		ForwardSecrecy,
 		PQCReadiness,
+		ProfileCompliance,
+		CipherGrade,
 		ReconcileTotal,
 		ScanCycleDurationSeconds,
 		ScanCycleErrorsTotal,
@@ -333,6 +363,35 @@ func RecordPQCReadiness(host, port string, readiness securityv1alpha1.PQCReadine
 	}
 }
 
+// RecordProfileCompliance records whether an endpoint complies with the TLS
+// security profile in force for a component.
+func RecordProfileCompliance(host, port, component, profile string, compliant bool) {
+	val := float64(0)
+	if compliant {
+		val = 1
+	}
+	ProfileCompliance.WithLabelValues(host, port, component, profile).Set(val)
+}
+
+// RecordCipherGrade records the endpoint's worst cipher grade, setting that
+// grade to 1 and every other grade in the scale to 0. An unknown or empty
+// grade publishes no series, and any previously published grade is cleared.
+func RecordCipherGrade(host, port, grade string) {
+	labels := prometheus.Labels{"host": host, "port": port}
+	if !slices.Contains(cipherGrades, grade) {
+		CipherGrade.DeletePartialMatch(labels)
+		return
+	}
+
+	for _, known := range cipherGrades {
+		val := float64(0)
+		if known == grade {
+			val = 1
+		}
+		CipherGrade.WithLabelValues(host, port, known).Set(val)
+	}
+}
+
 // RecordScanCycleDuration records the duration of a full scan cycle
 func RecordScanCycleDuration(durationSeconds float64) {
 	ScanCycleDurationSeconds.Observe(durationSeconds)
@@ -379,6 +438,11 @@ func DeleteEndpointMetrics(host, port string) {
 	for _, level := range []string{"PQCReady", "TLS13Capable", "LegacyTLS", "NoPQC"} {
 		PQCReadiness.DeleteLabelValues(host, port, level)
 	}
+	// The profile label varies with the cluster's configured profile, so match
+	// on host and port rather than enumerating label values.
+	labels := prometheus.Labels{"host": host, "port": port}
+	ProfileCompliance.DeletePartialMatch(labels)
+	CipherGrade.DeletePartialMatch(labels)
 }
 
 // RecordReportTTLDeleted records a report deleted by the retention policy
