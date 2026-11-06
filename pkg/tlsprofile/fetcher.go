@@ -15,9 +15,22 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+// Sources recorded in report status to explain why a profile was chosen.
+const (
+	// SourceCluster means the profile was read from the cluster's OpenShift config.
+	SourceCluster = "Cluster"
+	// SourceOverride means the profile was forced with --tls-profile-type.
+	SourceOverride = "Override"
+)
+
 // Fetcher retrieves and caches OpenShift TLS security profiles from the cluster.
 type Fetcher struct {
 	client client.Client
+
+	// static is set by NewStaticFetcher: the profiles are fixed, the cluster is
+	// never read, and the refresh loop must stay inert.
+	static bool
+	source string
 
 	mu        sync.RWMutex
 	profiles  map[Component]Profile
@@ -28,8 +41,39 @@ type Fetcher struct {
 func NewFetcher(c client.Client) *Fetcher {
 	return &Fetcher{
 		client:   c,
+		source:   SourceCluster,
 		profiles: make(map[Component]Profile),
 	}
+}
+
+// NewStaticFetcher builds a Fetcher that applies one built-in profile to every
+// component and never reads the cluster. This is the --tls-profile-type path:
+// on HyperShift the hosted control plane's APIServer CR is not visible to the
+// workload cluster, so reading it would silently fall back to Intermediate.
+func NewStaticFetcher(profileType ProfileType) (*Fetcher, error) {
+	if err := ValidateProfileType(string(profileType)); err != nil {
+		return nil, err
+	}
+	profile := PredefinedProfiles[profileType]
+
+	return &Fetcher{
+		static: true,
+		source: SourceOverride,
+		profiles: map[Component]Profile{
+			ComponentAPIServer:         profile,
+			ComponentIngressController: profile,
+			ComponentKubeletConfig:     profile,
+		},
+	}, nil
+}
+
+// GetSource reports where the active profile came from: SourceOverride when
+// --tls-profile-type is set, SourceCluster otherwise.
+func (f *Fetcher) GetSource() string {
+	if f.source == "" {
+		return SourceCluster
+	}
+	return f.source
 }
 
 // GetProfile returns the cached profile for the given component.
@@ -58,6 +102,10 @@ func (f *Fetcher) GetAllProfiles() map[Component]Profile {
 // A component whose fetch fails keeps its last successfully fetched profile; only a
 // component that has never been fetched successfully falls back to the default.
 func (f *Fetcher) RefreshAll(ctx context.Context) {
+	if f.static {
+		return
+	}
+
 	logger := log.FromContext(ctx).WithName("tlsprofile-fetcher")
 
 	var failures atomic.Int32
@@ -140,6 +188,10 @@ func (f *Fetcher) hasCachedProfile(component Component) bool {
 // (see RefreshAll); this loop only re-fetches on each tick so it cannot race
 // the start of scanning.
 func (f *Fetcher) StartPeriodicRefresh(ctx context.Context, interval time.Duration) {
+	if f.static {
+		return
+	}
+
 	go func() {
 		logger := log.FromContext(ctx).WithName("tlsprofile-refresh")
 		ticker := time.NewTicker(interval)

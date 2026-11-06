@@ -372,6 +372,13 @@ type TLSComplianceReportStatus struct {
 	// +optional
 	TLSAdherence string `json:"tlsAdherence,omitempty"`
 
+	// TLSProfileSource records where the TLS security profile used for this
+	// endpoint came from: "Cluster" when read from OpenShift config, or
+	// "Override" when forced with --tls-profile-type. Empty when no profile
+	// was applied.
+	// +optional
+	TLSProfileSource string `json:"tlsProfileSource,omitempty"`
+
 	// Conditions represent the current state of the TLSComplianceReport resource
 	// +listType=map
 	// +listMapKey=type

@@ -547,6 +547,7 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 
 		if r.ProfileFetcher != nil {
 			cr.Status.TLSAdherence = r.ProfileFetcher.GetAdherence()
+			cr.Status.TLSProfileSource = r.ProfileFetcher.GetSource()
 		}
 		r.checkProfileCompliance(cr, result)
 		cr.Status.ComplianceStatus = complianceStatus

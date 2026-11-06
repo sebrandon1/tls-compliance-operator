@@ -147,6 +147,32 @@ args:
 | Flag | Env Var | Type | Default | Description |
 |------|---------|------|---------|-------------|
 | `--profile-refresh-interval` | `TLS_COMPLIANCE_PROFILE_REFRESH_INTERVAL` | duration | `5m` | How often to re-fetch OpenShift TLS security profile configuration (APIServer, IngressController, KubeletConfig). Only used when running on OpenShift. Ignored on vanilla Kubernetes. Must be greater than `0`; zero or negative values are rejected at startup. |
+| `--tls-profile-type` | `TLS_COMPLIANCE_TLS_PROFILE_TYPE` | string | `""` | Force a built-in TLS security profile (`Old`, `Intermediate`, `Modern`) for every component and skip reading OpenShift config. Fails fast on any other value. See [HyperShift](#hypershift). |
+
+### HyperShift
+
+On HyperShift, the hosted control plane's `APIServer` CR lives in the management
+cluster's namespace, not in the guest cluster's API, so the operator cannot read
+the real profile. Without an override it detects no `config.openshift.io` API and
+skips profile compliance entirely.
+
+Set `--tls-profile-type` to the profile the hosted control plane actually uses:
+
+```yaml
+args:
+  - --tls-profile-type=Intermediate
+```
+
+The named built-in profile is applied to the APIServer, IngressController, and
+KubeletConfig components alike. No cluster reads or refresh loop are started,
+and the selected source is recorded on every report:
+
+```bash
+kubectl get tlscompliancereports -o jsonpath='{.items[0].status.tlsProfileSource}'
+# Override
+```
+
+`kubectl tlsreport summary` shows the same value as `Profile Source:`.
 
 ## Logging
 

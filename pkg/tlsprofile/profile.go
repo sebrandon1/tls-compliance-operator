@@ -1,6 +1,8 @@
 package tlsprofile
 
 import (
+	"fmt"
+
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlscheck"
 )
 
@@ -148,6 +150,18 @@ var PredefinedProfiles = map[ProfileType]Profile{
 // DefaultProfile returns the default TLS security profile (Intermediate).
 func DefaultProfile() Profile {
 	return PredefinedProfiles[ProfileTypeIntermediate]
+}
+
+// ValidateProfileType returns an error unless value is one of the built-in
+// profile types that can be forced with --tls-profile-type.
+func ValidateProfileType(value string) error {
+	profileType := ProfileType(value)
+	switch profileType {
+	case ProfileTypeOld, ProfileTypeIntermediate, ProfileTypeModern:
+		return nil
+	default:
+		return fmt.Errorf("unsupported TLS profile type %q: must be one of Old, Intermediate, Modern", value)
+	}
 }
 
 // CheckCompliance checks whether an endpoint's TLS check results comply with
