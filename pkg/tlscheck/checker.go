@@ -105,6 +105,9 @@ type TLSChecker struct {
 	// on the certificate details. Probing stays non-verifying by default: the
 	// operator reports capabilities, not trust.
 	TrustRoots *x509.CertPool
+	// STARTTLSPorts overrides the built-in STARTTLS port map, keyed by port
+	// and valued by protocol name (see ParseSTARTTLSPorts).
+	STARTTLSPorts map[int]string
 	// starttlsOverride maps port numbers to STARTTLS protocols; used in tests
 	// to register arbitrary ports without modifying the built-in port map.
 	starttlsOverride map[int]starttlsProtocol

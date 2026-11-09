@@ -415,8 +415,8 @@ spec:
 		deployTestServer := func(name string, port int, env map[string]string) {
 			manifest := renderManifest("testserver-pod.yaml", struct {
 				Name, Namespace, Image string
-				Port                  int
-				Env                   map[string]string
+				Port                   int
+				Env                    map[string]string
 			}{name, testNS, testServerImage, port, env})
 			kubectlApplyManifest(manifest, "test server pod "+name)
 		}
@@ -464,6 +464,36 @@ spec:
 			waitForReportWithStatus(name, 8443, "Compliant")
 		})
 
+		It("should report Compliant for a MySQL STARTTLS endpoint", func() {
+			name := "test-starttls-mysql"
+			deployTestServer(name, 3306, map[string]string{
+				"TLS_MIN_VERSION": "1.2", "TLS_MAX_VERSION": "1.3",
+				"LISTEN_PORT": "3306", "STARTTLS_PROTOCOL": "mysql",
+			})
+			createTestService(name, 3306)
+			waitForPodRunning(name)
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "pod,svc", name, "-n", testNS, "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+			waitForReportWithStatus(name, 3306, "Compliant")
+		})
+
+		It("should report Compliant for a Sieve STARTTLS endpoint", func() {
+			name := "test-starttls-sieve"
+			deployTestServer(name, 4190, map[string]string{
+				"TLS_MIN_VERSION": "1.2", "TLS_MAX_VERSION": "1.3",
+				"LISTEN_PORT": "4190", "STARTTLS_PROTOCOL": "sieve",
+			})
+			createTestService(name, 4190)
+			waitForPodRunning(name)
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "pod,svc", name, "-n", testNS, "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+			waitForReportWithStatus(name, 4190, "Compliant")
+		})
+
 		It("should create report for mTLS endpoint", func() {
 			name := "test-mtls"
 			deployTestServer(name, 8443, map[string]string{"MTLS_REQUIRED": "true"})
@@ -478,7 +508,7 @@ spec:
 					"-o", "jsonpath={range .items[*]}{.spec.host},{.spec.port}{\"\\n\"}{end}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(ContainSubstring(name+"."+testNS+",8443"))
+				g.Expect(output).To(ContainSubstring(name + "." + testNS + ",8443"))
 			}).WithTimeout(5 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
 		})
 
@@ -497,7 +527,7 @@ spec:
 					"-o", "jsonpath={range .items[*]}{.spec.host},{.status.certificateInfo.daysUntilExpiry}{\"\\n\"}{end}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(ContainSubstring(name+"."+testNS+",0"))
+				g.Expect(output).To(ContainSubstring(name + "." + testNS + ",0"))
 			}).WithTimeout(5 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
 
 			Eventually(func(g Gomega) {
@@ -535,8 +565,8 @@ spec:
 		deployTestServer := func(name string, port int, env map[string]string) {
 			manifest := renderManifest("testserver-pod.yaml", struct {
 				Name, Namespace, Image string
-				Port                  int
-				Env                   map[string]string
+				Port                   int
+				Env                    map[string]string
 			}{name, testNS, testServerImage, port, env})
 			kubectlApplyManifest(manifest, "test server pod "+name)
 		}
@@ -807,8 +837,8 @@ spec:
 		deployTestServer := func(name string, port int, env map[string]string) {
 			manifest := renderManifest("testserver-pod.yaml", struct {
 				Name, Namespace, Image string
-				Port                  int
-				Env                   map[string]string
+				Port                   int
+				Env                    map[string]string
 			}{name, testNS, testServerImage, port, env})
 			kubectlApplyManifest(manifest, "test server pod "+name)
 		}
@@ -1261,8 +1291,8 @@ spec:
 			By("serving TLS behind a Service and an Ingress with the same host")
 			kubectlApplyManifest(renderManifest("testserver-pod.yaml", struct {
 				Name, Namespace, Image string
-				Port                  int
-				Env                   map[string]string
+				Port                   int
+				Env                    map[string]string
 			}{sharedSvc, dropNS, testServerImage, 8443, nil}), "test server pod "+sharedSvc)
 			kubectlApplyManifest(fmt.Sprintf(`apiVersion: v1
 kind: Service
