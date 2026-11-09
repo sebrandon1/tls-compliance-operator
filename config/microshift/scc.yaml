@@ -1,0 +1,35 @@
+# OpenShift/MicroShift deny hostNetwork, hostPID and hostPorts under the default
+# restricted SCCs. This SCC grants exactly those three and nothing else. Bind it
+# to the operator's service account (see scc-binding.yaml) before deploying the
+# overlay.
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: tls-compliance-operator-hostscan
+allowHostNetwork: true
+allowHostPID: true
+allowHostPorts: true
+allowHostDirVolumePlugin: false
+allowPrivilegedContainer: false
+allowedCapabilities: []
+defaultAddCapabilities: []
+fsGroup:
+  type: RunAsAny
+readOnlyRootFilesystem: false
+requiredDropCapabilities: []
+runAsUser:
+  type: RunAsAny
+seLinuxContext:
+  type: RunAsAny
+seccompProfiles:
+  - runtime/default
+supplementalGroups:
+  type: RunAsAny
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - projected
+  - secret
+users: []
+groups: []

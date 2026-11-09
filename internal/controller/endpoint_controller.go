@@ -115,7 +115,7 @@ type EndpointReconciler struct {
 	DiscoverListeningPorts bool
 	// ProcNetReader execs into pods to read /proc/net/tcp{,6}; required when
 	// DiscoverListeningPorts is set.
-	ProcNetReader         endpoint.ProcNetReader
+	ProcNetReader endpoint.ProcNetReader
 	// Policy maps endpoints to the component profile used for adherence and
 	// marks exempt endpoints. Nil means every profile is evaluated as before.
 	Policy                *policy.Policy
@@ -140,7 +140,12 @@ type EndpointReconciler struct {
 	DryRun bool
 	// DryRunWriter receives one line per discovered endpoint. Defaults to
 	// stdout when nil.
-	DryRunWriter    io.Writer
+	DryRunWriter io.Writer
+	// HostScanPorts, when non-nil, enables host-mode scanning of the node's
+	// own listeners in this port range (see --scan-host-ports).
+	HostScanPorts *endpoint.PortRange
+	// ProcNetDir overrides the socket-table directory; tests only.
+	ProcNetDir      string
 	InitialScanDone atomic.Bool
 	ManagerCtx      context.Context
 	checkTimeout    time.Duration

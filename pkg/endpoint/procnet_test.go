@@ -64,3 +64,45 @@ func TestProcNetLocalPort_RejectsZeroAndGarbage(t *testing.T) {
 		}
 	}
 }
+
+func TestParsePortRange(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		want    PortRange
+		wantErr bool
+	}{
+		{name: "valid", value: "2000-30000", want: PortRange{Start: 2000, End: 30000}},
+		{name: "single port", value: "443-443", want: PortRange{Start: 443, End: 443}},
+		{name: "reversed", value: "30000-2000", wantErr: true},
+		{name: "no separator", value: "2000", wantErr: true},
+		{name: "zero", value: "0-100", wantErr: true},
+		{name: "too high", value: "1-70000", wantErr: true},
+		{name: "not a number", value: "a-b", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParsePortRange(tt.value)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ParsePortRange(%q) error = nil, want an error", tt.value)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParsePortRange(%q) error = %v", tt.value, err)
+			}
+			if got != tt.want {
+				t.Errorf("ParsePortRange(%q) = %+v, want %+v", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPortRange_Filter(t *testing.T) {
+	r := PortRange{Start: 8000, End: 9000}
+	got := r.Filter([]int32{22, 8443, 9000, 9443})
+	if !reflect.DeepEqual(got, []int32{8443, 9000}) {
+		t.Errorf("Filter() = %v, want [8443 9000]", got)
+	}
+}

@@ -110,6 +110,7 @@ spec:
                 - TLSRoute
                 - GRPCRoute
                 - Gateway
+                - Host
                 type: string
               sourceName:
                 description: SourceName is the name of the source resource

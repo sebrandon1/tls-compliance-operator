@@ -21,7 +21,7 @@ import (
 )
 
 // SourceKind indicates the type of Kubernetes resource that exposed the endpoint
-// +kubebuilder:validation:Enum=Service;Ingress;Route;Target;Pod;HTTPRoute;TLSRoute;GRPCRoute;Gateway
+// +kubebuilder:validation:Enum=Service;Ingress;Route;Target;Pod;HTTPRoute;TLSRoute;GRPCRoute;Gateway;Host
 type SourceKind string
 
 const (
@@ -34,6 +34,8 @@ const (
 	SourceKindTLSRoute  SourceKind = "TLSRoute"
 	SourceKindGRPCRoute SourceKind = "GRPCRoute"
 	SourceKindGateway   SourceKind = "Gateway"
+	// SourceKindHost is a listener on the node itself, discovered by host-mode scanning.
+	SourceKindHost SourceKind = "Host"
 )
 
 // RescanAnnotation is the TLSComplianceReport annotation the kubectl plugin

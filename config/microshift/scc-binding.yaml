@@ -1,0 +1,13 @@
+# Grants the operator's service account the hostscan SCC.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tls-compliance-operator-hostscan-scc
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:tls-compliance-operator-hostscan
+subjects:
+  - kind: ServiceAccount
+    name: tls-compliance-operator-controller-manager
+    namespace: tls-compliance-operator-system

@@ -107,6 +107,7 @@ type operatorConfig struct {
 	extraTLSPortsStr       string
 	scanAllPorts           bool
 	discoverListeningPorts bool
+	scanHostPortsStr       string
 	clientCertPath         string
 	clientKeyPath          string
 	caCertPath             string
@@ -211,6 +212,8 @@ func parseFlags() *operatorConfig {
 	flag.StringVar(&cfg.starttlsPortsStr, "starttls-ports", "",
 		"Override STARTTLS port mappings as proto=port[:port][,proto=port...] "+
 			"(protocols: smtp, imap, ldap, postgres, mysql, pop3, lmtp, xmpp, xmpp-server, nntp, sieve, ftp)")
+	flag.StringVar(&cfg.scanHostPortsStr, "scan-host-ports", "",
+		"Scan the node's own LISTEN sockets in this range at 127.0.0.1 (start-end, e.g. 2000-30000); requires hostPID")
 	flag.BoolVar(&cfg.scanAllPorts, "scan-all-ports", false,
 		"Scan all declared TCP ports on pods and services, not just known TLS ports")
 	flag.BoolVar(&cfg.discoverListeningPorts, "discover-listening-ports", false,
@@ -442,6 +445,12 @@ func checkConfig(cfg *operatorConfig) (warnings []string, _ error) {
 
 	if float64(cfg.workers) > cfg.rateLimit*10 {
 		warnings = append(warnings, fmt.Sprintf("WARNING: --workers (%d) is much higher than --rate-limit (%.1f); most workers will be idle", cfg.workers, cfg.rateLimit))
+	}
+
+	if cfg.scanHostPortsStr != "" {
+		if _, err := endpoint.ParsePortRange(cfg.scanHostPortsStr); err != nil {
+			return warnings, fmt.Errorf("invalid --scan-host-ports: %w", err)
+		}
 	}
 
 	if cfg.scanWindowStart != "" && cfg.scanWindowEnd != "" {
@@ -727,6 +736,17 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 		setupLog.Info("TLS component policy loaded", "configMap", cfg.policyConfigMap)
 	}
 
+	var hostScanPorts *endpoint.PortRange
+	if cfg.scanHostPortsStr != "" {
+		parsed, err := endpoint.ParsePortRange(cfg.scanHostPortsStr)
+		if err != nil {
+			setupLog.Error(err, "invalid --scan-host-ports")
+			os.Exit(1)
+		}
+		hostScanPorts = &parsed
+		setupLog.Info("host-mode scanning enabled", "range", cfg.scanHostPortsStr)
+	}
+
 	endpointReconciler := &controller.EndpointReconciler{
 		Client:                 mgr.GetClient(),
 		APIReader:              mgr.GetAPIReader(),
@@ -744,6 +764,7 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 		CustomProfile:          customProfile,
 		Policy:                 policyRules,
 		DiscoverListeningPorts: cfg.discoverListeningPorts,
+		HostScanPorts:          hostScanPorts,
 		ProcNetReader:          &controller.ExecProcNetReader{Config: mgr.GetConfig()},
 		Workers:                cfg.workers,
 		MaxRetries:             cfg.maxRetries,
@@ -986,6 +1007,7 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_EXTRA_TLS_PORTS", "extra-tls-ports"},
 	{"TLS_COMPLIANCE_SCAN_ALL_PORTS", "scan-all-ports"},
 	{"TLS_COMPLIANCE_DISCOVER_LISTENING_PORTS", "discover-listening-ports"},
+	{"TLS_COMPLIANCE_SCAN_HOST_PORTS", "scan-host-ports"},
 	{"TLS_COMPLIANCE_ENUMERATE_CIPHERS", "enumerate-ciphers"},
 	{"TLS_COMPLIANCE_DETECT_CIPHER_PREFERENCE", "detect-cipher-preference"},
 	{"TLS_COMPLIANCE_NAMESPACE_RATE_LIMITS", "namespace-rate-limits"},
