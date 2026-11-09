@@ -279,6 +279,17 @@ var (
 		[]string{"method"},
 	)
 
+	// PolicyExemptionsTotal tracks endpoints exempted from profile adherence
+	// by the policy ConfigMap.
+	PolicyExemptionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: MetricsNamespace,
+			Name:      "policy_exemptions_total",
+			Help:      "Total endpoints exempted from TLS profile adherence by policy",
+		},
+		[]string{"profile"},
+	)
+
 	// CheckErrorsTotal tracks TLS check errors by failure reason
 	CheckErrorsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -336,6 +347,7 @@ func init() {
 		ReconcileByResourceTotal,
 		CheckErrorsTotal,
 		PortDiscoveryTotal,
+		PolicyExemptionsTotal,
 		CircuitOpenSkippedTotal,
 		NotificationsTotal,
 	)
@@ -520,6 +532,11 @@ func RecordReconcileInFlightDec() {
 // RecordPortDiscovery records how a pod's listening ports were discovered.
 func RecordPortDiscovery(method string) {
 	PortDiscoveryTotal.WithLabelValues(method).Inc()
+}
+
+// RecordPolicyExemption records an endpoint exempted by the policy ConfigMap.
+func RecordPolicyExemption(profile string) {
+	PolicyExemptionsTotal.WithLabelValues(profile).Inc()
 }
 
 // RecordReconcileByResource records a reconciliation attempt by resource type and result

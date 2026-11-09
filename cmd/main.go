@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"golang.org/x/time/rate"
+	corev1 "k8s.io/api/core/v1"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -55,6 +56,7 @@ import (
 	"github.com/sebrandon1/tls-compliance-operator/pkg/endpoint"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/export"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/fips"
+	"github.com/sebrandon1/tls-compliance-operator/pkg/policy"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlscheck"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlsprofile"
 	// +kubebuilder:scaffold:imports
@@ -97,6 +99,7 @@ type operatorConfig struct {
 	profileRefreshInterval time.Duration
 	tlsProfileType         string
 	customProfile          string
+	policyConfigMap        string
 	workers                int
 	maxRetries             int
 	retryBackoff           time.Duration
@@ -192,6 +195,8 @@ func parseFlags() *operatorConfig {
 		"Force a built-in TLS security profile (Old, Intermediate, Modern) and skip reading OpenShift config; for HyperShift")
 	flag.StringVar(&cfg.customProfile, "custom-profile", "",
 		"Name of a TLSSecurityProfile CR to evaluate every endpoint against, in addition to the component profiles")
+	flag.StringVar(&cfg.policyConfigMap, "policy-configmap", "",
+		"ConfigMap (namespace/name) holding a policy.yaml that maps endpoints to component profiles and exemptions")
 	flag.IntVar(&cfg.workers, "workers", 5,
 		"Number of concurrent workers for periodic TLS scans (1-50)")
 	flag.IntVar(&cfg.maxRetries, "max-retries", 3,
@@ -452,6 +457,10 @@ func checkConfig(cfg *operatorConfig) (warnings []string, _ error) {
 		}
 	}
 
+	if cfg.policyConfigMap != "" && !strings.Contains(cfg.policyConfigMap, "/") {
+		return warnings, fmt.Errorf("--policy-configmap must be namespace/name, got %q", cfg.policyConfigMap)
+	}
+
 	if cfg.clientCertPath != "" && cfg.clientKeyPath == "" {
 		return warnings, fmt.Errorf("--client-cert requires --client-key to also be set")
 	}
@@ -695,6 +704,26 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 			"minTLSVersion", resolved.MinTLSVersion)
 	}
 
+	var policyRules *policy.Policy
+	if cfg.policyConfigMap != "" {
+		namespace, name, _ := strings.Cut(cfg.policyConfigMap, "/")
+		var policyCM corev1.ConfigMap
+		if err := mgr.GetAPIReader().Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &policyCM); err != nil {
+			setupLog.Error(err, "failed to load --policy-configmap", "configMap", cfg.policyConfigMap)
+			os.Exit(1)
+		}
+		compiled, err := policy.Compile([]byte(policyCM.Data["policy.yaml"]))
+		if err != nil {
+			setupLog.Error(err, "invalid policy", "configMap", cfg.policyConfigMap)
+			os.Exit(1)
+		}
+		for _, warning := range compiled.Warnings {
+			setupLog.Info("policy warning", "warning", warning)
+		}
+		policyRules = compiled.Policy
+		setupLog.Info("TLS component policy loaded", "configMap", cfg.policyConfigMap)
+	}
+
 	endpointReconciler := &controller.EndpointReconciler{
 		Client:                 mgr.GetClient(),
 		APIReader:              mgr.GetAPIReader(),
@@ -710,6 +739,7 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 		GatewayGVKs:            gatewayGVKs,
 		ProfileFetcher:         profileFetcher,
 		CustomProfile:          customProfile,
+		Policy:                 policyRules,
 		DiscoverListeningPorts: cfg.discoverListeningPorts,
 		ProcNetReader:          &controller.ExecProcNetReader{Config: mgr.GetConfig()},
 		Workers:                cfg.workers,
@@ -939,6 +969,7 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_PROFILE_REFRESH_INTERVAL", "profile-refresh-interval"},
 	{"TLS_COMPLIANCE_TLS_PROFILE_TYPE", "tls-profile-type"},
 	{"TLS_COMPLIANCE_CUSTOM_PROFILE", "custom-profile"},
+	{"TLS_COMPLIANCE_POLICY_CONFIGMAP", "policy-configmap"},
 	{"TLS_COMPLIANCE_MAX_RETRIES", "max-retries"},
 	{"TLS_COMPLIANCE_RETRY_BACKOFF", "retry-backoff"},
 	{"TLS_COMPLIANCE_MAX_BACKOFF", "max-backoff"},

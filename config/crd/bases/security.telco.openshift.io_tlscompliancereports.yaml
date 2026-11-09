@@ -396,6 +396,15 @@ spec:
                 - minTLSVersionMet
                 - profileType
                 type: object
+              exempt:
+                description: |-
+                  Exempt reports whether the policy marks this endpoint exempt from
+                  profile adherence. Exempt endpoints are still scanned and reported.
+                type: boolean
+              exemptReason:
+                description: ExemptReason describes the policy rule that granted the
+                  exemption.
+                type: string
               fipsDetected:
                 description: |-
                   FIPSDetected indicates whether the operator detected FIPS mode on the cluster.
@@ -691,6 +700,12 @@ spec:
               overallCipherGrade:
                 description: OverallCipherGrade is the worst grade across all negotiated
                   cipher suites
+                type: string
+              policyProfile:
+                description: |-
+                  PolicyProfile is the component profile selected for this endpoint by the
+                  policy ConfigMap (apiserver, ingress, kubelet, or exempt). Empty when no
+                  policy is configured.
                 type: string
               pqcReadiness:
                 description: |-
