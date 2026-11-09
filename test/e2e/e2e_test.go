@@ -1532,4 +1532,60 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "summary --fail-on-non-compliant should exit 0 when all endpoints are compliant")
 		})
 	})
+
+	Context("Per-Target Scan Configuration", Label("target-scan-config"), func() {
+		It("uses the target interval instead of the global scan interval", func() {
+			By("creating a target with a 15m scan interval")
+			kubectlApplyManifest(`apiVersion: security.telco.openshift.io/v1alpha1
+kind: TLSComplianceTarget
+metadata:
+  name: e2e-scan-config
+spec:
+  host: example.com
+  port: 443
+  scan:
+    interval: 15m
+    tlsVersions: ["1.2", "1.3"]
+`, "TLSComplianceTarget with scan overrides")
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "tlstarget", "e2e-scan-config", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+
+			By("waiting for the report and checking its schedule")
+			var reportName string
+			Eventually(func() string {
+				out, err := utils.Run(exec.Command("kubectl", "get", "tlstarget", "e2e-scan-config",
+					"-o", "jsonpath={.status.reportName}"))
+				if err != nil {
+					return ""
+				}
+				reportName = strings.TrimSpace(string(out))
+				return reportName
+			}, 2*time.Minute, 2*time.Second).ShouldNot(BeEmpty())
+
+			var lastSeen, nextScan string
+			Eventually(func() bool {
+				out, err := utils.Run(exec.Command("kubectl", "get", "tlsreport", reportName,
+					"-o", "jsonpath={.status.lastSeenAt} {.status.nextScanAt}"))
+				if err != nil {
+					return false
+				}
+				fields := strings.Fields(string(out))
+				if len(fields) != 2 {
+					return false
+				}
+				lastSeen, nextScan = fields[0], fields[1]
+				return true
+			}, time.Minute, 2*time.Second).Should(BeTrue())
+
+			last, err := time.Parse(time.RFC3339, lastSeen)
+			Expect(err).NotTo(HaveOccurred())
+			next, err := time.Parse(time.RFC3339, nextScan)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(next.Sub(last)).To(BeNumerically("~", 15*time.Minute, 30*time.Second),
+				"nextScanAt should follow the target's 15m interval, not the global 30s one")
+		})
+	})
+
 })
