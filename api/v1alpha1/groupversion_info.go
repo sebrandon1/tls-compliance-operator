@@ -42,6 +42,8 @@ func addKnownTypes(s *runtime.Scheme) error {
 		&TLSComplianceReportList{},
 		&TLSComplianceTarget{},
 		&TLSComplianceTargetList{},
+		&TLSSecurityProfile{},
+		&TLSSecurityProfileList{},
 	)
 	metav1.AddToGroupVersion(s, GroupVersion)
 

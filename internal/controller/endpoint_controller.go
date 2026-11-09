@@ -92,18 +92,21 @@ const nodeAddressCacheTTL = time.Minute
 // resources, TLSComplianceTargets and rescan requests on TLSComplianceReports.
 type EndpointReconciler struct {
 	client.Client
-	APIReader             client.Reader
-	Scheme                *runtime.Scheme
-	TLSChecker            tlscheck.Checker
-	Recorder              events.EventRecorder
-	Notifier              *notify.Notifier
-	IncludeNamespaces     map[string]bool
-	ExcludeNamespaces     map[string]bool
-	CertExpiryDays        int
-	RouteAPIAvailable     bool
-	GatewayAPIAvailable   bool
-	GatewayGVKs           []schema.GroupVersionKind
-	ProfileFetcher        *tlsprofile.Fetcher
+	APIReader           client.Reader
+	Scheme              *runtime.Scheme
+	TLSChecker          tlscheck.Checker
+	Recorder            events.EventRecorder
+	Notifier            *notify.Notifier
+	IncludeNamespaces   map[string]bool
+	ExcludeNamespaces   map[string]bool
+	CertExpiryDays      int
+	RouteAPIAvailable   bool
+	GatewayAPIAvailable bool
+	GatewayGVKs         []schema.GroupVersionKind
+	ProfileFetcher      *tlsprofile.Fetcher
+	// CustomProfile, when non-nil, is evaluated against every checked endpoint
+	// in addition to the component profiles (see --custom-profile).
+	CustomProfile         *tlsprofile.Profile
 	Workers               int
 	MaxRetries            int
 	RetryBackoff          time.Duration
@@ -170,6 +173,7 @@ func (r *EndpointReconciler) updateWithRetry(ctx context.Context, name string, m
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get
+// +kubebuilder:rbac:groups=security.telco.openshift.io,resources=tlssecurityprofiles,verbs=get;list;watch
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch;update
 // +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch

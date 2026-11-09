@@ -352,6 +352,50 @@ spec:
                 description: ConsecutiveErrors is the number of consecutive check
                   errors
                 type: integer
+              customProfileCompliance:
+                description: |-
+                  CustomProfileCompliance contains the compliance result against the
+                  TLSSecurityProfile selected by the operator's --custom-profile flag.
+                  Nil when no custom profile is configured.
+                properties:
+                  compliant:
+                    description: Compliant indicates whether the endpoint meets the
+                      profile requirements
+                    type: boolean
+                  disallowedCiphers:
+                    description: |-
+                      DisallowedCiphers lists cipher suites negotiated by the endpoint that are
+                      not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  disallowedGroups:
+                    description: |-
+                      DisallowedGroups lists key exchange groups negotiated by the endpoint
+                      that are not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  groupsCompliant:
+                    description: |-
+                      GroupsCompliant indicates whether the endpoint's negotiated curves are
+                      in the profile's allowed groups list
+                    type: boolean
+                  minTLSVersionMet:
+                    description: |-
+                      MinTLSVersionMet indicates whether the endpoint does not support TLS versions
+                      below the profile's minimum
+                    type: boolean
+                  profileType:
+                    description: ProfileType is the configured profile type (Old,
+                      Intermediate, Modern, Custom)
+                    type: string
+                required:
+                - compliant
+                - groupsCompliant
+                - minTLSVersionMet
+                - profileType
+                type: object
               fipsDetected:
                 description: |-
                   FIPSDetected indicates whether the operator detected FIPS mode on the cluster.

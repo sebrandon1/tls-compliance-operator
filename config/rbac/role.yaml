@@ -99,6 +99,7 @@ rules:
   resources:
   - imagecertificationinfoes
   - tlscompliancetargets
+  - tlssecurityprofiles
   verbs:
   - get
   - list
