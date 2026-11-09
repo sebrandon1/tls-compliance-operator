@@ -4,6 +4,7 @@
 resources:
 - bases/security.telco.openshift.io_tlscompliancereports.yaml
 - bases/security.telco.openshift.io_tlscompliancetargets.yaml
+- bases/security.telco.openshift.io_tlssecurityprofiles.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

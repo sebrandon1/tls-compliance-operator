@@ -367,6 +367,12 @@ type TLSComplianceReportStatus struct {
 	// +optional
 	SelectedProfileCompliance *TLSProfileComplianceResult `json:"selectedProfileCompliance,omitempty"`
 
+	// CustomProfileCompliance contains the compliance result against the
+	// TLSSecurityProfile selected by the operator's --custom-profile flag.
+	// Nil when no custom profile is configured.
+	// +optional
+	CustomProfileCompliance *TLSProfileComplianceResult `json:"customProfileCompliance,omitempty"`
+
 	// WorkloadKind is the kind of the workload controller that owns a Pod
 	// source (ReplicaSet, DaemonSet, StatefulSet, Job), taken from the pod's
 	// owner reference. Empty for non-Pod sources and for pods without an owner.

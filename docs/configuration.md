@@ -207,6 +207,47 @@ delivery is counted in `tls_compliance_notifications_total{result}`.
 |------|---------|------|---------|-------------|
 | `--profile-refresh-interval` | `TLS_COMPLIANCE_PROFILE_REFRESH_INTERVAL` | duration | `5m` | How often to re-fetch OpenShift TLS security profile configuration (APIServer, IngressController, KubeletConfig). Only used when running on OpenShift. Ignored on vanilla Kubernetes. Must be greater than `0`; zero or negative values are rejected at startup. |
 | `--tls-profile-type` | `TLS_COMPLIANCE_TLS_PROFILE_TYPE` | string | `""` | Force a built-in TLS security profile (`Old`, `Intermediate`, `Modern`) for every component and skip reading OpenShift config. Fails fast on any other value. See [HyperShift](#hypershift). |
+| `--custom-profile` | `TLS_COMPLIANCE_CUSTOM_PROFILE` | string | `""` | Name of a `TLSSecurityProfile` CR to evaluate every endpoint against, in addition to the component profiles. See [Custom TLS Profiles](#custom-tls-profiles). |
+
+### Custom TLS Profiles
+
+A `TLSSecurityProfile` declares a cluster-defined profile — a minimum TLS
+version plus optional allowed ciphers and key exchange groups — beyond the
+built-in `Old`, `Intermediate`, and `Modern` profiles:
+
+```yaml
+apiVersion: security.telco.openshift.io/v1alpha1
+kind: TLSSecurityProfile
+metadata:
+  name: strict-13
+spec:
+  minTLSVersion: VersionTLS13
+  ciphers:
+    - TLS_AES_128_GCM_SHA256
+    - TLS_AES_256_GCM_SHA384
+  groups:
+    - X25519
+    - secp256r1
+```
+
+Select it at operator startup:
+
+```bash
+--custom-profile=strict-13
+```
+
+Every checked endpoint is then also evaluated against it, and the verdict is
+recorded on the report:
+
+```bash
+kubectl get tlscompliancereport <name> -o jsonpath='{.status.customProfileCompliance}'
+# {"compliant":false,"groupsCompliant":true,"minTLSVersionMet":false,"profileType":"Custom"}
+```
+
+`minTLSVersionMet` means the endpoint supports no TLS version below the
+profile's minimum. The profile is read once at startup, so a change to the CR
+requires an operator restart. The built-in component profiles continue to be
+evaluated independently. The operator needs `get` on `tlssecurityprofiles`.
 
 ### HyperShift
 

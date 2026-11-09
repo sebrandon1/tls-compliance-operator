@@ -166,9 +166,10 @@ func (r *EndpointReconciler) updateRetryStatus(ctx context.Context, crName strin
 }
 
 // checkProfileCompliance evaluates the endpoint against OpenShift TLS security
-// profiles if a ProfileFetcher is configured, and against the built-in profile
-// selected by the source TLSComplianceTarget, if any. Populates the per-profile
-// compliance fields on the CR status.
+// profiles if a ProfileFetcher is configured, against the built-in profile
+// selected by the source TLSComplianceTarget, and against the cluster-defined
+// profile selected by --custom-profile. Populates the matching compliance
+// fields on the CR status.
 func (r *EndpointReconciler) checkProfileCompliance(ctx context.Context, cr *securityv1alpha1.TLSComplianceReport, result *tlscheck.TLSCheckResult) {
 	if r.ProfileFetcher != nil {
 		for component, profile := range r.ProfileFetcher.GetAllProfiles() {
@@ -193,21 +194,29 @@ func (r *EndpointReconciler) checkProfileCompliance(ctx context.Context, cr *sec
 		}
 	}
 
-	selected := r.targetProfile(ctx, cr)
-	if selected == "" {
-		return
+	if selected := r.targetProfile(ctx, cr); selected != "" {
+		if profile, ok := tlsprofile.PredefinedProfiles[tlsprofile.ProfileType(selected)]; ok {
+			compResult := checkAgainstProfile(&profile, result)
+			cr.Status.SelectedProfileCompliance = profileResultToCRD(&compResult)
+			if r.MetricsPerEndpoint {
+				metrics.RecordProfileCompliance(
+					cr.Spec.Host, strconv.Itoa(int(cr.Spec.Port)),
+					"Selected", compResult.ProfileType, compResult.Compliant,
+				)
+			}
+		}
 	}
-	profile, ok := tlsprofile.PredefinedProfiles[tlsprofile.ProfileType(selected)]
-	if !ok {
-		return
-	}
-	compResult := checkAgainstProfile(&profile, result)
-	cr.Status.SelectedProfileCompliance = profileResultToCRD(&compResult)
-	if r.MetricsPerEndpoint {
-		metrics.RecordProfileCompliance(
-			cr.Spec.Host, strconv.Itoa(int(cr.Spec.Port)),
-			"Selected", compResult.ProfileType, compResult.Compliant,
-		)
+
+	if r.CustomProfile != nil {
+		compResult := checkAgainstProfile(r.CustomProfile, result)
+		cr.Status.CustomProfileCompliance = profileResultToCRD(&compResult)
+
+		if r.MetricsPerEndpoint {
+			metrics.RecordProfileCompliance(
+				cr.Spec.Host, strconv.Itoa(int(cr.Spec.Port)),
+				"Custom", compResult.ProfileType, compResult.Compliant,
+			)
+		}
 	}
 }
 
@@ -224,7 +233,6 @@ func checkAgainstProfile(profile *tlsprofile.Profile, result *tlscheck.TLSCheckR
 	)
 }
 
-// profileResultToCRD converts a compliance result into its CR status form.
 func profileResultToCRD(compResult *tlsprofile.ComplianceResult) *securityv1alpha1.TLSProfileComplianceResult {
 	return &securityv1alpha1.TLSProfileComplianceResult{
 		ProfileType:       compResult.ProfileType,

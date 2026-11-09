@@ -41,6 +41,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -95,6 +96,7 @@ type operatorConfig struct {
 	certExpiryWarningDays  int
 	profileRefreshInterval time.Duration
 	tlsProfileType         string
+	customProfile          string
 	workers                int
 	maxRetries             int
 	retryBackoff           time.Duration
@@ -187,6 +189,8 @@ func parseFlags() *operatorConfig {
 		"Interval for refreshing OpenShift TLS security profile configuration (OpenShift only)")
 	flag.StringVar(&cfg.tlsProfileType, "tls-profile-type", "",
 		"Force a built-in TLS security profile (Old, Intermediate, Modern) and skip reading OpenShift config; for HyperShift")
+	flag.StringVar(&cfg.customProfile, "custom-profile", "",
+		"Name of a TLSSecurityProfile CR to evaluate every endpoint against, in addition to the component profiles")
 	flag.IntVar(&cfg.workers, "workers", 5,
 		"Number of concurrent workers for periodic TLS scans (1-50)")
 	flag.IntVar(&cfg.maxRetries, "max-retries", 3,
@@ -668,6 +672,23 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 			"webhooks", len(cfg.notifyWebhooks), "timeout", cfg.notifyTimeout, "retries", cfg.notifyRetries)
 	}
 
+	var customProfile *tlsprofile.Profile
+	if cfg.customProfile != "" {
+		var profileCR securityv1alpha1.TLSSecurityProfile
+		if err := mgr.GetAPIReader().Get(ctx, client.ObjectKey{Name: cfg.customProfile}, &profileCR); err != nil {
+			setupLog.Error(err, "failed to load --custom-profile", "name", cfg.customProfile)
+			os.Exit(1)
+		}
+		resolved, err := tlsprofile.ProfileFromSpec(profileCR.Spec.MinTLSVersion, profileCR.Spec.Ciphers, profileCR.Spec.Groups)
+		if err != nil {
+			setupLog.Error(err, "invalid --custom-profile", "name", cfg.customProfile)
+			os.Exit(1)
+		}
+		customProfile = &resolved
+		setupLog.Info("custom TLS security profile enabled", "name", cfg.customProfile,
+			"minTLSVersion", resolved.MinTLSVersion)
+	}
+
 	endpointReconciler := &controller.EndpointReconciler{
 		Client:                mgr.GetClient(),
 		APIReader:             mgr.GetAPIReader(),
@@ -682,6 +703,7 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 		GatewayAPIAvailable:   len(gatewayGVKs) > 0,
 		GatewayGVKs:           gatewayGVKs,
 		ProfileFetcher:        profileFetcher,
+		CustomProfile:         customProfile,
 		Workers:               cfg.workers,
 		MaxRetries:            cfg.maxRetries,
 		RetryBackoff:          cfg.retryBackoff,
@@ -908,6 +930,7 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_CERT_EXPIRY_WARNING_DAYS", "cert-expiry-warning-days"},
 	{"TLS_COMPLIANCE_PROFILE_REFRESH_INTERVAL", "profile-refresh-interval"},
 	{"TLS_COMPLIANCE_TLS_PROFILE_TYPE", "tls-profile-type"},
+	{"TLS_COMPLIANCE_CUSTOM_PROFILE", "custom-profile"},
 	{"TLS_COMPLIANCE_MAX_RETRIES", "max-retries"},
 	{"TLS_COMPLIANCE_RETRY_BACKOFF", "retry-backoff"},
 	{"TLS_COMPLIANCE_MAX_BACKOFF", "max-backoff"},
