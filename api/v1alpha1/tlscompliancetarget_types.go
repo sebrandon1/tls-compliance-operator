@@ -34,6 +34,67 @@ type TLSComplianceTargetSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
 	Port *int32 `json:"port,omitempty"`
+
+	// Scan overrides the operator's global scan settings for this target.
+	// Unset fields fall back to the operator flags.
+	// +optional
+	Scan *TargetScanConfig `json:"scan,omitempty"`
+}
+
+// TargetScanConfig overrides the operator's global scan settings for a single
+// TLSComplianceTarget. Every field is optional.
+type TargetScanConfig struct {
+	// Interval overrides the global scan interval for this target.
+	// +optional
+	Interval *metav1.Duration `json:"interval,omitempty"`
+
+	// Timeout overrides the per-connection TLS probe timeout for this target.
+	// +optional
+	Timeout *metav1.Duration `json:"timeout,omitempty"`
+
+	// TLSVersions restricts which TLS versions are probed ("1.0", "1.1",
+	// "1.2", "1.3"). Empty probes every version, like the global setting.
+	// +optional
+	// +kubebuilder:validation:items:Enum="1.0";"1.1";"1.2";"1.3"
+	TLSVersions []string `json:"tlsVersions,omitempty"`
+
+	// EnumerateCiphers overrides the global cipher enumeration setting.
+	// +optional
+	EnumerateCiphers *bool `json:"enumerateCiphers,omitempty"`
+
+	// ClientCertificate references a Secret holding the client certificate
+	// presented when probing mTLS endpoints.
+	// +optional
+	ClientCertificate *TargetClientCertificateRef `json:"clientCertificate,omitempty"`
+
+	// Profile selects the built-in TLS security profile ("Old",
+	// "Intermediate", "Modern") to evaluate this target against, in addition
+	// to the cluster component profiles. Empty keeps the default behavior.
+	// +optional
+	// +kubebuilder:validation:Enum=Old;Intermediate;Modern
+	Profile string `json:"profile,omitempty"`
+}
+
+// TargetClientCertificateRef points at a Secret holding a PEM client
+// certificate and private key.
+type TargetClientCertificateRef struct {
+	// Namespace of the Secret.
+	// +kubebuilder:validation:MinLength=1
+	Namespace string `json:"namespace"`
+
+	// Name of the Secret.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// CertKey is the Secret key holding the PEM client certificate.
+	// Defaults to "tls.crt".
+	// +optional
+	CertKey string `json:"certKey,omitempty"`
+
+	// KeyKey is the Secret key holding the PEM private key.
+	// Defaults to "tls.key".
+	// +optional
+	KeyKey string `json:"keyKey,omitempty"`
 }
 
 // EffectivePort returns the configured port, or the default HTTPS port when unset.

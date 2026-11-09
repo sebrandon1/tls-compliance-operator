@@ -79,6 +79,49 @@ Status:
     Subject:     CN=*.google.com
 ```
 
+## Per-Target Scan Configuration
+
+Every `spec.scan` field is optional. Unset fields fall back to the operator's
+command-line flags, so a Target with no `scan` block behaves exactly as before.
+
+```yaml
+apiVersion: security.telco.openshift.io/v1alpha1
+kind: TLSComplianceTarget
+metadata:
+  name: partner-api
+spec:
+  host: api.partner.example
+  port: 8443
+  scan:
+    interval: 15m
+    timeout: 10s
+    tlsVersions: ["1.2", "1.3"]
+    enumerateCiphers: false
+    profile: Modern
+    clientCertificate:
+      namespace: certs
+      name: partner-client
+      certKey: tls.crt   # default
+      keyKey: tls.key    # default
+```
+
+| Field | Effect | Global default |
+|-------|--------|----------------|
+| `interval` | Scan interval for this Target's report | `--scan-interval` |
+| `timeout` | Per-connection probe timeout | `--timeout` |
+| `tlsVersions` | Probe only these TLS versions (`1.0`–`1.3`). Restricting the list also skips the SSLv3 probe. | all versions |
+| `enumerateCiphers` | Enumerate the full cipher list per version | `--enumerate-ciphers` |
+| `clientCertificate` | Secret holding a PEM client certificate for mTLS endpoints | `--client-cert`/`--client-key` |
+| `profile` | Also evaluate against this built-in profile (`Old`, `Intermediate`, `Modern`) | cluster component profiles only |
+
+The `profile` result is recorded in `status.selectedProfileCompliance` on the
+report; it does not replace the per-component `apiServerProfileCompliance`,
+`ingressProfileCompliance`, and `kubeletProfileCompliance` fields.
+
+The operator needs `get` on Secrets in the referenced namespace for
+`clientCertificate`. A missing Secret or key is logged and the check falls back
+to the operator's default client certificate, if any.
+
 ## Validation
 
 Admission webhooks run on create and update. The mutating webhook defaults an

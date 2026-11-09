@@ -361,6 +361,12 @@ type TLSComplianceReportStatus struct {
 	// +optional
 	KubeletProfileCompliance *TLSProfileComplianceResult `json:"kubeletProfileCompliance,omitempty"`
 
+	// SelectedProfileCompliance contains the compliance result against the
+	// TLS security profile selected by the source TLSComplianceTarget's
+	// `spec.scan.profile`. Nil when the target selects no profile.
+	// +optional
+	SelectedProfileCompliance *TLSProfileComplianceResult `json:"selectedProfileCompliance,omitempty"`
+
 	// WorkloadKind is the kind of the workload controller that owns a Pod
 	// source (ReplicaSet, DaemonSet, StatefulSet, Job), taken from the pod's
 	// owner reference. Empty for non-Pod sources and for pods without an owner.

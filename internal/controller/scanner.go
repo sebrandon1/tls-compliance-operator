@@ -83,7 +83,7 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep *endpoint.E
 			ComplianceStatus: securityv1alpha1.ComplianceStatusPending,
 			FirstSeenAt:      &now,
 			LastSeenAt:       &now,
-			NextScanAt:       r.periodicNextScanAt(&now),
+			NextScanAt:       r.nextScanAt(ctx, cr, &now),
 		}
 		apimeta.SetStatusCondition(&cr.Status.Conditions, metav1.Condition{
 			Type:               "Available",
@@ -121,7 +121,7 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep *endpoint.E
 
 	if err := r.updateStatusWithRetry(ctx, crName, func(cr *securityv1alpha1.TLSComplianceReport) {
 		cr.Status.LastSeenAt = &now
-		cr.Status.NextScanAt = r.periodicNextScanAt(&now)
+		cr.Status.NextScanAt = r.nextScanAt(ctx, cr, &now)
 	}); err != nil {
 		return fmt.Errorf("failed to update TLSComplianceReport LastSeenAt: %w", err)
 	}
@@ -137,15 +137,21 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep *endpoint.E
 	return nil
 }
 
-func (r *EndpointReconciler) periodicNextScanAt(lastSeenAt *metav1.Time) *metav1.Time {
-	if r.ScanInterval <= 0 {
+// nextScanAt returns the next scheduled scan for cr, honoring a per-target
+// interval override from the TLSComplianceTarget that produced the report.
+func (r *EndpointReconciler) nextScanAt(ctx context.Context, cr *securityv1alpha1.TLSComplianceReport, lastSeenAt *metav1.Time) *metav1.Time {
+	interval := r.ScanInterval
+	if override := r.targetScanInterval(ctx, cr); override > 0 {
+		interval = override
+	}
+	if interval <= 0 {
 		return nil
 	}
 	base := time.Now()
 	if lastSeenAt != nil {
 		base = lastSeenAt.Time
 	}
-	next := metav1.NewTime(base.Add(r.ScanInterval))
+	next := metav1.NewTime(base.Add(interval))
 	return &next
 }
 
@@ -181,7 +187,7 @@ func (r *EndpointReconciler) tryAsyncCheck(crName, host string, port int, namesp
 			// Reconcile context is cancelled when Reconcile returns, so async
 			// probes must use ManagerCtx (process lifetime). Wrap it with a
 			// timeout so a hung CheckEndpoint cannot hold a worker until shutdown.
-			ctx, cancel := context.WithTimeout(r.managerCtx(), r.asyncCheckTimeout())
+			ctx, cancel := context.WithTimeout(r.managerCtx(), r.checkTimeoutFor(crName))
 			defer cancel()
 			r.performTLSCheck(ctx, crName, host, port, namespace, true)
 		}()
@@ -263,6 +269,12 @@ func (r *EndpointReconciler) performTLSCheck(ctx context.Context, crName, host s
 
 	if r.restrictDial(ctx, crName) {
 		ctx = tlscheck.WithRestrictedDial(ctx)
+	}
+
+	if opts, err := r.targetCheckOptions(ctx, crName); err != nil {
+		logger.Error(err, "per-target scan options unavailable, using operator defaults")
+	} else if opts != nil {
+		ctx = tlscheck.WithCheckOptions(ctx, *opts)
 	}
 
 	result, checkErr := r.retryTLSCheck(ctx, crName, host, port, holdsSemaphore)
@@ -436,7 +448,7 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 			cr.Status.CheckCount++
 			cr.Status.RetryCount = 0
 			cr.Status.NextRetryAt = nil
-			cr.Status.NextScanAt = r.periodicNextScanAt(cr.Status.LastSeenAt)
+			cr.Status.NextScanAt = r.nextScanAt(ctx, cr, cr.Status.LastSeenAt)
 
 			if result != nil {
 				cr.Status.TLSVersions = securityv1alpha1.TLSVersionSupport{
@@ -492,7 +504,7 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 		cr.Status.CheckCount++
 		cr.Status.RetryCount = 0
 		cr.Status.NextRetryAt = nil
-		cr.Status.NextScanAt = r.periodicNextScanAt(cr.Status.LastSeenAt)
+		cr.Status.NextScanAt = r.nextScanAt(ctx, cr, cr.Status.LastSeenAt)
 		cr.Status.ConsecutiveErrors = 0
 		cr.Status.LastError = ""
 		if result.CheckDuration > 0 {
@@ -552,7 +564,7 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 			cr.Status.TLSAdherence = r.ProfileFetcher.GetAdherence()
 			cr.Status.TLSProfileSource = r.ProfileFetcher.GetSource()
 		}
-		r.checkProfileCompliance(cr, result)
+		r.checkProfileCompliance(ctx, cr, result)
 		cr.Status.ComplianceStatus = complianceStatus
 		r.updateConditions(cr, complianceStatus, result)
 		r.recordHistory(cr, &now, false)

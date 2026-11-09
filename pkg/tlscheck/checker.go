@@ -179,12 +179,17 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 	start := time.Now()
 	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 
+	c, allowedVersions := c.withOverrides(ctx)
+
 	probeResults := make([]versionProbeResult, len(tlsVersionInfo))
 	var ssl30Supported bool
 
 	g, gctx := errgroup.WithContext(ctx)
 
 	for i, vi := range tlsVersionInfo {
+		if allowedVersions != nil && !allowedVersions[vi.version] {
+			continue
+		}
 		g.Go(func() error {
 			pr := &probeResults[i]
 			pr.name = vi.name
@@ -200,10 +205,14 @@ func (c *TLSChecker) CheckEndpoint(ctx context.Context, host string, port int) (
 		})
 	}
 
-	g.Go(func() error {
-		ssl30Supported = c.ProbeSSL30(gctx, addr)
-		return nil
-	})
+	// A version restriction means "probe only these versions", so the SSLv3
+	// probe is skipped too: SSL 3.0 is not part of the restrictable set.
+	if allowedVersions == nil {
+		g.Go(func() error {
+			ssl30Supported = c.ProbeSSL30(gctx, addr)
+			return nil
+		})
+	}
 
 	_ = g.Wait()
 

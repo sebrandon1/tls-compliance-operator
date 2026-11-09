@@ -672,6 +672,50 @@ spec:
                 description: ScanDuration is the wall-clock time taken by the last
                   TLS check (e.g. "1.23s")
                 type: string
+              selectedProfileCompliance:
+                description: |-
+                  SelectedProfileCompliance contains the compliance result against the
+                  TLS security profile selected by the source TLSComplianceTarget's
+                  `spec.scan.profile`. Nil when the target selects no profile.
+                properties:
+                  compliant:
+                    description: Compliant indicates whether the endpoint meets the
+                      profile requirements
+                    type: boolean
+                  disallowedCiphers:
+                    description: |-
+                      DisallowedCiphers lists cipher suites negotiated by the endpoint that are
+                      not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  disallowedGroups:
+                    description: |-
+                      DisallowedGroups lists key exchange groups negotiated by the endpoint
+                      that are not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  groupsCompliant:
+                    description: |-
+                      GroupsCompliant indicates whether the endpoint's negotiated curves are
+                      in the profile's allowed groups list
+                    type: boolean
+                  minTLSVersionMet:
+                    description: |-
+                      MinTLSVersionMet indicates whether the endpoint does not support TLS versions
+                      below the profile's minimum
+                    type: boolean
+                  profileType:
+                    description: ProfileType is the configured profile type (Old,
+                      Intermediate, Modern, Custom)
+                    type: string
+                required:
+                - compliant
+                - groupsCompliant
+                - minTLSVersionMet
+                - profileType
+                type: object
               serverPrefersOwnCiphers:
                 description: |-
                   ServerPrefersOwnCiphers indicates whether the TLS 1.2 endpoint selects its

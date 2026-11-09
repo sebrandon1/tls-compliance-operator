@@ -166,50 +166,73 @@ func (r *EndpointReconciler) updateRetryStatus(ctx context.Context, crName strin
 }
 
 // checkProfileCompliance evaluates the endpoint against OpenShift TLS security
-// profiles if a ProfileFetcher is configured. Populates the per-component
+// profiles if a ProfileFetcher is configured, and against the built-in profile
+// selected by the source TLSComplianceTarget, if any. Populates the per-profile
 // compliance fields on the CR status.
-func (r *EndpointReconciler) checkProfileCompliance(cr *securityv1alpha1.TLSComplianceReport, result *tlscheck.TLSCheckResult) {
-	if r.ProfileFetcher == nil {
-		return
+func (r *EndpointReconciler) checkProfileCompliance(ctx context.Context, cr *securityv1alpha1.TLSComplianceReport, result *tlscheck.TLSCheckResult) {
+	if r.ProfileFetcher != nil {
+		for component, profile := range r.ProfileFetcher.GetAllProfiles() {
+			compResult := checkAgainstProfile(&profile, result)
+			crdResult := profileResultToCRD(&compResult)
+
+			if r.MetricsPerEndpoint {
+				metrics.RecordProfileCompliance(
+					cr.Spec.Host, strconv.Itoa(int(cr.Spec.Port)),
+					string(component), compResult.ProfileType, compResult.Compliant,
+				)
+			}
+
+			switch component {
+			case tlsprofile.ComponentIngressController:
+				cr.Status.IngressProfileCompliance = crdResult
+			case tlsprofile.ComponentAPIServer:
+				cr.Status.APIServerProfileCompliance = crdResult
+			case tlsprofile.ComponentKubeletConfig:
+				cr.Status.KubeletProfileCompliance = crdResult
+			}
+		}
 	}
 
-	profiles := r.ProfileFetcher.GetAllProfiles()
-
-	for component, profile := range profiles {
-		compResult := tlsprofile.CheckCompliance(
-			&profile,
-			result.SupportsTLS10,
-			result.SupportsTLS11,
-			result.SupportsTLS12,
-			result.SupportsTLS13,
-			result.CipherSuites,
-			result.NegotiatedCurves,
+	selected := r.targetProfile(ctx, cr)
+	if selected == "" {
+		return
+	}
+	profile, ok := tlsprofile.PredefinedProfiles[tlsprofile.ProfileType(selected)]
+	if !ok {
+		return
+	}
+	compResult := checkAgainstProfile(&profile, result)
+	cr.Status.SelectedProfileCompliance = profileResultToCRD(&compResult)
+	if r.MetricsPerEndpoint {
+		metrics.RecordProfileCompliance(
+			cr.Spec.Host, strconv.Itoa(int(cr.Spec.Port)),
+			"Selected", compResult.ProfileType, compResult.Compliant,
 		)
+	}
+}
 
-		crdResult := &securityv1alpha1.TLSProfileComplianceResult{
-			ProfileType:       compResult.ProfileType,
-			Compliant:         compResult.Compliant,
-			MinTLSVersionMet:  compResult.MinTLSVersionMet,
-			DisallowedCiphers: compResult.DisallowedCiphers,
-			GroupsCompliant:   compResult.GroupsCompliant,
-			DisallowedGroups:  compResult.DisallowedGroups,
-		}
+// checkAgainstProfile evaluates a TLS check result against one profile.
+func checkAgainstProfile(profile *tlsprofile.Profile, result *tlscheck.TLSCheckResult) tlsprofile.ComplianceResult {
+	return tlsprofile.CheckCompliance(
+		profile,
+		result.SupportsTLS10,
+		result.SupportsTLS11,
+		result.SupportsTLS12,
+		result.SupportsTLS13,
+		result.CipherSuites,
+		result.NegotiatedCurves,
+	)
+}
 
-		if r.MetricsPerEndpoint {
-			metrics.RecordProfileCompliance(
-				cr.Spec.Host, strconv.Itoa(int(cr.Spec.Port)),
-				string(component), compResult.ProfileType, compResult.Compliant,
-			)
-		}
-
-		switch component {
-		case tlsprofile.ComponentIngressController:
-			cr.Status.IngressProfileCompliance = crdResult
-		case tlsprofile.ComponentAPIServer:
-			cr.Status.APIServerProfileCompliance = crdResult
-		case tlsprofile.ComponentKubeletConfig:
-			cr.Status.KubeletProfileCompliance = crdResult
-		}
+// profileResultToCRD converts a compliance result into its CR status form.
+func profileResultToCRD(compResult *tlsprofile.ComplianceResult) *securityv1alpha1.TLSProfileComplianceResult {
+	return &securityv1alpha1.TLSProfileComplianceResult{
+		ProfileType:       compResult.ProfileType,
+		Compliant:         compResult.Compliant,
+		MinTLSVersionMet:  compResult.MinTLSVersionMet,
+		DisallowedCiphers: compResult.DisallowedCiphers,
+		GroupsCompliant:   compResult.GroupsCompliant,
+		DisallowedGroups:  compResult.DisallowedGroups,
 	}
 }
 
