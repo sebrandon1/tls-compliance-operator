@@ -63,6 +63,22 @@ func histogramVecCount(hv *prometheus.HistogramVec, labels ...string) uint64 {
 	return m.GetHistogram().GetSampleCount()
 }
 
+// seriesCount counts the series a collector currently publishes, without
+// touching the process-wide registry.
+func seriesCount(c prometheus.Collector) int {
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(c)
+	families, err := reg.Gather()
+	if err != nil {
+		return -1
+	}
+	var n int
+	for _, family := range families {
+		n += len(family.GetMetric())
+	}
+	return n
+}
+
 func assertTimestampGaugeSetToNow(t *testing.T, recordFn func(), gauge prometheus.Gauge) {
 	t.Helper()
 	before := float64(time.Now().Unix())
@@ -208,6 +224,51 @@ func TestRecordReconcileError(t *testing.T) {
 	})
 }
 
+func TestRecordProfileCompliance(t *testing.T) {
+	RecordProfileCompliance("profile-host", "443", "APIServer", "Intermediate", true)
+	if v := gaugeVecValue(ProfileCompliance, "profile-host", "443", "APIServer", "Intermediate"); v != 1 {
+		t.Errorf("expected 1 for a compliant endpoint, got %v", v)
+	}
+
+	RecordProfileCompliance("profile-host", "443", "APIServer", "Intermediate", false)
+	if v := gaugeVecValue(ProfileCompliance, "profile-host", "443", "APIServer", "Intermediate"); v != 0 {
+		t.Errorf("expected 0 for a non-compliant endpoint, got %v", v)
+	}
+}
+
+func TestRecordCipherGrade_OneHotAcrossScale(t *testing.T) {
+	RecordCipherGrade("grade-host", "443", "B")
+
+	if v := gaugeVecValue(CipherGrade, "grade-host", "443", "B"); v != 1 {
+		t.Errorf("expected grade B=1, got %v", v)
+	}
+	if v := gaugeVecValue(CipherGrade, "grade-host", "443", "A"); v != 0 {
+		t.Errorf("expected grade A=0, got %v", v)
+	}
+
+	// Changing the grade must clear the previous one rather than leaving two
+	// series set to 1.
+	RecordCipherGrade("grade-host", "443", "A")
+	if v := gaugeVecValue(CipherGrade, "grade-host", "443", "B"); v != 0 {
+		t.Errorf("expected stale grade B=0, got %v", v)
+	}
+	if v := gaugeVecValue(CipherGrade, "grade-host", "443", "A"); v != 1 {
+		t.Errorf("expected grade A=1, got %v", v)
+	}
+}
+
+func TestRecordCipherGrade_UnknownGradePublishesNoSeries(t *testing.T) {
+	RecordCipherGrade("unknown-grade-host", "443", "A")
+	withGrade := seriesCount(CipherGrade)
+
+	RecordCipherGrade("unknown-grade-host", "443", "")
+	RecordCipherGrade("unknown-grade-host", "443", "Z")
+
+	if got := seriesCount(CipherGrade); got != withGrade-len(cipherGrades) {
+		t.Errorf("expected %d series after clearing, got %d", withGrade-len(cipherGrades), got)
+	}
+}
+
 func TestDeleteEndpointMetrics(t *testing.T) {
 	RecordCertExpiry("del-host", "8443", 90)
 	RecordForwardSecrecy("del-host", "8443", true)
@@ -228,6 +289,19 @@ func TestDeleteEndpointMetrics(t *testing.T) {
 	}
 	if v := gaugeVecValue(PQCReadiness, "del-host", "8443", string(securityv1alpha1.PQCReadinessPQCReady)); v != 0 {
 		t.Errorf("expected PQCReadiness=0 after delete, got %v", v)
+	}
+}
+
+func TestDeleteEndpointMetrics_ClearsProfileAndGradeSeries(t *testing.T) {
+	RecordProfileCompliance("del-gate-host", "8443", "APIServer", "Intermediate", false)
+	RecordCipherGrade("del-gate-host", "8443", "D")
+
+	before := seriesCount(ProfileCompliance) + seriesCount(CipherGrade)
+	DeleteEndpointMetrics("del-gate-host", "8443")
+	after := seriesCount(ProfileCompliance) + seriesCount(CipherGrade)
+
+	if want := before - 1 - len(cipherGrades); after != want {
+		t.Errorf("expected %d series after delete, got %d", want, after)
 	}
 }
 

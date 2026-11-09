@@ -10,6 +10,8 @@ All metrics use the `tls_compliance_` prefix.
 | `tls_compliance_version_support` | Gauge | `host`, `port`, `version` | TLS version support (1=yes, 0=no). Requires `--metrics-per-endpoint`. |
 | `tls_compliance_forward_secrecy` | Gauge | `host`, `port` | Forward secrecy support (1=all ciphers use ephemeral key exchange, 0=not). Requires `--metrics-per-endpoint`. |
 | `tls_compliance_pqc_readiness` | Gauge | `host`, `port`, `readiness` | Post-quantum cryptography readiness (1=current status). One-hot across: PQCReady, TLS13Capable, LegacyTLS, NoPQC. Requires `--metrics-per-endpoint`. |
+| `tls_compliance_profile_compliant` | Gauge | `host`, `port`, `component`, `profile` | Whether the endpoint complies with the component's TLS security profile (1=compliant, 0=not). Requires `--metrics-per-endpoint`. |
+| `tls_compliance_cipher_grade` | Gauge | `host`, `port`, `grade` | Worst cipher suite grade for the endpoint (1=current grade). One-hot across the fixed scale A, B, C, D, F. Requires `--metrics-per-endpoint`. |
 | `tls_compliance_reconcile_total` | Counter | `result` | Reconciliation attempts |
 | `tls_compliance_reconcile_errors_total` | Counter | `source_kind`, `error_type` | Errors during resource reconciliation by source kind and error type |
 | `tls_compliance_reconcile_by_resource_total` | Counter | `source_kind`, `result` | Reconciliation attempts by resource type and result |
@@ -29,7 +31,7 @@ All metrics use the `tls_compliance_` prefix.
 | `tls_compliance_endpoints_discovered_total` | Counter | `source_kind`, `namespace` | Endpoints discovered by source kind and namespace |
 
 
-Per-endpoint series (`tls_compliance_certificate_expiry_days`, `tls_compliance_version_support`, `tls_compliance_forward_secrecy`, `tls_compliance_pqc_readiness`) are emitted only when `--metrics-per-endpoint=true`. That flag defaults to `false` because host/port labels create high cardinality on large clusters. Aggregate metrics such as `tls_compliance_endpoints_total` are always emitted.
+Per-endpoint series (`tls_compliance_certificate_expiry_days`, `tls_compliance_version_support`, `tls_compliance_forward_secrecy`, `tls_compliance_pqc_readiness`, `tls_compliance_profile_compliant`, `tls_compliance_cipher_grade`) are emitted only when `--metrics-per-endpoint=true`. That flag defaults to `false` because host/port labels create high cardinality on large clusters. Aggregate metrics such as `tls_compliance_endpoints_total` are always emitted.
 
 Per-endpoint series are labeled by `host` and `port` only. Two reports can
 cover the same endpoint, for example a `TLSComplianceTarget` and an Ingress for
@@ -58,6 +60,12 @@ tls_compliance_forward_secrecy == 0
 
 # Count of PQC-ready endpoints
 count(tls_compliance_pqc_readiness{readiness="PQCReady"} == 1)
+
+# Endpoints that do not comply with the Intermediate profile
+tls_compliance_profile_compliant{profile="Intermediate"} == 0
+
+# Endpoints whose worst cipher grade is C or below
+tls_compliance_cipher_grade{grade=~"C|D|F"} == 1
 
 # Retry rate by failure reason
 rate(tls_compliance_check_retries_total[5m])
