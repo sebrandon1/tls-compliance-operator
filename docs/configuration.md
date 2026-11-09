@@ -19,6 +19,8 @@ If a flag is set on the command line, its environment variable is ignored.
 | `--extra-tls-ports` | `TLS_COMPLIANCE_EXTRA_TLS_PORTS` | string | `""` | Comma-separated list of additional port numbers to treat as TLS endpoints (e.g., `12345,54321`). These are checked in addition to the built-in defaults (443, 2379, 2380, 5443, 5671, 6380, 6443, 7443, 8443, 9091, 9092, 9093, 9100, 9200, 9443, 10250, 10257, 10259) and any port named `https` or `https-*`. |
 | `--scan-all-ports` | `TLS_COMPLIANCE_SCAN_ALL_PORTS` | bool | `false` | Scan all declared TCP container ports on pods, not just known TLS ports. Useful for discovering TLS on non-standard ports that the default heuristics miss. Increases scan time and may produce more `NoTLS` reports. HTTP health-probe ports are still skipped. |
 | `--discover-listening-ports` | `TLS_COMPLIANCE_DISCOVER_LISTENING_PORTS` | bool | `false` | Exec into each pod to read `/proc/net/tcp` and `/proc/net/tcp6` and scan every listening port, including ports not declared in `containerPorts`. Falls back to declared ports when exec fails. Requires `pods/exec` RBAC — see [Listening-port discovery](#listening-port-discovery). |
+
+| `--scan-host-ports` | `TLS_COMPLIANCE_SCAN_HOST_PORTS` | string | `""` | Scan the node's own LISTEN sockets in this range at `127.0.0.1`, as `<start>-<end>`. Requires `hostPID` and `hostNetwork`. See [Host-mode scanning](#host-mode-scanning). |
 | `--enumerate-ciphers` | `TLS_COMPLIANCE_ENUMERATE_CIPHERS` | bool | `true` | Enumerate all supported cipher suites per TLS version. When enabled, the operator performs multiple handshakes to discover every cipher suite each TLS version accepts. Disable for faster scans if you only need the first negotiated cipher. |
 | `--detect-cipher-preference` | `TLS_COMPLIANCE_DETECT_CIPHER_PREFERENCE` | bool | `false` | Detect whether TLS 1.2 endpoints prefer their own cipher order. Performs two extra handshakes offering the first two discovered suites in opposite orders; requires `--enumerate-ciphers` to have found at least two suites. The result is recorded as `status.serverPrefersOwnCiphers` on the report. |
 | `--metrics-per-endpoint` | `TLS_COMPLIANCE_METRICS_PER_ENDPOINT` | bool | `false` | Emit per-endpoint Prometheus metrics (certificate expiry, TLS version support, PQC readiness, forward secrecy). Leave off on large clusters (2000+ endpoints) to avoid high metric cardinality and Prometheus memory usage. Aggregate metrics (`tls_compliance_endpoints_total`) are always emitted regardless of this setting. |
@@ -349,6 +351,50 @@ name (the workload owner for pods) and `component` is the source kind
   `status.policyProfile`.
 
 The policy is read once at startup; a change requires an operator restart.
+### Host-mode scanning
+
+Single-node and edge deployments (MicroShift) often run TLS listeners on the
+node itself that are invisible to Service/Pod discovery. `--scan-host-ports`
+reads the node's own `/proc/net/tcp` and `/proc/net/tcp6`, selects the sockets
+in `LISTEN` state inside the range, and probes them at `127.0.0.1:<port>`:
+
+```bash
+--scan-host-ports=2000-30000
+```
+
+Each discovered listener becomes a report with `sourceKind: Host`,
+`sourceNamespace: host`, and the node's hostname as the source name. Host
+listeners go through the normal TLS check, report, event, metric, and export
+paths; they are not owned by any Kubernetes object, so cleanup leaves them
+alone and they are re-discovered on every scan cycle.
+
+**Prerequisites:** the manager must run with `hostNetwork: true` so the pod
+shares the node's network namespace and with `hostPID: true` so `/proc` is the
+node's. The `config/microshift` overlay sets both, sets
+`dnsPolicy: ClusterFirstWithHostNet`, and enables the range above:
+
+```bash
+kubectl apply -k config/microshift
+```
+
+**Security context constraint (OpenShift/MicroShift):** the default
+`restricted` SCCs deny `hostNetwork`, `hostPID`, and host ports; the
+`hostnetwork` SCC still denies `hostPID`. The overlay ships a dedicated
+`tls-compliance-operator-hostscan` SCC that grants exactly those three, plus a
+ClusterRoleBinding to it. Apply the overlay as a cluster administrator. On
+clusters that do not generate the `system:openshift:scc:<name>` ClusterRole for
+a custom SCC, add the service account to the SCC's `users` list instead:
+
+```bash
+oc adm policy add-scc-to-user tls-compliance-operator-hostscan \
+  -z tls-compliance-operator-controller-manager \
+  -n tls-compliance-operator-system
+```
+
+**Trade-off:** host mode gives the manager visibility into every local socket
+on the node, including control-plane components. It binds the manager's own
+health and metrics ports on the host network. This is opt-in and not the default
+deployment. Use a narrower range when a wide scan is not needed.
 
 
 ## Logging

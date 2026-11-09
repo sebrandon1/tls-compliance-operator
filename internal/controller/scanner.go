@@ -892,6 +892,10 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 		podScanErr = err
 	}
 
+	if err := r.scanHostEndpoints(ctx); err != nil {
+		logger.Error(err, "host endpoint scan failed")
+	}
+
 	r.InitialScanDone.Store(true)
 
 	type scanItem struct {

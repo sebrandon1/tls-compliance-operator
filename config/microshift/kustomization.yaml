@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# MicroShift host-mode overlay. The manager runs with hostNetwork and hostPID so
+# it can read the node's own socket tables (/proc/net/tcp{,6}) and probe local
+# listeners at 127.0.0.1. This is opt-in; the default Deployment is unchanged.
+resources:
+- ../default
+- scc.yaml
+- scc-binding.yaml
+
+patches:
+- target:
+    kind: Deployment
+  patch: |-
+    - op: add
+      path: /spec/template/spec/hostNetwork
+      value: true
+    - op: add
+      path: /spec/template/spec/hostPID
+      value: true
+    - op: replace
+      path: /spec/template/spec/dnsPolicy
+      value: ClusterFirstWithHostNet
+    - op: add
+      path: /spec/template/spec/containers/0/args/-
+      value: --scan-host-ports=2000-30000
