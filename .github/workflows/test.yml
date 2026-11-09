@@ -13,14 +13,18 @@ on:
 
 permissions: read-all
 
+# Superseded pushes cancel their predecessors. Never cancel a push to main.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # The canonical leg: full unit suite, coverage gate and summary. Runs on PRs
+  # and main; only this leg produces cover.out.
   test:
-    name: Run on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, ubuntu-26.04, ubuntu-24.04-arm, ubuntu-26.04-arm]
+    name: Unit tests (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
     steps:
       - name: Clone the code
         uses: actions/checkout@v7
@@ -40,9 +44,11 @@ jobs:
           key: envtest-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Makefile', 'go.sum') }}
 
       - name: Running Tests
-        run: |
-          go mod tidy
-          make test
+        # The race detector roughly doubles runtime; it runs on main pushes and
+        # nightly, not on pull requests.
+        run: make test
+        env:
+          GO_TEST_FLAGS: ${{ github.event_name == 'push' && '-race' || '' }}
 
       - name: Check coverage threshold
         run: make check-coverage
@@ -76,3 +82,37 @@ jobs:
           total=$(go tool cover -func=cover.out | grep '^total:' | awk '{print $NF}')
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "**Total: ${total}**" >> "$GITHUB_STEP_SUMMARY"
+
+  # OS/arch coverage is kept for main pushes only, so pull requests do not pay
+  # for four identical runs.
+  test-matrix:
+    name: Unit tests (${{ matrix.os }})
+    if: github.event_name == 'push'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-26.04, ubuntu-24.04-arm, ubuntu-26.04-arm]
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cache envtest binaries
+        uses: actions/cache@v6
+        with:
+          path: |
+            bin/setup-envtest*
+            bin/k8s/
+          key: envtest-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Makefile', 'go.sum') }}
+
+      - name: Running Tests
+        run: make test
+        env:
+          GO_TEST_FLAGS: '-race'

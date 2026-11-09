@@ -54,8 +54,11 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
+# GO_TEST_FLAGS defaults to the race detector; CI overrides it (e.g. GO_TEST_FLAGS=).
+GO_TEST_FLAGS ?= -race
+
 test: manifests generate fmt vet setup-envtest test-krew ## Run tests.
-	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test -race $$(go list ./... | grep -v /e2e) -coverprofile cover.out
+	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $(GO_TEST_FLAGS) $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 .PHONY: test-krew
 test-krew: ## Validate Krew plugin packaging and manifest generation.

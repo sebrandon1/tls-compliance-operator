@@ -16,6 +16,9 @@ env:
 jobs:
   test:
     name: Run Tests
+    # test.yml already covers every push to main; this leg exists to validate
+    # release tags.
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

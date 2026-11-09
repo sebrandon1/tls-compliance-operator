@@ -13,19 +13,39 @@ on:
 
 permissions: read-all
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     name: Build E2E Images
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Clone the code
         uses: actions/checkout@v7
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
       - name: Build operator image
-        run: make docker-build IMG=tls-compliance-operator:test
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          tags: tls-compliance-operator:test
+          load: true
+          cache-from: type=gha,scope=operator
+          cache-to: type=gha,mode=max,scope=operator
 
       - name: Build test server image
-        run: docker build -t tls-test-server:test test/testserver/
+        uses: docker/build-push-action@v7
+        with:
+          context: test/testserver
+          tags: tls-test-server:test
+          load: true
+          cache-from: type=gha,scope=testserver
+          cache-to: type=gha,mode=max,scope=testserver
 
       - name: Save images as artifact
         run: |
@@ -37,11 +57,14 @@ jobs:
           name: e2e-images
           path: /tmp/e2e-images.tar
           retention-days: 1
+          # docker save output is already compressed layers; recompressing wastes time.
+          compression-level: 0
 
   e2e:
     name: "E2E: ${{ matrix.suite.name }}"
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -87,14 +110,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Cache envtest binaries
-        uses: actions/cache@v6
-        with:
-          path: |
-            bin/setup-envtest*
-            bin/k8s/
-          key: envtest-${{ runner.os }}-${{ hashFiles('Makefile', 'go.sum') }}
 
       - name: Download image artifacts
         uses: actions/download-artifact@v8
