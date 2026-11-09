@@ -1589,3 +1589,51 @@ spec:
 	})
 
 })
+
+var _ = Describe("Listening Port Discovery", Label("port-discovery"), Ordered, func() {
+	It("reports an undeclared listening port when enabled", func() {
+		By("undeploying the in-cluster operator to prevent interference")
+		cmd := exec.Command("make", "undeploy")
+		_, _ = utils.Run(cmd)
+
+		By("building the manager binary and installing CRDs")
+		cmd = exec.Command("make", "install", "build")
+		_, err := utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "make install build failed")
+		managerBin := filepath.Join(projectRoot(), "bin", "manager")
+
+		By("creating a pod that listens on 9443 without declaring the port")
+		kubectlApplyManifest(`apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-listen
+  namespace: default
+spec:
+  containers:
+    - name: listener
+      image: busybox:1.36
+      command: ["sh", "-c", "while true; do nc -l -p 9443; done"]
+`, "listener pod")
+		DeferCleanup(func() {
+			_, _ = utils.Run(exec.Command("kubectl", "delete", "pod", "e2e-listen",
+				"-n", "default", "--ignore-not-found"))
+		})
+
+		Eventually(func() string {
+			out, _ := utils.Run(exec.Command("kubectl", "get", "pod", "e2e-listen",
+				"-n", "default", "-o", "jsonpath={.status.phase}"))
+			return strings.TrimSpace(string(out))
+		}, 2*time.Minute, 2*time.Second).Should(Equal("Running"))
+
+		By("running the manager once with listening-port discovery enabled")
+		// Non-compliant results make run-once exit 1; the report matters here.
+		_, _ = utils.Run(exec.Command(managerBin, "--run-once", "--discover-listening-ports"))
+
+		By("expecting a report for the undeclared port")
+		Eventually(func() string {
+			out, _ := utils.Run(exec.Command("kubectl", "get", "tlsreport", "-o",
+				`jsonpath={.items[?(@.spec.sourceName=="e2e-listen")].spec.port}`))
+			return strings.TrimSpace(string(out))
+		}, 2*time.Minute, 2*time.Second).Should(ContainSubstring("9443"))
+	})
+})

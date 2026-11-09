@@ -18,6 +18,7 @@ If a flag is set on the command line, its environment variable is ignored.
 | `--workers` | `TLS_COMPLIANCE_WORKERS` | int | `5` | Number of concurrent goroutines used during periodic scans. Range: 1-50. Higher values scan faster but use more CPU and network. This also sets `MaxConcurrentReconciles` for each per-kind controller (Service, Ingress, Route, each Gateway API kind, Target, Report); the TLS check worker pool they share stays at this size. |
 | `--extra-tls-ports` | `TLS_COMPLIANCE_EXTRA_TLS_PORTS` | string | `""` | Comma-separated list of additional port numbers to treat as TLS endpoints (e.g., `12345,54321`). These are checked in addition to the built-in defaults (443, 2379, 2380, 5443, 5671, 6380, 6443, 7443, 8443, 9091, 9092, 9093, 9100, 9200, 9443, 10250, 10257, 10259) and any port named `https` or `https-*`. |
 | `--scan-all-ports` | `TLS_COMPLIANCE_SCAN_ALL_PORTS` | bool | `false` | Scan all declared TCP container ports on pods, not just known TLS ports. Useful for discovering TLS on non-standard ports that the default heuristics miss. Increases scan time and may produce more `NoTLS` reports. HTTP health-probe ports are still skipped. |
+| `--discover-listening-ports` | `TLS_COMPLIANCE_DISCOVER_LISTENING_PORTS` | bool | `false` | Exec into each pod to read `/proc/net/tcp` and `/proc/net/tcp6` and scan every listening port, including ports not declared in `containerPorts`. Falls back to declared ports when exec fails. Requires `pods/exec` RBAC — see [Listening-port discovery](#listening-port-discovery). |
 | `--enumerate-ciphers` | `TLS_COMPLIANCE_ENUMERATE_CIPHERS` | bool | `true` | Enumerate all supported cipher suites per TLS version. When enabled, the operator performs multiple handshakes to discover every cipher suite each TLS version accepts. Disable for faster scans if you only need the first negotiated cipher. |
 | `--detect-cipher-preference` | `TLS_COMPLIANCE_DETECT_CIPHER_PREFERENCE` | bool | `false` | Detect whether TLS 1.2 endpoints prefer their own cipher order. Performs two extra handshakes offering the first two discovered suites in opposite orders; requires `--enumerate-ciphers` to have found at least two suites. The result is recorded as `status.serverPrefersOwnCiphers` on the report. |
 | `--metrics-per-endpoint` | `TLS_COMPLIANCE_METRICS_PER_ENDPOINT` | bool | `false` | Emit per-endpoint Prometheus metrics (certificate expiry, TLS version support, PQC readiness, forward secrecy). Leave off on large clusters (2000+ endpoints) to avoid high metric cardinality and Prometheus memory usage. Aggregate metrics (`tls_compliance_endpoints_total`) are always emitted regardless of this setting. |
@@ -273,6 +274,36 @@ kubectl get tlscompliancereports -o jsonpath='{.items[0].status.tlsProfileSource
 ```
 
 `kubectl tlsreport summary` shows the same value as `Profile Source:`.
+
+### Listening-port discovery
+
+A container can serve TLS on a port it never declares in `containerPorts`; the
+operator misses those endpoints by default. With `--discover-listening-ports`,
+the operator execs into each pod's first container and reads
+`/proc/net/tcp` and `/proc/net/tcp6`:
+
+```bash
+--discover-listening-ports=true
+```
+
+Every socket in `LISTEN` state is added to the pod's endpoints. Discovered
+ports still pass the usual TLS heuristic (known TLS ports or an `https` name)
+unless `--scan-all-ports` is set. Ports already declared are never duplicated.
+
+If the exec fails (RBAC, a container without `cat`, a paused container), the
+scan logs the failure and continues with the declared ports. The outcome is
+counted in `tls_compliance_port_discovery_total{method="exec|declared"}`, so a
+silent degradation is visible:
+
+```promql
+sum by (method) (rate(tls_compliance_port_discovery_total[1h]))
+```
+
+**Security trade-off:** this grants the operator `create` on `pods/exec`, which
+means it can run commands inside any pod it watches. Enable it only where that
+privilege is acceptable, and scope the operator's RBAC where possible. The
+feature is off by default.
+
 
 ## Logging
 

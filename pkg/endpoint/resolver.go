@@ -567,6 +567,14 @@ func podIPs(pod *corev1.Pod) []string {
 // HTTPS health probe ports are still included but marked as probe ports.
 // Only Running pods with a PodIP are considered. Init containers are skipped.
 func ExtractFromPod(pod *corev1.Pod) []Endpoint {
+	return ExtractFromPodWithPorts(pod, nil)
+}
+
+// ExtractFromPodWithPorts returns TLS endpoints from a Pod, including any
+// listening ports discovered in the container (for example from
+// /proc/net/tcp). Discovered ports run through the same TLS heuristic as
+// declared ports unless scan-all-ports is enabled.
+func ExtractFromPodWithPorts(pod *corev1.Pod, discoveredPorts []int32) []Endpoint {
 	if pod.Status.Phase != corev1.PodRunning {
 		return nil
 	}
@@ -609,6 +617,25 @@ func ExtractFromPod(pod *corev1.Pod) []Endpoint {
 					})
 				}
 			}
+		}
+	}
+
+	for _, port := range discoveredPorts {
+		if seen[port] {
+			continue
+		}
+		if !scanAll && !isTLSPortByNumberAndName(port, "") {
+			continue
+		}
+		seen[port] = true
+		for _, ip := range ips {
+			endpoints = append(endpoints, Endpoint{
+				Host:            ip,
+				Port:            port,
+				SourceKind:      securityv1alpha1.SourceKindPod,
+				SourceNamespace: pod.Namespace,
+				SourceName:      pod.Name,
+			})
 		}
 	}
 
