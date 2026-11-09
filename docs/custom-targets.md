@@ -122,6 +122,45 @@ The operator needs `get` on Secrets in the referenced namespace for
 `clientCertificate`. A missing Secret or key is logged and the check falls back
 to the operator's default client certificate, if any.
 
+## Import and Export Targets
+
+Move targets between clusters with the plugin:
+
+```bash
+# Export the current targets as YAML (status and metadata are stripped)
+kubectl tlsreport target export --file targets.yaml
+
+# Create them in another cluster; existing names are skipped
+kubectl tlsreport target import --from-file targets.yaml
+```
+
+`import` also accepts a plain list, one `host[:port]` per line (`#` comments
+allowed); the port defaults to 443:
+
+```text
+api.partner.example:8443
+status.example.com
+```
+
+Import is idempotent by target name, and prints `created N target(s), skipped M
+existing`.
+
+## Preview Discovery Without Scanning
+
+`--dry-run` runs one discovery pass and prints every endpoint it would scan,
+without creating reports, events, or metrics:
+
+```console
+$ tls-compliance-operator --dry-run
+Pod default/app-0 10.244.1.5:8443
+Service default/api 10.96.0.10:443
+Target cluster-scoped/partner-api 203.0.113.10:8443
+```
+
+It implies `--run-once` and needs the same read RBAC as a normal scan. Combine
+it with `--include-namespaces` / `--exclude-namespaces` to preview a filtered
+view.
+
 ## Validation
 
 Admission webhooks run on create and update. The mutating webhook defaults an

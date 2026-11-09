@@ -48,6 +48,8 @@ func newTargetCmd() *cobra.Command {
 	cmd.AddCommand(newTargetCreateCmd())
 	cmd.AddCommand(newTargetUpdateCmd())
 	cmd.AddCommand(newTargetDeleteCmd())
+	cmd.AddCommand(newTargetImportCmd())
+	cmd.AddCommand(newTargetExportCmd())
 	return cmd
 }
 
@@ -363,9 +365,7 @@ func runTargetCreate(cmd *cobra.Command, args []string, wait bool, timeout time.
 		return err
 	}
 
-	sanitized := strings.ToLower(host)
-	sanitized = strings.NewReplacer(".", "-", ":", "-").Replace(sanitized)
-	name := fmt.Sprintf("%s-%d", sanitized, port)
+	name := targetName(host, int32(port))
 
 	target := &securityv1alpha1.TLSComplianceTarget{
 		ObjectMeta: metav1.ObjectMeta{Name: name},

@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -52,6 +53,10 @@ type unstructuredList = unstructured.UnstructuredList
 
 // processEndpoint creates or updates a TLSComplianceReport CR for an endpoint
 func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep *endpoint.Endpoint) error {
+	if r.DryRun {
+		r.writeDryRun(ep)
+		return nil
+	}
 	logger := log.FromContext(ctx)
 	crName := endpoint.GenerateCRName(ep)
 	now := metav1.Now()
@@ -135,6 +140,15 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep *endpoint.E
 	}
 
 	return nil
+}
+
+// writeDryRun prints one discovered endpoint without creating any resources.
+func (r *EndpointReconciler) writeDryRun(ep *endpoint.Endpoint) {
+	writer := r.DryRunWriter
+	if writer == nil {
+		writer = os.Stdout
+	}
+	fmt.Fprintf(writer, "%s %s/%s %s:%d\n", ep.SourceKind, ep.SourceNamespace, ep.SourceName, ep.Host, ep.Port)
 }
 
 // nextScanAt returns the next scheduled scan for cr, honoring a per-target
