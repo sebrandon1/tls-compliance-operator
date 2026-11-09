@@ -772,6 +772,30 @@ func (r *EndpointReconciler) runScanCycleWithError(ctx context.Context, logger l
 
 // scanPodEndpoints lists all pods and processes them as TLS endpoints.
 // For hostNetwork pods, the resulting CR is labeled for queryability.
+
+// podEndpoints extracts TLS endpoints from pod. With listening-port discovery
+// enabled, undeclared ports are read from the first container's /proc/net/tcp;
+// any exec failure falls back to the declared ports so a scan never silently
+// drops endpoints.
+func (r *EndpointReconciler) podEndpoints(ctx context.Context, pod *corev1.Pod) []endpoint.Endpoint {
+	if !r.DiscoverListeningPorts || r.ProcNetReader == nil || len(pod.Spec.Containers) == 0 {
+		return endpoint.ExtractFromPod(pod)
+	}
+
+	logger := log.FromContext(ctx).WithValues("pod", pod.Name, "namespace", pod.Namespace)
+	content, err := r.ProcNetReader.ReadProcNet(ctx, pod.Namespace, pod.Name, pod.Spec.Containers[0].Name)
+	if err != nil {
+		if ctx.Err() == nil {
+			logger.Info("listening-port discovery failed, using declared container ports", "error", err)
+		}
+		metrics.RecordPortDiscovery("declared")
+		return endpoint.ExtractFromPod(pod)
+	}
+
+	metrics.RecordPortDiscovery("exec")
+	return endpoint.ExtractFromPodWithPorts(pod, endpoint.ParseProcNetTCP(content))
+}
+
 func (r *EndpointReconciler) scanPodEndpoints(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 
@@ -788,7 +812,7 @@ func (r *EndpointReconciler) scanPodEndpoints(ctx context.Context) error {
 				continue
 			}
 
-			endpoints := endpoint.ExtractFromPod(pod)
+			endpoints := r.podEndpoints(ctx, pod)
 			workloadKind, workloadName := podWorkloadOwner(pod)
 			for j := range endpoints {
 				if err := r.processEndpoint(ctx, &endpoints[j]); err != nil {

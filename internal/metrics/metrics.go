@@ -268,6 +268,17 @@ var (
 		[]string{"source_kind", "result"},
 	)
 
+	// PortDiscoveryTotal tracks how listening ports were obtained for pod scans
+	// (exec /proc/net/tcp versus declared container ports only).
+	PortDiscoveryTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: MetricsNamespace,
+			Name:      "port_discovery_total",
+			Help:      "Total pod port-discovery outcomes by method (exec or declared)",
+		},
+		[]string{"method"},
+	)
+
 	// CheckErrorsTotal tracks TLS check errors by failure reason
 	CheckErrorsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -324,6 +335,7 @@ func init() {
 		ReconcileInFlight,
 		ReconcileByResourceTotal,
 		CheckErrorsTotal,
+		PortDiscoveryTotal,
 		CircuitOpenSkippedTotal,
 		NotificationsTotal,
 	)
@@ -503,6 +515,11 @@ func RecordReconcileInFlightInc() {
 // RecordReconcileInFlightDec decrements the in-flight reconciliation gauge
 func RecordReconcileInFlightDec() {
 	ReconcileInFlight.Dec()
+}
+
+// RecordPortDiscovery records how a pod's listening ports were discovered.
+func RecordPortDiscovery(method string) {
+	PortDiscoveryTotal.WithLabelValues(method).Inc()
 }
 
 // RecordReconcileByResource records a reconciliation attempt by resource type and result

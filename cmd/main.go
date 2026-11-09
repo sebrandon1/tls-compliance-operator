@@ -103,6 +103,7 @@ type operatorConfig struct {
 	maxBackoff             time.Duration
 	extraTLSPortsStr       string
 	scanAllPorts           bool
+	discoverListeningPorts bool
 	clientCertPath         string
 	clientKeyPath          string
 	caCertPath             string
@@ -206,6 +207,8 @@ func parseFlags() *operatorConfig {
 			"(protocols: smtp, imap, ldap, postgres, mysql, pop3, lmtp, xmpp, xmpp-server, nntp, sieve, ftp)")
 	flag.BoolVar(&cfg.scanAllPorts, "scan-all-ports", false,
 		"Scan all declared TCP ports on pods and services, not just known TLS ports")
+	flag.BoolVar(&cfg.discoverListeningPorts, "discover-listening-ports", false,
+		"Exec into pods to discover undeclared listening TLS ports from /proc/net/tcp; requires pods/exec RBAC")
 	flag.StringVar(&cfg.clientCertPath, "client-cert", "",
 		"Path to a PEM-encoded client certificate for mTLS endpoint probing")
 	flag.StringVar(&cfg.clientKeyPath, "client-key", "",
@@ -318,6 +321,9 @@ func validateConfig(cfg *operatorConfig) {
 	endpoint.SetScanAllPorts(cfg.scanAllPorts)
 	if cfg.scanAllPorts {
 		setupLog.Info("scan-all-ports enabled: all declared TCP ports on pods and services will be scanned")
+	}
+	if cfg.discoverListeningPorts {
+		setupLog.Info("listening-port discovery enabled: pods are exec'd to read /proc/net/tcp")
 	}
 
 	if (cfg.scanWindowStart == "") != (cfg.scanWindowEnd == "") {
@@ -690,35 +696,37 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 	}
 
 	endpointReconciler := &controller.EndpointReconciler{
-		Client:                mgr.GetClient(),
-		APIReader:             mgr.GetAPIReader(),
-		Scheme:                mgr.GetScheme(),
-		TLSChecker:            checker,
-		Recorder:              mgr.GetEventRecorder("tls-compliance-controller"),
-		Notifier:              notifier,
-		IncludeNamespaces:     includedNS,
-		ExcludeNamespaces:     excludedNS,
-		CertExpiryDays:        cfg.certExpiryWarningDays,
-		RouteAPIAvailable:     routeAPIAvailable,
-		GatewayAPIAvailable:   len(gatewayGVKs) > 0,
-		GatewayGVKs:           gatewayGVKs,
-		ProfileFetcher:        profileFetcher,
-		CustomProfile:         customProfile,
-		Workers:               cfg.workers,
-		MaxRetries:            cfg.maxRetries,
-		RetryBackoff:          cfg.retryBackoff,
-		MaxBackoff:            cfg.maxBackoff,
-		ScanInterval:          cfg.scanInterval,
-		ScanWindowStart:       cfg.scanWindowStart,
-		ScanWindowEnd:         cfg.scanWindowEnd,
-		ScanWindowTimezone:    cfg.scanWindowTimezone,
-		MetricsPerEndpoint:    cfg.metricsPerEndpoint,
-		ReportRetentionDays:   cfg.reportRetentionDays,
-		MaxHistoryEntries:     cfg.maxHistoryEntries,
-		FIPSEnabled:           fipsEnabled,
-		NamespaceRateLimiters: nsLimiters,
-		DefaultNamespaceRate:  defaultNSLimiter,
-		ManagerCtx:            ctx,
+		Client:                 mgr.GetClient(),
+		APIReader:              mgr.GetAPIReader(),
+		Scheme:                 mgr.GetScheme(),
+		TLSChecker:             checker,
+		Recorder:               mgr.GetEventRecorder("tls-compliance-controller"),
+		Notifier:               notifier,
+		IncludeNamespaces:      includedNS,
+		ExcludeNamespaces:      excludedNS,
+		CertExpiryDays:         cfg.certExpiryWarningDays,
+		RouteAPIAvailable:      routeAPIAvailable,
+		GatewayAPIAvailable:    len(gatewayGVKs) > 0,
+		GatewayGVKs:            gatewayGVKs,
+		ProfileFetcher:         profileFetcher,
+		CustomProfile:          customProfile,
+		DiscoverListeningPorts: cfg.discoverListeningPorts,
+		ProcNetReader:          &controller.ExecProcNetReader{Config: mgr.GetConfig()},
+		Workers:                cfg.workers,
+		MaxRetries:             cfg.maxRetries,
+		RetryBackoff:           cfg.retryBackoff,
+		MaxBackoff:             cfg.maxBackoff,
+		ScanInterval:           cfg.scanInterval,
+		ScanWindowStart:        cfg.scanWindowStart,
+		ScanWindowEnd:          cfg.scanWindowEnd,
+		ScanWindowTimezone:     cfg.scanWindowTimezone,
+		MetricsPerEndpoint:     cfg.metricsPerEndpoint,
+		ReportRetentionDays:    cfg.reportRetentionDays,
+		MaxHistoryEntries:      cfg.maxHistoryEntries,
+		FIPSEnabled:            fipsEnabled,
+		NamespaceRateLimiters:  nsLimiters,
+		DefaultNamespaceRate:   defaultNSLimiter,
+		ManagerCtx:             ctx,
 	}
 
 	if cfg.runOnce {
@@ -936,6 +944,7 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_MAX_BACKOFF", "max-backoff"},
 	{"TLS_COMPLIANCE_EXTRA_TLS_PORTS", "extra-tls-ports"},
 	{"TLS_COMPLIANCE_SCAN_ALL_PORTS", "scan-all-ports"},
+	{"TLS_COMPLIANCE_DISCOVER_LISTENING_PORTS", "discover-listening-ports"},
 	{"TLS_COMPLIANCE_ENUMERATE_CIPHERS", "enumerate-ciphers"},
 	{"TLS_COMPLIANCE_DETECT_CIPHER_PREFERENCE", "detect-cipher-preference"},
 	{"TLS_COMPLIANCE_NAMESPACE_RATE_LIMITS", "namespace-rate-limits"},
@@ -1040,7 +1049,7 @@ func validateEnvValue(flagName, value string) error {
 		if value != "text" && value != "json" {
 			return fmt.Errorf("must be text or json, got %q", value)
 		}
-	case "run-once", "require-pqc", "fail-on-group-mismatch", "scan-all-ports", "enumerate-ciphers", "detect-cipher-preference", "metrics-per-endpoint":
+	case "run-once", "require-pqc", "fail-on-group-mismatch", "scan-all-ports", "discover-listening-ports", "enumerate-ciphers", "detect-cipher-preference", "metrics-per-endpoint":
 		if value != "true" && value != "false" && value != "1" && value != "0" {
 			return fmt.Errorf("must be true or false, got %q", value)
 		}

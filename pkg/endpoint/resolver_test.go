@@ -2265,3 +2265,41 @@ func hostsFromEndpoints(endpoints []Endpoint) []string {
 	}
 	return hosts
 }
+
+func TestExtractFromPodWithPorts_DiscoveredUndeclaredPort(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "app", Ports: []corev1.ContainerPort{{ContainerPort: 8443, Protocol: corev1.ProtocolTCP}}},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.5"},
+	}
+
+	// 9443 is undiscovered in the declared ports but known as a TLS port.
+	endpoints := ExtractFromPodWithPorts(pod, []int32{8443, 9443, 12345})
+	var ports []int32
+	for _, ep := range endpoints {
+		ports = append(ports, ep.Port)
+	}
+	if len(ports) != 2 || ports[0] != 8443 || ports[1] != 9443 {
+		t.Fatalf("ports = %v, want [8443 9443]", ports)
+	}
+}
+
+func TestExtractFromPodWithPorts_ScanAllIncludesUnclassified(t *testing.T) {
+	SetScanAllPorts(true)
+	defer SetScanAllPorts(false)
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.5"},
+	}
+
+	endpoints := ExtractFromPodWithPorts(pod, []int32{12345})
+	if len(endpoints) != 1 || endpoints[0].Port != 12345 {
+		t.Fatalf("endpoints = %+v, want the unclassified port with scan-all-ports", endpoints)
+	}
+}

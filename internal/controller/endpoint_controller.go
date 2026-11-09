@@ -106,7 +106,13 @@ type EndpointReconciler struct {
 	ProfileFetcher      *tlsprofile.Fetcher
 	// CustomProfile, when non-nil, is evaluated against every checked endpoint
 	// in addition to the component profiles (see --custom-profile).
-	CustomProfile         *tlsprofile.Profile
+	CustomProfile *tlsprofile.Profile
+	// DiscoverListeningPorts enables exec-based discovery of undeclared
+	// in-container listeners (see --discover-listening-ports).
+	DiscoverListeningPorts bool
+	// ProcNetReader execs into pods to read /proc/net/tcp{,6}; required when
+	// DiscoverListeningPorts is set.
+	ProcNetReader         endpoint.ProcNetReader
 	Workers               int
 	MaxRetries            int
 	RetryBackoff          time.Duration
@@ -171,6 +177,7 @@ func (r *EndpointReconciler) updateWithRetry(ctx context.Context, name string, m
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=pods/exec,verbs=create
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 // +kubebuilder:rbac:groups=security.telco.openshift.io,resources=tlssecurityprofiles,verbs=get;list;watch
