@@ -1100,3 +1100,108 @@ func TestProbeDeadline(t *testing.T) {
 		}
 	})
 }
+
+// generateServerCertSignedBy issues a leaf certificate for ip signed by ca.
+func generateServerCertSignedBy(t *testing.T, ca tls.Certificate, caParsed *x509.Certificate, ip net.IP) tls.Certificate {
+	t.Helper()
+
+	caKey, ok := ca.PrivateKey.(*ecdsa.PrivateKey)
+	if !ok {
+		t.Fatal("CA private key is not ECDSA")
+	}
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate server key: %v", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: ip.String()},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:  []net.IP{ip},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, caParsed, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("failed to sign server certificate: %v", err)
+	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
+}
+
+func TestTLSChecker_TrustVerification(t *testing.T) {
+	caCert, caParsed := generateCACert(t)
+	serverCert := generateServerCertSignedBy(t, caCert, caParsed, net.ParseIP("127.0.0.1"))
+	host, port, cleanup := startTLSServer(t, serverCert, tls.VersionTLS12, 0)
+	defer cleanup()
+
+	trustedPool := x509.NewCertPool()
+	trustedPool.AddCert(caParsed)
+
+	checker := NewTLSChecker(2 * time.Second)
+	checker.TrustRoots = trustedPool
+
+	result, err := checker.CheckEndpoint(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("CheckEndpoint() error = %v", err)
+	}
+	if result.Certificate == nil || result.Certificate.Trusted == nil {
+		t.Fatal("expected trust verification to be recorded")
+	}
+	if !*result.Certificate.Trusted {
+		t.Errorf("expected a chain signed by the configured CA to be trusted, got error %q",
+			result.Certificate.TrustError)
+	}
+	if result.Certificate.TrustError != "" {
+		t.Errorf("expected no trust error, got %q", result.Certificate.TrustError)
+	}
+}
+
+func TestTLSChecker_TrustVerification_RejectsUnknownCA(t *testing.T) {
+	caCert, caParsed := generateCACert(t)
+	serverCert := generateServerCertSignedBy(t, caCert, caParsed, net.ParseIP("127.0.0.1"))
+	host, port, cleanup := startTLSServer(t, serverCert, tls.VersionTLS12, 0)
+	defer cleanup()
+
+	_, otherParsed := generateCACert(t)
+	wrongPool := x509.NewCertPool()
+	wrongPool.AddCert(otherParsed)
+
+	checker := NewTLSChecker(2 * time.Second)
+	checker.TrustRoots = wrongPool
+
+	result, err := checker.CheckEndpoint(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("CheckEndpoint() error = %v", err)
+	}
+	if result.Certificate == nil || result.Certificate.Trusted == nil {
+		t.Fatal("expected trust verification to be recorded")
+	}
+	if *result.Certificate.Trusted {
+		t.Error("expected a chain from an unknown CA to be untrusted")
+	}
+	if result.Certificate.TrustError == "" {
+		t.Error("expected a trust error for an unknown CA")
+	}
+}
+
+func TestTLSChecker_TrustVerification_DisabledByDefault(t *testing.T) {
+	caCert, caParsed := generateCACert(t)
+	serverCert := generateServerCertSignedBy(t, caCert, caParsed, net.ParseIP("127.0.0.1"))
+	host, port, cleanup := startTLSServer(t, serverCert, tls.VersionTLS12, 0)
+	defer cleanup()
+
+	result, err := NewTLSChecker(2*time.Second).
+		CheckEndpoint(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("CheckEndpoint() error = %v", err)
+	}
+	if result.Certificate == nil {
+		t.Fatal("expected certificate details")
+	}
+	if result.Certificate.Trusted != nil {
+		t.Error("expected trust verification to be absent without --ca-cert")
+	}
+}

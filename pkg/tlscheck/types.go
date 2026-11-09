@@ -114,6 +114,11 @@ type CertificateDetails struct {
 	SerialNumber       string
 	Fingerprint        string
 	IPAddresses        []string
+	// Trusted reports whether the chain verified against the configured trust
+	// roots. Nil means trust verification was not requested.
+	Trusted *bool
+	// TrustError explains why chain verification failed; empty when trusted.
+	TrustError string
 }
 
 // ParseCertificate extracts CertificateDetails from an x509 certificate.

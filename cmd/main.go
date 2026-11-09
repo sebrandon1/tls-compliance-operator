@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"flag"
 	"fmt"
 	"io"
@@ -100,6 +101,7 @@ type operatorConfig struct {
 	scanAllPorts           bool
 	clientCertPath         string
 	clientKeyPath          string
+	caCertPath             string
 	enumerateCiphers       bool
 	detectCipherPreference bool
 	namespaceRateLimitsStr string
@@ -179,6 +181,9 @@ func parseFlags() *operatorConfig {
 		"Path to a PEM-encoded client certificate for mTLS endpoint probing")
 	flag.StringVar(&cfg.clientKeyPath, "client-key", "",
 		"Path to a PEM-encoded client private key for mTLS endpoint probing")
+	flag.StringVar(&cfg.caCertPath, "ca-cert", "",
+		"Path to a PEM-encoded CA bundle. When set, each checked endpoint's certificate chain "+
+			"is also verified against this bundle and the result recorded on the report")
 	flag.BoolVar(&cfg.enumerateCiphers, "enumerate-ciphers", true,
 		"Enumerate all supported cipher suites per TLS version (disable for faster scans)")
 	flag.BoolVar(&cfg.detectCipherPreference, "detect-cipher-preference", false,
@@ -549,6 +554,20 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 		setupLog.Info("mTLS client certificate configured for endpoint probing",
 			"certPath", cfg.clientCertPath)
 	}
+	if cfg.caCertPath != "" {
+		pemBundle, err := os.ReadFile(cfg.caCertPath)
+		if err != nil {
+			setupLog.Error(err, "failed to read --ca-cert bundle")
+			os.Exit(1)
+		}
+		trustRoots := x509.NewCertPool()
+		if !trustRoots.AppendCertsFromPEM(pemBundle) {
+			setupLog.Error(nil, "--ca-cert bundle contains no PEM certificates", "path", cfg.caCertPath)
+			os.Exit(1)
+		}
+		baseChecker.TrustRoots = trustRoots
+		setupLog.Info("certificate trust verification enabled", "caCertPath", cfg.caCertPath)
+	}
 	checker := tlscheck.NewRateLimitedChecker(baseChecker, cfg.rateLimit, cfg.rateBurst)
 
 	setupLog.Info("TLS checker configured",
@@ -835,6 +854,7 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_METRICS_PER_ENDPOINT", "metrics-per-endpoint"},
 	{"TLS_COMPLIANCE_CLIENT_CERT", "client-cert"},
 	{"TLS_COMPLIANCE_CLIENT_KEY", "client-key"},
+	{"TLS_COMPLIANCE_CA_CERT", "ca-cert"},
 	{"TLS_COMPLIANCE_REPORT_RETENTION_DAYS", "report-retention-days"},
 	{"TLS_COMPLIANCE_MAX_HISTORY_ENTRIES", "max-history-entries"},
 	{"TLS_COMPLIANCE_LOG_FORMAT", "log-format"},
