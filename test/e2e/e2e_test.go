@@ -1637,3 +1637,47 @@ spec:
 		}, 2*time.Minute, 2*time.Second).Should(ContainSubstring("9443"))
 	})
 })
+
+// countTLSReports returns the number of TLSComplianceReport objects.
+func countTLSReports() int {
+	cmd := exec.Command("kubectl", "get", "tlsreport", "-o", "jsonpath={.items[*].metadata.name}")
+	out, err := utils.Run(cmd)
+	if err != nil {
+		return 0
+	}
+	return len(strings.Fields(string(out)))
+}
+
+var _ = Describe("Dry-Run Discovery", Label("dry-run"), Ordered, func() {
+	var managerBin string
+
+	BeforeAll(func() {
+		By("undeploying the in-cluster operator so it cannot create reports")
+		cmd := exec.Command("make", "undeploy")
+		_, _ = utils.Run(cmd)
+
+		By("building the manager binary and installing CRDs")
+		cmd = exec.Command("make", "install", "build")
+		_, err := utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "make install build failed")
+		managerBin = filepath.Join(projectRoot(), "bin", "manager")
+	})
+
+	It("prints discovered endpoints and creates no reports", func() {
+		before := countTLSReports()
+
+		cmd := exec.Command(managerBin, "--dry-run", "--leader-elect=false")
+		out, err := utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "dry-run failed: %s", out)
+
+		lines := 0
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 3 && strings.Contains(fields[2], ":") {
+				lines++
+			}
+		}
+		Expect(lines).To(BeNumerically(">", 0), "expected discovered endpoint lines, got: %s", out)
+		Expect(countTLSReports()).To(Equal(before), "dry-run must not create reports")
+	})
+})

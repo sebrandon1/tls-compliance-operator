@@ -123,6 +123,7 @@ type operatorConfig struct {
 	maxHistoryEntries      int
 	logFormat              string
 	runOnce                bool
+	dryRun                 bool
 	requirePQC             bool
 	expectedGroups         string
 	groupsMode             string
@@ -241,6 +242,8 @@ func parseFlags() *operatorConfig {
 		"Maximum number of historical scan results to keep per report (1-100)")
 	flag.StringVar(&cfg.logFormat, "log-format", "text",
 		"Log output format: text or json")
+	flag.BoolVar(&cfg.dryRun, "dry-run", false,
+		"Discover endpoints and print them without creating reports, events, or metrics; implies --run-once")
 	flag.BoolVar(&cfg.runOnce, "run-once", false,
 		"Perform a single scan of all endpoints and exit (0=compliant, 1=non-compliant, 2=error)")
 	flag.BoolVar(&cfg.requirePQC, "require-pqc", false,
@@ -761,6 +764,10 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 
 	if cfg.runOnce {
 		endpointReconciler.RunOnce = true
+		if cfg.dryRun {
+			endpointReconciler.DryRun = true
+			endpointReconciler.DryRunWriter = os.Stdout
+		}
 		endpointReconciler.RunOnceDone = make(chan error, 1)
 	}
 
@@ -807,6 +814,9 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 func main() {
 	cfg := parseFlags()
 	validateConfig(cfg)
+	if cfg.dryRun {
+		cfg.runOnce = true
+	}
 
 	ctx, cancel := context.WithCancel(ctrl.SetupSignalHandler())
 	defer cancel()
@@ -990,6 +1000,7 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_MAX_HISTORY_ENTRIES", "max-history-entries"},
 	{"TLS_COMPLIANCE_LOG_FORMAT", "log-format"},
 	{"TLS_COMPLIANCE_RUN_ONCE", "run-once"},
+	{"TLS_COMPLIANCE_DRY_RUN", "dry-run"},
 	{"TLS_COMPLIANCE_REQUIRE_PQC", "require-pqc"},
 	{"TLS_COMPLIANCE_EXPECTED_GROUPS", "expected-groups"},
 	{"TLS_COMPLIANCE_EXPECTED_GROUPS_MODE", "expected-groups-mode"},
@@ -1080,7 +1091,7 @@ func validateEnvValue(flagName, value string) error {
 		if value != "text" && value != "json" {
 			return fmt.Errorf("must be text or json, got %q", value)
 		}
-	case "run-once", "require-pqc", "fail-on-group-mismatch", "scan-all-ports", "discover-listening-ports", "enumerate-ciphers", "detect-cipher-preference", "metrics-per-endpoint":
+	case "run-once", "dry-run", "require-pqc", "fail-on-group-mismatch", "scan-all-ports", "discover-listening-ports", "enumerate-ciphers", "detect-cipher-preference", "metrics-per-endpoint":
 		if value != "true" && value != "false" && value != "1" && value != "0" {
 			return fmt.Errorf("must be true or false, got %q", value)
 		}

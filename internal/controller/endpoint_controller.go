@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"slices"
 	"strings"
@@ -134,18 +135,24 @@ type EndpointReconciler struct {
 	DefaultNamespaceRate  *rate.Limiter
 	RunOnce               bool
 	RunOnceDone           chan error
-	InitialScanDone       atomic.Bool
-	ManagerCtx            context.Context
-	checkTimeout          time.Duration
-	checkSem              chan struct{}
-	checkSemOnce          sync.Once
-	checkWg               sync.WaitGroup
-	inFlight              sync.Map
-	nodeAddrMu            sync.RWMutex
-	nodeAddrCache         []string
-	nodeAddrExpiry        time.Time
-	circuitMu             sync.Mutex
-	circuits              map[string]circuitState
+	// DryRun makes discovery report endpoints instead of creating reports,
+	// events, or metrics.
+	DryRun bool
+	// DryRunWriter receives one line per discovered endpoint. Defaults to
+	// stdout when nil.
+	DryRunWriter    io.Writer
+	InitialScanDone atomic.Bool
+	ManagerCtx      context.Context
+	checkTimeout    time.Duration
+	checkSem        chan struct{}
+	checkSemOnce    sync.Once
+	checkWg         sync.WaitGroup
+	inFlight        sync.Map
+	nodeAddrMu      sync.RWMutex
+	nodeAddrCache   []string
+	nodeAddrExpiry  time.Time
+	circuitMu       sync.Mutex
+	circuits        map[string]circuitState
 	// now overrides time.Now for the periodic scan loop; tests only.
 	now func() time.Time
 }
