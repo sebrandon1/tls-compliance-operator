@@ -32,6 +32,7 @@ import (
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 	"github.com/sebrandon1/tls-compliance-operator/internal/metrics"
 	"github.com/sebrandon1/tls-compliance-operator/internal/notify"
+	"github.com/sebrandon1/tls-compliance-operator/pkg/policy"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlscheck"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlsprofile"
 )
@@ -171,6 +172,8 @@ func (r *EndpointReconciler) updateRetryStatus(ctx context.Context, crName strin
 // profile selected by --custom-profile. Populates the matching compliance
 // fields on the CR status.
 func (r *EndpointReconciler) checkProfileCompliance(ctx context.Context, cr *securityv1alpha1.TLSComplianceReport, result *tlscheck.TLSCheckResult) {
+	r.applyPolicy(cr)
+
 	if r.ProfileFetcher != nil {
 		for component, profile := range r.ProfileFetcher.GetAllProfiles() {
 			compResult := checkAgainstProfile(&profile, result)
@@ -241,6 +244,51 @@ func profileResultToCRD(compResult *tlsprofile.ComplianceResult) *securityv1alph
 		DisallowedCiphers: compResult.DisallowedCiphers,
 		GroupsCompliant:   compResult.GroupsCompliant,
 		DisallowedGroups:  compResult.DisallowedGroups,
+	}
+}
+
+// applyPolicy records the component profile selected for the endpoint and
+// whether the policy exempts it from adherence.
+func (r *EndpointReconciler) applyPolicy(cr *securityv1alpha1.TLSComplianceReport) {
+	if r.Policy == nil {
+		return
+	}
+	process := cr.Spec.SourceName
+	if cr.Status.WorkloadName != "" {
+		process = cr.Status.WorkloadName
+	}
+	wasExempt := cr.Status.Exempt
+	selected := r.Policy.Match(policy.Target{
+		Namespace: cr.Spec.SourceNamespace,
+		Process:   process,
+		Port:      cr.Spec.Port,
+		Component: string(cr.Spec.SourceKind),
+	})
+	cr.Status.PolicyProfile = string(selected)
+	cr.Status.Exempt = selected == policy.ProfileExempt
+	if cr.Status.Exempt {
+		cr.Status.ExemptReason = "policy"
+		if r.MetricsPerEndpoint {
+			metrics.RecordPolicyExemption(string(selected))
+		}
+		if !wasExempt && r.Recorder != nil {
+			r.Recorder.Eventf(cr, nil, corev1.EventTypeNormal, EventReasonPolicyExempt, EventActionScan,
+				"Endpoint %s is exempt from TLS profile adherence by policy", hostPort(cr.Spec.Host, cr.Spec.Port))
+		}
+		return
+	}
+	cr.Status.ExemptReason = ""
+}
+
+// profileResultFor returns the stored compliance result for a component name.
+func profileResultFor(cr *securityv1alpha1.TLSComplianceReport, profile string) *securityv1alpha1.TLSProfileComplianceResult {
+	switch policy.Profile(profile) {
+	case policy.ProfileIngress:
+		return cr.Status.IngressProfileCompliance
+	case policy.ProfileKubelet:
+		return cr.Status.KubeletProfileCompliance
+	default:
+		return cr.Status.APIServerProfileCompliance
 	}
 }
 
@@ -341,25 +389,38 @@ func (r *EndpointReconciler) updateConditions(cr *securityv1alpha1.TLSCompliance
 			LastTransitionTime: now,
 		}
 
-		allCompliant := true
-		if cr.Status.IngressProfileCompliance != nil && !cr.Status.IngressProfileCompliance.Compliant {
-			allCompliant = false
-		}
-		if cr.Status.APIServerProfileCompliance != nil && !cr.Status.APIServerProfileCompliance.Compliant {
-			allCompliant = false
-		}
-		if cr.Status.KubeletProfileCompliance != nil && !cr.Status.KubeletProfileCompliance.Compliant {
-			allCompliant = false
-		}
-
-		if allCompliant {
+		switch {
+		case cr.Status.Exempt:
 			profileCondition.Status = metav1.ConditionTrue
-			profileCondition.Reason = "Compliant"
-			profileCondition.Message = "Endpoint meets all OpenShift TLS security profile requirements"
-		} else {
-			profileCondition.Status = metav1.ConditionFalse
-			profileCondition.Reason = "NonCompliant"
-			profileCondition.Message = "Endpoint does not meet one or more OpenShift TLS security profile requirements"
+			profileCondition.Reason = "Exempt"
+			profileCondition.Message = "Endpoint is exempt from TLS profile adherence by policy"
+		default:
+			allCompliant := true
+			if r.Policy != nil && cr.Status.PolicyProfile != "" {
+				if selected := profileResultFor(cr, cr.Status.PolicyProfile); selected != nil && !selected.Compliant {
+					allCompliant = false
+				}
+			} else {
+				if cr.Status.IngressProfileCompliance != nil && !cr.Status.IngressProfileCompliance.Compliant {
+					allCompliant = false
+				}
+				if cr.Status.APIServerProfileCompliance != nil && !cr.Status.APIServerProfileCompliance.Compliant {
+					allCompliant = false
+				}
+				if cr.Status.KubeletProfileCompliance != nil && !cr.Status.KubeletProfileCompliance.Compliant {
+					allCompliant = false
+				}
+			}
+
+			if allCompliant {
+				profileCondition.Status = metav1.ConditionTrue
+				profileCondition.Reason = "Compliant"
+				profileCondition.Message = "Endpoint meets all OpenShift TLS security profile requirements"
+			} else {
+				profileCondition.Status = metav1.ConditionFalse
+				profileCondition.Reason = "NonCompliant"
+				profileCondition.Message = "Endpoint does not meet one or more OpenShift TLS security profile requirements"
+			}
 		}
 
 		apimeta.SetStatusCondition(&cr.Status.Conditions, profileCondition)

@@ -373,6 +373,21 @@ type TLSComplianceReportStatus struct {
 	// +optional
 	CustomProfileCompliance *TLSProfileComplianceResult `json:"customProfileCompliance,omitempty"`
 
+	// PolicyProfile is the component profile selected for this endpoint by the
+	// policy ConfigMap (apiserver, ingress, kubelet, or exempt). Empty when no
+	// policy is configured.
+	// +optional
+	PolicyProfile string `json:"policyProfile,omitempty"`
+
+	// Exempt reports whether the policy marks this endpoint exempt from
+	// profile adherence. Exempt endpoints are still scanned and reported.
+	// +optional
+	Exempt bool `json:"exempt,omitempty"`
+
+	// ExemptReason describes the policy rule that granted the exemption.
+	// +optional
+	ExemptReason string `json:"exemptReason,omitempty"`
+
 	// WorkloadKind is the kind of the workload controller that owns a Pod
 	// source (ReplicaSet, DaemonSet, StatefulSet, Job), taken from the pod's
 	// owner reference. Empty for non-Pod sources and for pods without an owner.

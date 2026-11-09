@@ -54,6 +54,7 @@ import (
 	"github.com/sebrandon1/tls-compliance-operator/internal/notify"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/endpoint"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/hostvalidation"
+	"github.com/sebrandon1/tls-compliance-operator/pkg/policy"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlscheck"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlsprofile"
 )
@@ -75,6 +76,7 @@ const (
 	EventReasonCertificateExpired  = "CertificateExpired"
 	EventReasonEndpointDiscovered  = "EndpointDiscovered"
 	EventReasonRetryExhausted      = "RetryExhausted"
+	EventReasonPolicyExempt        = "PolicyExempt"
 	EventReasonPQCReady            = "PQCReady"
 	EventReasonPQCNotReady         = "PQCNotReady"
 	EventReasonRescanSkipped       = "RescanSkipped"
@@ -113,6 +115,9 @@ type EndpointReconciler struct {
 	// ProcNetReader execs into pods to read /proc/net/tcp{,6}; required when
 	// DiscoverListeningPorts is set.
 	ProcNetReader         endpoint.ProcNetReader
+	// Policy maps endpoints to the component profile used for adherence and
+	// marks exempt endpoints. Nil means every profile is evaluated as before.
+	Policy                *policy.Policy
 	Workers               int
 	MaxRetries            int
 	RetryBackoff          time.Duration
@@ -178,6 +183,7 @@ func (r *EndpointReconciler) updateWithRetry(ctx context.Context, name string, m
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods/exec,verbs=create
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 // +kubebuilder:rbac:groups=security.telco.openshift.io,resources=tlssecurityprofiles,verbs=get;list;watch

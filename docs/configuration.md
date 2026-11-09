@@ -250,6 +250,8 @@ profile's minimum. The profile is read once at startup, so a change to the CR
 requires an operator restart. The built-in component profiles continue to be
 evaluated independently. The operator needs `get` on `tlssecurityprofiles`.
 
+| `--policy-configmap` | `TLS_COMPLIANCE_POLICY_CONFIGMAP` | string | `""` | `namespace/name` of a ConfigMap holding a `policy.yaml` that maps endpoints to a component profile and marks exemptions. Validated at startup. See [Component policy](#component-policy). |
+
 ### HyperShift
 
 On HyperShift, the hosted control plane's `APIServer` CR lives in the management
@@ -303,6 +305,50 @@ sum by (method) (rate(tls_compliance_port_discovery_total[1h]))
 means it can run commands inside any pod it watches. Enable it only where that
 privilege is acceptable, and scope the operator's RBAC where possible. The
 feature is off by default.
+### Component policy
+
+By default every endpoint is evaluated against all three component profiles
+(APIServer, IngressController, KubeletConfig). A policy ConfigMap selects the
+one profile that counts for an endpoint and can exempt endpoints that cannot
+honor the cluster profile:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tls-compliance-operator-policy
+  namespace: tls-compliance-operator-system
+data:
+  policy.yaml: |
+    rules:
+      - namespace: "^openshift-ingress$"
+        profile: ingress
+      - port: "^10250$"
+        profile: kubelet
+      - namespace: "^openshift-e2e-loki$"
+        profile: exempt
+```
+
+Start the operator with `--policy-configmap=tls-compliance-operator-system/tls-compliance-operator-policy`.
+
+Rules are evaluated top to bottom and the first match wins. Each of
+`namespace`, `process`, `port`, and `component` is an anchored Go regular
+expression; an omitted matcher matches anything. `process` is the source object
+name (the workload owner for pods) and `component` is the source kind
+(`Service`, `Pod`, `Ingress`, `Route`, ...). `profile` is one of `apiserver`,
+`ingress`, `kubelet`, or `exempt`. With no matching rule the endpoint uses
+`apiserver`.
+
+- Invalid regular expressions and unknown profiles fail startup.
+- Rules that can never match (because an earlier rule is a catch-all or has
+  identical matchers) are logged as warnings.
+- An `exempt` endpoint is still scanned and reported, but its
+  `TLSProfileCompliant` condition is `True` with reason `Exempt`, it never counts
+  as non-compliant for adherence, and a `PolicyExempt` event is emitted. The
+  report records `status.exempt`, `status.exemptReason`, and
+  `status.policyProfile`.
+
+The policy is read once at startup; a change requires an operator restart.
 
 
 ## Logging
