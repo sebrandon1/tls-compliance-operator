@@ -4,13 +4,21 @@ on:
   push:
     branches: [main]
   pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
 
 permissions: read-all
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:
     name: Run on Ubuntu
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Clone the code
         uses: actions/checkout@v7
@@ -27,7 +35,7 @@ jobs:
           path: |
             ~/.cache/golangci-lint
             bin/golangci-lint*
-          key: golangci-lint-${{ runner.os }}-${{ hashFiles('Makefile', 'go.mod') }}
+          key: golangci-lint-${{ runner.os }}-${{ hashFiles('Makefile', 'go.mod', '.golangci.yml') }}
 
       - name: Run linter
         run: make lint
@@ -36,3 +44,8 @@ jobs:
         run: |
           make manifests generate
           git diff --exit-code -- api config
+
+      - name: Check go.mod/go.sum are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
