@@ -40,6 +40,10 @@ const (
 	FailureReasonClosed FailureReason = "Closed"
 	// FailureReasonFiltered is reserved for future use — not currently produced by classifyFailure
 	FailureReasonFiltered FailureReason = "Filtered"
+	// FailureReasonLocalhostOnly is synthesized by the controller when the pod
+	// IP probe fails and every discovered bind address for the port is
+	// loopback. It is never produced by classifyFailure.
+	FailureReasonLocalhostOnly FailureReason = "LocalhostOnly"
 	// FailureReasonNoTLS indicates the port is open but does not speak TLS
 	FailureReasonNoTLS FailureReason = "NoTLS"
 	// FailureReasonPlaintextHTTP indicates the port is serving plaintext HTTP without TLS

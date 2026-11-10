@@ -160,6 +160,7 @@ spec:
                 - Timeout
                 - Closed
                 - Filtered
+                - LocalhostOnly
                 - NoTLS
                 - PlaintextHTTP
                 - MutualTLSRequired

@@ -268,6 +268,7 @@ func TestWriteJUnit_AllStatusTypes(t *testing.T) {
 		securityv1alpha1.ComplianceStatusTimeout,
 		securityv1alpha1.ComplianceStatusClosed,
 		securityv1alpha1.ComplianceStatusFiltered,
+		securityv1alpha1.ComplianceStatusLocalhostOnly,
 		securityv1alpha1.ComplianceStatusNoTLS,
 		securityv1alpha1.ComplianceStatusPlaintextHTTP,
 		securityv1alpha1.ComplianceStatusMutualTLSRequired,
@@ -312,8 +313,9 @@ func TestWriteJUnit_AllStatusTypes(t *testing.T) {
 			passCount++
 		}
 	}
-	if passCount != 1 {
-		t.Errorf("expected exactly 1 passing test (Compliant), got %d", passCount)
+	// Compliant and LocalhostOnly pass; every other status is a failure.
+	if passCount != 2 {
+		t.Errorf("expected exactly 2 passing tests (Compliant, LocalhostOnly), got %d", passCount)
 	}
 }
 

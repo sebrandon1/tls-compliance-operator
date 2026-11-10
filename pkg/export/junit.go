@@ -268,6 +268,9 @@ func reportToTestCase(r *securityv1alpha1.TLSComplianceReport) JUnitTestCase {
 	switch r.Status.ComplianceStatus {
 	case securityv1alpha1.ComplianceStatusCompliant:
 		// pass — no failure
+	case securityv1alpha1.ComplianceStatusLocalhostOnly:
+		// pass — the listener is intentionally bound to loopback, so the pod IP
+		// probe cannot reach it but the endpoint is not a compliance failure.
 	case securityv1alpha1.ComplianceStatusNonCompliant:
 		tc.Failure = &JUnitFailure{
 			Message: "NonCompliant: supports deprecated TLS versions",

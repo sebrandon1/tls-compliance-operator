@@ -117,8 +117,8 @@ To refresh this comparison, re-read upstream's
 | Expected-groups assertion | No standalone assertion mode | `--expected-groups` + `--expected-groups-mode` | Upstream-only |
 | PQC-only quick gate | No (PQC readiness is reported) | `--pqc-check` (TLS 1.3 + ML-KEM, non-zero exit) | Upstream-only |
 | Pass/fail exit gating | `--run-once` exit codes; `--fail-on-non-compliant` in the plugin | Policy and `--pqc-check` exit codes | Equivalent |
-| Endpoint status classification | 12 statuses + 4 conditions | 5 statuses (`OK`, `NO_TLS`, `LOCALHOST_ONLY`, `NO_PORTS`, `PROBE_PORT`) | Operator-only |
-| Localhost-only listener detection | No — `Filtered` status is reserved but never emitted | Yes (`LOCALHOST_ONLY`, with listen-address precedence) | Upstream-only |
+| Endpoint status classification | 13 statuses + 4 conditions | 5 statuses (`OK`, `NO_TLS`, `LOCALHOST_ONLY`, `NO_PORTS`, `PROBE_PORT`) | Operator-only |
+| Localhost-only listener detection | Yes (`LocalhostOnly`, with all observed bind addresses recorded) | Yes (`LOCALHOST_ONLY`, with listen-address precedence) | Shared |
 
 ### Output, reporting, and CI
 
@@ -161,8 +161,6 @@ Each entry links to a tracked issue with an implementation plan and testing goal
 
 | Issue | Gap | What upstream does | What the operator does today | Where to change |
 |---|---|---|---|---|
-| [#655](https://github.com/sebrandon1/tls-compliance-operator/issues/655) | **Undeclared port discovery** | Execs into each pod and reads `/proc/net/tcp{,6}` to find every listener, not just declared `containerPort`s | Uses declared container ports plus a TLS-port heuristic (`isTLSContainerPort`) | `pkg/endpoint/resolver.go` (`ExtractFromPod`); needs an exec/kubelet path and RBAC |
-| [#656](https://github.com/sebrandon1/tls-compliance-operator/issues/656) | **Localhost-only detection** | Emits `LOCALHOST_ONLY` by comparing the listen address, so loopback-only ports are not reported as failures | Probes the pod IP and never distinguishes a loopback-bound listener; `ComplianceStatusFiltered` is reserved but unused | `pkg/tlscheck/types.go`, `api/v1alpha1/tlscompliancereport_types.go`, `pkg/endpoint/resolver.go` |
 | [#657](https://github.com/sebrandon1/tls-compliance-operator/issues/657) | **Broader STARTTLS** | 13 protocol names accepted by testssl (incl. MySQL, POP3, XMPP, NNTP, Sieve); postgres/mysql auto-detected from process names | SMTP, IMAP, LDAP, PostgreSQL only | `pkg/tlscheck/starttls.go` (add at least MySQL) |
 | [#658](https://github.com/sebrandon1/tls-compliance-operator/issues/658) | **Gate-friendly JUnit naming** | Stable case names keyed by namespace/workload/port, plus the `OCPFeatureGate:TLSAdherence` tag | Cases named `host:port` | `pkg/export/junit.go` |
 | [#659](https://github.com/sebrandon1/tls-compliance-operator/issues/659) | **Expected-groups assertion** | `--expected-groups` with `contains`/`exact` over advertised curves, independent of profiles | Reports `negotiatedCurves` and checks profile groups, but exposes no assertion or gate | `pkg/export/` (filter/gate) and `cmd/kubectl-tlsreport/` |

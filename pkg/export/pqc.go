@@ -40,6 +40,7 @@ var UnscannableStatuses = map[securityv1alpha1.ComplianceStatus]bool{
 	securityv1alpha1.ComplianceStatusUnreachable:       true,
 	securityv1alpha1.ComplianceStatusClosed:            true,
 	securityv1alpha1.ComplianceStatusFiltered:          true,
+	securityv1alpha1.ComplianceStatusLocalhostOnly:     true,
 	securityv1alpha1.ComplianceStatusMutualTLSRequired: true,
 	securityv1alpha1.ComplianceStatusPending:           true,
 	securityv1alpha1.ComplianceStatusUnknown:           true,

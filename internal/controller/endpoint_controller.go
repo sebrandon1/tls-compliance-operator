@@ -789,6 +789,8 @@ func failureReasonToComplianceStatus(reason tlscheck.FailureReason) securityv1al
 		return securityv1alpha1.ComplianceStatusClosed
 	case tlscheck.FailureReasonFiltered:
 		return securityv1alpha1.ComplianceStatusFiltered
+	case tlscheck.FailureReasonLocalhostOnly:
+		return securityv1alpha1.ComplianceStatusLocalhostOnly
 	default:
 		return securityv1alpha1.ComplianceStatusUnreachable
 	}

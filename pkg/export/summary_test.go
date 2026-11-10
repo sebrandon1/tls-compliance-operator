@@ -144,6 +144,36 @@ func TestComputeSummary_MixedStatuses(t *testing.T) {
 	}
 }
 
+func TestComputeSummary_LocalhostOnlyIsNotTLSCapable(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant,
+			},
+		},
+		{
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusLocalhostOnly,
+			},
+		},
+	}
+
+	s := ComputeSummary(reports, time.Now())
+
+	if s.Total != 2 {
+		t.Errorf("Total = %d, want 2", s.Total)
+	}
+	if s.TLSCapable != 1 {
+		t.Errorf("TLSCapable = %d, want 1 (localhost-only has no handshake)", s.TLSCapable)
+	}
+	if s.CompliancePercent != 100 {
+		t.Errorf("CompliancePercent = %f, want 100", s.CompliancePercent)
+	}
+	if s.ByStatus[securityv1alpha1.ComplianceStatusLocalhostOnly] != 1 {
+		t.Errorf("ByStatus[LocalhostOnly] = %d, want 1", s.ByStatus[securityv1alpha1.ComplianceStatusLocalhostOnly])
+	}
+}
+
 func TestComputeSummary_CertExpiry(t *testing.T) {
 	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
 

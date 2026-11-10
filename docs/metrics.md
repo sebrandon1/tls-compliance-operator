@@ -4,7 +4,7 @@ All metrics use the `tls_compliance_` prefix.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `tls_compliance_endpoints_total` | Gauge | `status` | Endpoints by compliance status, counting only reports inside the namespace filter |
+| `tls_compliance_endpoints_total` | Gauge | `status` | Endpoints by compliance status, counting only reports inside the namespace filter. `LocalhostOnly` is its own `status` value; exclude it from compliance-rate queries if loopback-only listeners should not dilute the denominator: `sum(tls_compliance_endpoints_total{status!="LocalhostOnly"})` |
 | `tls_compliance_check_duration_seconds` | Histogram | - | TLS check duration |
 | `tls_compliance_certificate_expiry_days` | Gauge | `host`, `port` | Days until certificate expiry. Requires `--metrics-per-endpoint`. |
 | `tls_compliance_version_support` | Gauge | `host`, `port`, `version` | TLS version support (1=yes, 0=no). Requires `--metrics-per-endpoint`. |

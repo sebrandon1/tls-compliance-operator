@@ -282,6 +282,11 @@ func (in *TLSComplianceReportStatus) DeepCopyInto(out *TLSComplianceReportStatus
 		in, out := &in.LastSeenAt, &out.LastSeenAt
 		*out = (*in).DeepCopy()
 	}
+	if in.ListenAddresses != nil {
+		in, out := &in.ListenAddresses, &out.ListenAddresses
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.History != nil {
 		in, out := &in.History, &out.History
 		*out = make([]ComplianceHistoryEntry, len(*in))

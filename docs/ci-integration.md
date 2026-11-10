@@ -36,7 +36,8 @@ persistent flag on every `kubectl tlsreport` subcommand.
 
 **Unscannable endpoints are skipped, not failed.** A report is skipped when its
 compliance status is `Timeout`, `Unreachable`, `Closed`, `Filtered`,
-`MutualTLSRequired`, `Pending`, `Unknown`, or `PlaintextHTTP`, or when its
+`LocalhostOnly`, `MutualTLSRequired`, `Pending`, `Unknown`, or
+`PlaintextHTTP`, or when its
 readiness is `NoPQC` (no TLS was detected). This mirrors upstream
 `tls-scanner`'s `SkipUnscannable` behavior, and keeps the PQC gate orthogonal to
 `--fail-on-non-compliant` — combine both flags if you want a pipeline that

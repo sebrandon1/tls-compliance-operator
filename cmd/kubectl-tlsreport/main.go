@@ -242,6 +242,7 @@ func registerFlagCompletions(rootCmd *cobra.Command) {
 			string(securityv1alpha1.ComplianceStatusTimeout),
 			string(securityv1alpha1.ComplianceStatusClosed),
 			string(securityv1alpha1.ComplianceStatusFiltered),
+			string(securityv1alpha1.ComplianceStatusLocalhostOnly),
 			string(securityv1alpha1.ComplianceStatusNoTLS),
 			string(securityv1alpha1.ComplianceStatusPlaintextHTTP),
 			string(securityv1alpha1.ComplianceStatusMutualTLSRequired),

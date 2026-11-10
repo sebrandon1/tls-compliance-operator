@@ -3895,6 +3895,7 @@ func TestFailureReasonToComplianceStatus(t *testing.T) {
 		{tlscheck.FailureReasonTimeout, securityv1alpha1.ComplianceStatusTimeout},
 		{tlscheck.FailureReasonClosed, securityv1alpha1.ComplianceStatusClosed},
 		{tlscheck.FailureReasonFiltered, securityv1alpha1.ComplianceStatusFiltered},
+		{tlscheck.FailureReasonLocalhostOnly, securityv1alpha1.ComplianceStatusLocalhostOnly},
 		{tlscheck.FailureReasonUnreachable, securityv1alpha1.ComplianceStatusUnreachable},
 		{tlscheck.FailureReason("SomethingUnknown"), securityv1alpha1.ComplianceStatusUnreachable},
 	}

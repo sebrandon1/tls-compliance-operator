@@ -17,6 +17,8 @@ limitations under the License.
 package endpoint
 
 import (
+	"net"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -618,6 +620,78 @@ func TestIsTLSContainerPort(t *testing.T) {
 				t.Errorf("isTLSContainerPort(%v) = %v, want %v", tt.port, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestExtractFromPodWithListeners_AttachesAddresses(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "app", Ports: []corev1.ContainerPort{{ContainerPort: 443, Protocol: corev1.ProtocolTCP}}},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.5"},
+	}
+
+	listeners := []ProcNetListener{
+		{Port: 443, Address: net.ParseIP("127.0.0.1")},
+		{Port: 443, Address: net.ParseIP("::1")},
+		{Port: 9443, Address: net.ParseIP("0.0.0.0")},
+	}
+	endpoints := ExtractFromPodWithListeners(pod, listeners, true)
+	if len(endpoints) != 2 {
+		t.Fatalf("expected 2 endpoints, got %d", len(endpoints))
+	}
+
+	declared := endpoints[0]
+	if declared.Port != 443 {
+		t.Fatalf("endpoint[0].Port = %d, want 443", declared.Port)
+	}
+	if !declared.ListenAddressesKnown {
+		t.Error("declared port should have known listen addresses")
+	}
+	if want := []string{"127.0.0.1", "::1"}; !reflect.DeepEqual(declared.ListenAddresses, want) {
+		t.Errorf("declared ListenAddresses = %v, want %v", declared.ListenAddresses, want)
+	}
+
+	discovered := endpoints[1]
+	if discovered.Port != 9443 {
+		t.Fatalf("endpoint[1].Port = %d, want 9443", discovered.Port)
+	}
+	if want := []string{"0.0.0.0"}; !reflect.DeepEqual(discovered.ListenAddresses, want) {
+		t.Errorf("discovered ListenAddresses = %v, want %v", discovered.ListenAddresses, want)
+	}
+	if IsLoopbackOnly(discovered.ListenAddresses) {
+		t.Error("wildcard listener must not be loopback-only")
+	}
+}
+
+func TestExtractFromPodWithListeners_KnownEmptyClears(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "app", Ports: []corev1.ContainerPort{{ContainerPort: 443, Protocol: corev1.ProtocolTCP}}},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.5"},
+	}
+
+	endpoints := ExtractFromPodWithListeners(pod, nil, true)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(endpoints))
+	}
+	if !endpoints[0].ListenAddressesKnown {
+		t.Error("addresses should be known")
+	}
+	if len(endpoints[0].ListenAddresses) != 0 {
+		t.Errorf("ListenAddresses = %v, want empty", endpoints[0].ListenAddresses)
+	}
+
+	unknown := ExtractFromPodWithPorts(pod, nil)
+	if unknown[0].ListenAddressesKnown {
+		t.Error("ExtractFromPodWithPorts must not claim known addresses")
 	}
 }
 
