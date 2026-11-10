@@ -76,6 +76,73 @@ spec:
                 maximum: 65535
                 minimum: 1
                 type: integer
+              scan:
+                description: |-
+                  Scan overrides the operator's global scan settings for this target.
+                  Unset fields fall back to the operator flags.
+                properties:
+                  clientCertificate:
+                    description: |-
+                      ClientCertificate references a Secret holding the client certificate
+                      presented when probing mTLS endpoints.
+                    properties:
+                      certKey:
+                        description: |-
+                          CertKey is the Secret key holding the PEM client certificate.
+                          Defaults to "tls.crt".
+                        type: string
+                      keyKey:
+                        description: |-
+                          KeyKey is the Secret key holding the PEM private key.
+                          Defaults to "tls.key".
+                        type: string
+                      name:
+                        description: Name of the Secret.
+                        minLength: 1
+                        type: string
+                      namespace:
+                        description: Namespace of the Secret.
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    - namespace
+                    type: object
+                  enumerateCiphers:
+                    description: EnumerateCiphers overrides the global cipher enumeration
+                      setting.
+                    type: boolean
+                  interval:
+                    description: Interval overrides the global scan interval for this
+                      target.
+                    type: string
+                  profile:
+                    description: |-
+                      Profile selects the built-in TLS security profile ("Old",
+                      "Intermediate", "Modern") to evaluate this target against, in addition
+                      to the cluster component profiles. Empty keeps the default behavior.
+                    enum:
+                    - Old
+                    - Intermediate
+                    - Modern
+                    type: string
+                  timeout:
+                    description: Timeout overrides the per-connection TLS probe timeout
+                      for this target.
+                    type: string
+                  tlsVersions:
+                    description: |-
+                      TLSVersions restricts which TLS versions are probed ("1.0", "1.1",
+                      "1.2", "1.3"). Empty probes every version, like the global setting.
+                    items:
+                      enum:
+                      - "1.0"
+                      - "1.1"
+                      - "1.2"
+                      - "1.3"
+                      type: string
+                    type: array
+                type: object
             required:
             - host
             - port
@@ -93,6 +160,7 @@ spec:
                 - Timeout
                 - Closed
                 - Filtered
+                - LocalhostOnly
                 - NoTLS
                 - PlaintextHTTP
                 - MutualTLSRequired

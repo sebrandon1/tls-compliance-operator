@@ -31,15 +31,15 @@ metadata:
       ]
     capabilities: Deep Insights
     categories: Security
-    containerImage: quay.io/bapalm/tls-compliance-operator:v1.1.22
-    createdAt: "2026-11-03T17:10:00Z"
+    containerImage: quay.io/bapalm/tls-compliance-operator:v1.2.0
+    createdAt: "2026-11-10T20:57:47Z"
     description: Continuously discovers TLS endpoints and reports their protocol,
       certificate, and compliance status.
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     repository: https://github.com/sebrandon1/tls-compliance-operator
     support: Brandon Palm
-  name: tls-compliance-operator.v1.1.22
+  name: tls-compliance-operator.v1.2.0
 spec:
   apiservicedefinitions: {}
   customresourcedefinitions:
@@ -54,6 +54,9 @@ spec:
       displayName: TLS Compliance Target
       kind: TLSComplianceTarget
       name: tlscompliancetargets.security.telco.openshift.io
+      version: v1alpha1
+    - kind: TLSSecurityProfile
+      name: tlssecurityprofiles.security.telco.openshift.io
       version: v1alpha1
   description: |
     The TLS Compliance Operator continuously monitors TLS endpoints across a Kubernetes or OpenShift cluster.
@@ -75,13 +78,7 @@ spec:
         - apiGroups:
           - ""
           resources:
-          - events
-          verbs:
-          - create
-          - patch
-        - apiGroups:
-          - ""
-          resources:
+          - configmaps
           - nodes
           - pods
           - services
@@ -89,6 +86,25 @@ spec:
           - get
           - list
           - watch
+        - apiGroups:
+          - ""
+          resources:
+          - events
+          verbs:
+          - create
+          - patch
+        - apiGroups:
+          - ""
+          resources:
+          - pods/exec
+          verbs:
+          - create
+        - apiGroups:
+          - ""
+          resources:
+          - secrets
+          verbs:
+          - get
         - apiGroups:
           - config.openshift.io
           resources:
@@ -161,6 +177,7 @@ spec:
           resources:
           - imagecertificationinfoes
           - tlscompliancetargets
+          - tlssecurityprofiles
           verbs:
           - get
           - list
@@ -238,7 +255,7 @@ spec:
                   value: "1"
                 - name: GOMEMLIMIT
                   value: 460MiB
-                image: quay.io/bapalm/tls-compliance-operator:v1.1.22
+                image: quay.io/bapalm/tls-compliance-operator:v1.2.0
                 livenessProbe:
                   httpGet:
                     path: /healthz
@@ -324,4 +341,4 @@ spec:
   minKubeVersion: 1.28.0
   provider:
     name: Brandon Palm
-  version: 1.1.22
+  version: 1.2.0

@@ -35,3 +35,6 @@ dist/
 
 # Playwright MCP session artifacts
 .playwright-mcp/
+
+# Test server binary built from test/testserver (built inside the container image)
+/test/testserver/testserver
