@@ -135,7 +135,9 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 build: manifests generate fmt vet ## Build manager binary.
 	go build -o bin/manager cmd/main.go
 
-PLUGIN_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+# Only match release tags: the v<major> tag points at the same commit as the
+# latest release, and an unqualified describe would report "v1" for local builds.
+PLUGIN_VERSION ?= $(shell git describe --tags --always --dirty --match 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || echo dev)
 
 .PHONY: build-plugin
 build-plugin: fmt vet ## Build kubectl-tlsreport plugin binary.
