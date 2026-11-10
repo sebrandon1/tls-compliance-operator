@@ -29,6 +29,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 	"github.com/sebrandon1/tls-compliance-operator/test/utils"
 )
 
@@ -45,6 +46,10 @@ var _ = Describe("ICI Integration", Label("ici-integration"), Ordered, func() {
 		if iciRepo == "" {
 			Skip("ICI_REPO not set — skipping ICI integration tests")
 		}
+
+		// This Describe can run without the Manager suite (label filter), so it
+		// must not assume a previously deployed tls-compliance-operator.
+		ensureManagerDeployed()
 
 		iciImg := os.Getenv("ICI_IMG")
 		if iciImg == "" {
@@ -158,21 +163,22 @@ var _ = Describe("ICI Integration", Label("ici-integration"), Ordered, func() {
 				labels := utils.GetNonEmptyLines(output)
 				g.Expect(labels).NotTo(BeEmpty(), "no ICI CRs with digest labels found")
 				for _, lbl := range labels {
-					g.Expect(lbl).To(HavePrefix("sha256-"))
+					g.Expect(lbl).To(MatchRegexp(`^sha256-[0-9a-f]{16,}$`), "digest label %q", lbl)
 				}
 			}, 5*time.Minute, 10*time.Second).Should(Succeed())
 		})
 
 		It("should populate imageCertificationInfo on the Pod TLSComplianceReport", func() {
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "tlsreport",
-					"-o", fmt.Sprintf(
-						"jsonpath={range .items[?(@.spec.sourceName==%q)]}{.status.imageCertificationInfo}{'\\n'}{end}",
-						iciTestPodName))
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(strings.TrimSpace(output)).NotTo(BeEmpty(),
+				report := waitForCheckedReport(g, securityv1alpha1.SourceKindPod, "default", iciTestPodName, 443)
+				g.Expect(report.Status.ImageCertificationInfo).NotTo(BeEmpty(),
 					"imageCertificationInfo should be populated for Pod %s", iciTestPodName)
+				for _, info := range report.Status.ImageCertificationInfo {
+					g.Expect(info.ContainerName).NotTo(BeEmpty())
+					g.Expect(info.ImageRef).To(ContainSubstring("sha256:"))
+					g.Expect(info.ICIName).NotTo(BeEmpty())
+					g.Expect(info.CertificationStatus).NotTo(BeEmpty())
+				}
 			}, 5*time.Minute, 10*time.Second).Should(Succeed())
 		})
 	})
@@ -207,15 +213,14 @@ var _ = Describe("ICI Integration", Label("ici-integration"), Ordered, func() {
 
 		It("should create a TLSComplianceReport without imageCertificationInfo", func() {
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "tlsreport",
-					"-o", fmt.Sprintf(
-						"jsonpath={range .items[?(@.spec.sourceName==%q)]}{.status.imageCertificationInfo}{'\\n'}{end}",
-						gracefulTestPodName))
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(strings.TrimSpace(output)).To(BeEmpty(),
-					"imageCertificationInfo should be absent when ICI CRD not installed")
+				report := waitForCheckedReport(g, securityv1alpha1.SourceKindPod, "default", gracefulTestPodName, 443)
+				g.Expect(report.Status.ImageCertificationInfo).To(BeEmpty(),
+					"imageCertificationInfo should be absent when the ICI CRD is not installed")
 			}, 5*time.Minute, 10*time.Second).Should(Succeed())
+
+			out, err := utils.Run(exec.Command("kubectl", "get", "crd", "imagecertificationinfoes"))
+			Expect(err).To(HaveOccurred(), "ICI CRD should be uninstalled for this spec: %s", out)
+			Expect(out).To(ContainSubstring("NotFound"))
 		})
 	})
 })
