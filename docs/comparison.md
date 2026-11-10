@@ -18,8 +18,8 @@ parity gaps.
 |---|---|
 | Upstream repo | [`openshift/tls-scanner`](https://github.com/openshift/tls-scanner) |
 | Upstream revision | `main` @ [`df6f8d46`](https://github.com/openshift/tls-scanner/tree/df6f8d46) ("Merge pull request #64 … junit-metadata", 2026-10-20) |
-| Checked | 2026-11-05 |
-| This repo | `tls-compliance-operator` @ `b352119` (v1.1.22) |
+| Checked | 2026-11-10 |
+| This repo | `tls-compliance-operator` @ [`v1.2.0`](https://github.com/sebrandon1/tls-compliance-operator/tree/v1.2.0) |
 
 Upstream has **no git tags and no GitHub releases** — it versions by long-lived
 `release-*` branches — so the comparison is pinned to a commit. Upstream's own

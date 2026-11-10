@@ -55,6 +55,10 @@ spec:
     - jsonPath: .status.pqcReadiness
       name: PQC
       type: string
+    - jsonPath: .status.listenAddresses[0]
+      name: Listen
+      priority: 1
+      type: string
     - jsonPath: .status.certificateInfo.daysUntilExpiry
       name: CertExpiry
       type: integer
@@ -110,6 +114,7 @@ spec:
                 - TLSRoute
                 - GRPCRoute
                 - Gateway
+                - Host
                 type: string
               sourceName:
                 description: SourceName is the name of the source resource
@@ -241,6 +246,15 @@ spec:
                   subject:
                     description: Subject is the certificate subject
                     type: string
+                  trustError:
+                    description: TrustError explains why certificate chain verification
+                      failed
+                    type: string
+                  trusted:
+                    description: |-
+                      Trusted reports whether the certificate chain verified against the
+                      configured --ca-cert bundle. Absent when trust verification is disabled.
+                    type: boolean
                 type: object
               checkCount:
                 description: CheckCount is the number of TLS checks performed
@@ -272,6 +286,7 @@ spec:
                 - Timeout
                 - Closed
                 - Filtered
+                - LocalhostOnly
                 - NoTLS
                 - PlaintextHTTP
                 - MutualTLSRequired
@@ -343,6 +358,59 @@ spec:
                 description: ConsecutiveErrors is the number of consecutive check
                   errors
                 type: integer
+              customProfileCompliance:
+                description: |-
+                  CustomProfileCompliance contains the compliance result against the
+                  TLSSecurityProfile selected by the operator's --custom-profile flag.
+                  Nil when no custom profile is configured.
+                properties:
+                  compliant:
+                    description: Compliant indicates whether the endpoint meets the
+                      profile requirements
+                    type: boolean
+                  disallowedCiphers:
+                    description: |-
+                      DisallowedCiphers lists cipher suites negotiated by the endpoint that are
+                      not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  disallowedGroups:
+                    description: |-
+                      DisallowedGroups lists key exchange groups negotiated by the endpoint
+                      that are not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  groupsCompliant:
+                    description: |-
+                      GroupsCompliant indicates whether the endpoint's negotiated curves are
+                      in the profile's allowed groups list
+                    type: boolean
+                  minTLSVersionMet:
+                    description: |-
+                      MinTLSVersionMet indicates whether the endpoint does not support TLS versions
+                      below the profile's minimum
+                    type: boolean
+                  profileType:
+                    description: ProfileType is the configured profile type (Old,
+                      Intermediate, Modern, Custom)
+                    type: string
+                required:
+                - compliant
+                - groupsCompliant
+                - minTLSVersionMet
+                - profileType
+                type: object
+              exempt:
+                description: |-
+                  Exempt reports whether the policy marks this endpoint exempt from
+                  profile adherence. Exempt endpoints are still scanned and reported.
+                type: boolean
+              exemptReason:
+                description: ExemptReason describes the policy rule that granted the
+                  exemption.
+                type: string
               fipsDetected:
                 description: |-
                   FIPSDetected indicates whether the operator detected FIPS mode on the cluster.
@@ -379,6 +447,7 @@ spec:
                       - Timeout
                       - Closed
                       - Filtered
+                      - LocalhostOnly
                       - NoTLS
                       - PlaintextHTTP
                       - MutualTLSRequired
@@ -615,6 +684,16 @@ spec:
                 description: LastSeenAt is when this endpoint was last observed
                 format: date-time
                 type: string
+              listenAddresses:
+                description: |-
+                  ListenAddresses are the bind addresses observed for this endpoint's port
+                  from /proc/net/tcp{,6}. Only populated for Pod sources when
+                  --discover-listening-ports is enabled. An empty list means the bind
+                  addresses are unknown or the port is no longer bound.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
               mlkemSupported:
                 description: |-
                   MLKEMSupported indicates whether the endpoint accepted a hybrid ML-KEM
@@ -638,6 +717,12 @@ spec:
               overallCipherGrade:
                 description: OverallCipherGrade is the worst grade across all negotiated
                   cipher suites
+                type: string
+              policyProfile:
+                description: |-
+                  PolicyProfile is the component profile selected for this endpoint by the
+                  policy ConfigMap (apiserver, ingress, kubelet, or exempt). Empty when no
+                  policy is configured.
                 type: string
               pqcReadiness:
                 description: |-
@@ -663,6 +748,50 @@ spec:
                 description: ScanDuration is the wall-clock time taken by the last
                   TLS check (e.g. "1.23s")
                 type: string
+              selectedProfileCompliance:
+                description: |-
+                  SelectedProfileCompliance contains the compliance result against the
+                  TLS security profile selected by the source TLSComplianceTarget's
+                  `spec.scan.profile`. Nil when the target selects no profile.
+                properties:
+                  compliant:
+                    description: Compliant indicates whether the endpoint meets the
+                      profile requirements
+                    type: boolean
+                  disallowedCiphers:
+                    description: |-
+                      DisallowedCiphers lists cipher suites negotiated by the endpoint that are
+                      not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  disallowedGroups:
+                    description: |-
+                      DisallowedGroups lists key exchange groups negotiated by the endpoint
+                      that are not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  groupsCompliant:
+                    description: |-
+                      GroupsCompliant indicates whether the endpoint's negotiated curves are
+                      in the profile's allowed groups list
+                    type: boolean
+                  minTLSVersionMet:
+                    description: |-
+                      MinTLSVersionMet indicates whether the endpoint does not support TLS versions
+                      below the profile's minimum
+                    type: boolean
+                  profileType:
+                    description: ProfileType is the configured profile type (Old,
+                      Intermediate, Modern, Custom)
+                    type: string
+                required:
+                - compliant
+                - groupsCompliant
+                - minTLSVersionMet
+                - profileType
+                type: object
               serverPrefersOwnCiphers:
                 description: |-
                   ServerPrefersOwnCiphers indicates whether the TLS 1.2 endpoint selects its
@@ -674,6 +803,13 @@ spec:
                   TLSAdherence is the OpenShift APIServer TLS adherence mode
                   (e.g. LegacyAdheringComponentsOnly, StrictAllComponents).
                   Empty on non-OpenShift clusters or when the field is not set.
+                type: string
+              tlsProfileSource:
+                description: |-
+                  TLSProfileSource records where the TLS security profile used for this
+                  endpoint came from: "Cluster" when read from OpenShift config, or
+                  "Override" when forced with --tls-profile-type. Empty when no profile
+                  was applied.
                 type: string
               tlsVersions:
                 description: TLSVersions indicates which TLS versions are supported
@@ -700,6 +836,18 @@ spec:
                 - tls12
                 - tls13
                 type: object
+              workloadKind:
+                description: |-
+                  WorkloadKind is the kind of the workload controller that owns a Pod
+                  source (ReplicaSet, DaemonSet, StatefulSet, Job), taken from the pod's
+                  owner reference. Empty for non-Pod sources and for pods without an owner.
+                type: string
+              workloadName:
+                description: |-
+                  WorkloadName is the name of the owning workload controller for a Pod
+                  source. Unlike the pod name it survives pod recreation, which makes
+                  exported test names stable across runs.
+                type: string
             type: object
         required:
         - spec
