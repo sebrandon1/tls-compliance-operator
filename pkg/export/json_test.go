@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -133,6 +134,43 @@ func TestWriteJSON_SingleReport(t *testing.T) {
 	}
 	if r.CertIssuer != "Let's Encrypt" {
 		t.Errorf("expected certIssuer Let's Encrypt, got %s", r.CertIssuer)
+	}
+}
+
+func TestWriteJSON_ListenAddresses(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec: securityv1alpha1.TLSComplianceReportSpec{
+				Host:            "10.244.1.5",
+				Port:            8443,
+				SourceKind:      securityv1alpha1.SourceKindPod,
+				SourceNamespace: "default",
+				SourceName:      "loopback",
+			},
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				ComplianceStatus: securityv1alpha1.ComplianceStatusLocalhostOnly,
+				ListenAddresses:  []string{"127.0.0.1", "::1"},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteJSON(&buf, reports); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var result []JSONReport
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 report, got %d", len(result))
+	}
+	if result[0].Compliance != string(securityv1alpha1.ComplianceStatusLocalhostOnly) {
+		t.Errorf("compliance = %q, want LocalhostOnly", result[0].Compliance)
+	}
+	if want := []string{"127.0.0.1", "::1"}; !reflect.DeepEqual(result[0].ListenAddresses, want) {
+		t.Errorf("listenAddresses = %v, want %v", result[0].ListenAddresses, want)
 	}
 }
 

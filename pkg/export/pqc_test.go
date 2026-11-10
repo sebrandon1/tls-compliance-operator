@@ -97,6 +97,7 @@ func TestEvaluatePQCGate_UnscannableStatusesAreSkipped(t *testing.T) {
 		securityv1alpha1.ComplianceStatusUnreachable,
 		securityv1alpha1.ComplianceStatusClosed,
 		securityv1alpha1.ComplianceStatusFiltered,
+		securityv1alpha1.ComplianceStatusLocalhostOnly,
 		securityv1alpha1.ComplianceStatusMutualTLSRequired,
 		securityv1alpha1.ComplianceStatusPending,
 		securityv1alpha1.ComplianceStatusUnknown,

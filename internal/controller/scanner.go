@@ -89,6 +89,7 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep *endpoint.E
 			FirstSeenAt:      &now,
 			LastSeenAt:       &now,
 			NextScanAt:       r.nextScanAt(ctx, cr, &now),
+			ListenAddresses:  append([]string(nil), ep.ListenAddresses...),
 		}
 		apimeta.SetStatusCondition(&cr.Status.Conditions, metav1.Condition{
 			Type:               "Available",
@@ -127,6 +128,11 @@ func (r *EndpointReconciler) processEndpoint(ctx context.Context, ep *endpoint.E
 	if err := r.updateStatusWithRetry(ctx, crName, func(cr *securityv1alpha1.TLSComplianceReport) {
 		cr.Status.LastSeenAt = &now
 		cr.Status.NextScanAt = r.nextScanAt(ctx, cr, &now)
+		// Only an observation that actually read /proc/net/tcp is authoritative;
+		// a failed or disabled discovery must not erase the last known bind data.
+		if ep.ListenAddressesKnown {
+			cr.Status.ListenAddresses = append([]string(nil), ep.ListenAddresses...)
+		}
 	}); err != nil {
 		return fmt.Errorf("failed to update TLSComplianceReport LastSeenAt: %w", err)
 	}
@@ -389,6 +395,13 @@ func (r *EndpointReconciler) retryTLSCheck(ctx context.Context, crName, host str
 			break
 		}
 
+		// A loopback-only listener cannot be reached at the pod IP, so a probe
+		// failure is final: retrying only delays classification and would write
+		// a misleading Closed/Timeout status in the meantime.
+		if isProbeUnreachable(result.FailureReason) && r.isLoopbackOnlyReport(ctx, crName) {
+			break
+		}
+
 		if attempt < maxAttempts-1 {
 			retryDelay := backoff.Step()
 
@@ -444,13 +457,21 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 		if result != nil {
 			failReason = result.FailureReason
 		}
+		// A Closed/Timeout/Unreachable probe against a port whose every
+		// discovered bind address is loopback is not a compliance failure: the
+		// listener is intentionally unreachable from the pod IP. Reporting it as
+		// Closed/Unreachable would pollute compliance counts and warning events.
+		effectiveReason := failReason
+		if isProbeUnreachable(failReason) && r.isLoopbackOnlyReport(ctx, crName) {
+			effectiveReason = tlscheck.FailureReasonLocalhostOnly
+		}
 		reason := "unknown"
-		if failReason != "" {
-			reason = string(failReason)
+		if effectiveReason != "" {
+			reason = string(effectiveReason)
 		}
 		metrics.RecordCheckError(reason)
 
-		if isCircuitFailure(failReason) {
+		if isCircuitFailure(effectiveReason) {
 			r.recordCircuitFailure(crName)
 		} else {
 			r.recordCircuitSuccess(crName)
@@ -477,7 +498,7 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 				}
 			}
 
-			cr.Status.ComplianceStatus = failureReasonToComplianceStatus(failReason)
+			cr.Status.ComplianceStatus = failureReasonToComplianceStatus(effectiveReason)
 			cr.Status.ConsecutiveErrors++
 			cr.Status.LastError = checkErr.Error()
 			r.recordHistory(cr, &now, true)
@@ -486,14 +507,14 @@ func (r *EndpointReconciler) applyCheckResult(ctx context.Context, crName, host 
 		}
 
 		attempts := r.checkAttempts(ctx)
-		if failReason.IsTransient() && attempts > 1 && !errors.Is(checkErr, hostvalidation.ErrReservedAddress) {
+		if effectiveReason.IsTransient() && attempts > 1 && !errors.Is(checkErr, hostvalidation.ErrReservedAddress) {
 			metrics.RecordRetriesExhausted()
 			if r.Recorder != nil {
 				var cr securityv1alpha1.TLSComplianceReport
 				if err := r.Get(ctx, client.ObjectKey{Name: crName}, &cr); err == nil {
 					r.Recorder.Eventf(&cr, nil, corev1.EventTypeWarning, EventReasonRetryExhausted, EventActionScan,
 						"TLS check retries exhausted for %s after %d attempts: %s",
-						hostPort(host, int32(port)), attempts, failReason)
+						hostPort(host, int32(port)), attempts, effectiveReason)
 				}
 			}
 		}
@@ -788,26 +809,43 @@ func (r *EndpointReconciler) runScanCycleWithError(ctx context.Context, logger l
 // For hostNetwork pods, the resulting CR is labeled for queryability.
 
 // podEndpoints extracts TLS endpoints from pod. With listening-port discovery
-// enabled, undeclared ports are read from the first container's /proc/net/tcp;
-// any exec failure falls back to the declared ports so a scan never silently
-// drops endpoints.
+// enabled, /proc/net/tcp{,6} is read from the pod's containers until one succeeds;
+// all containers share the network namespace, so the first successful read
+// describes the whole pod. When every read fails the declared ports are used so a
+// scan never silently drops endpoints.
 func (r *EndpointReconciler) podEndpoints(ctx context.Context, pod *corev1.Pod) []endpoint.Endpoint {
 	if !r.DiscoverListeningPorts || r.ProcNetReader == nil || len(pod.Spec.Containers) == 0 {
 		return endpoint.ExtractFromPod(pod)
 	}
 
 	logger := log.FromContext(ctx).WithValues("pod", pod.Name, "namespace", pod.Namespace)
-	content, err := r.ProcNetReader.ReadProcNet(ctx, pod.Namespace, pod.Name, pod.Spec.Containers[0].Name)
-	if err != nil {
-		if ctx.Err() == nil {
-			logger.Info("listening-port discovery failed, using declared container ports", "error", err)
+	var listeners []endpoint.ProcNetListener
+	succeeded := 0
+	for i := range pod.Spec.Containers {
+		container := pod.Spec.Containers[i].Name
+		content, err := r.ProcNetReader.ReadProcNet(ctx, pod.Namespace, pod.Name, container)
+		if err != nil {
+			if ctx.Err() == nil {
+				logger.Info("listening-port discovery failed for container, continuing",
+					"container", container, "error", err)
+			}
+			continue
 		}
+		succeeded++
+		listeners = append(listeners, endpoint.ParseProcNetListeners(content)...)
+		// Every container shares the pod network namespace, so one successful
+		// read describes the whole pod; only fall through when a container
+		// cannot be exec'd (for example a distroless image without cat).
+		break
+	}
+
+	if succeeded == 0 {
 		metrics.RecordPortDiscovery("declared")
 		return endpoint.ExtractFromPod(pod)
 	}
 
 	metrics.RecordPortDiscovery("exec")
-	return endpoint.ExtractFromPodWithPorts(pod, endpoint.ParseProcNetTCP(content))
+	return endpoint.ExtractFromPodWithListeners(pod, listeners, true)
 }
 
 func (r *EndpointReconciler) scanPodEndpoints(ctx context.Context) error {
@@ -980,6 +1018,7 @@ func (r *EndpointReconciler) scanAllEndpoints(ctx context.Context) error {
 		string(securityv1alpha1.ComplianceStatusTimeout):           0,
 		string(securityv1alpha1.ComplianceStatusClosed):            0,
 		string(securityv1alpha1.ComplianceStatusFiltered):          0,
+		string(securityv1alpha1.ComplianceStatusLocalhostOnly):     0,
 		string(securityv1alpha1.ComplianceStatusNoTLS):             0,
 		string(securityv1alpha1.ComplianceStatusPlaintextHTTP):     0,
 		string(securityv1alpha1.ComplianceStatusMutualTLSRequired): 0,

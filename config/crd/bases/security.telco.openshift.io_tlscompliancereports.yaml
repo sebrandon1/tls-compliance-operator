@@ -55,6 +55,10 @@ spec:
     - jsonPath: .status.pqcReadiness
       name: PQC
       type: string
+    - jsonPath: .status.listenAddresses[0]
+      name: Listen
+      priority: 1
+      type: string
     - jsonPath: .status.certificateInfo.daysUntilExpiry
       name: CertExpiry
       type: integer
@@ -282,6 +286,7 @@ spec:
                 - Timeout
                 - Closed
                 - Filtered
+                - LocalhostOnly
                 - NoTLS
                 - PlaintextHTTP
                 - MutualTLSRequired
@@ -442,6 +447,7 @@ spec:
                       - Timeout
                       - Closed
                       - Filtered
+                      - LocalhostOnly
                       - NoTLS
                       - PlaintextHTTP
                       - MutualTLSRequired
@@ -678,6 +684,16 @@ spec:
                 description: LastSeenAt is when this endpoint was last observed
                 format: date-time
                 type: string
+              listenAddresses:
+                description: |-
+                  ListenAddresses are the bind addresses observed for this endpoint's port
+                  from /proc/net/tcp{,6}. Only populated for Pod sources when
+                  --discover-listening-ports is enabled. An empty list means the bind
+                  addresses are unknown or the port is no longer bound.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
               mlkemSupported:
                 description: |-
                   MLKEMSupported indicates whether the endpoint accepted a hybrid ML-KEM

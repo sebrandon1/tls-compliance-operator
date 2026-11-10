@@ -315,6 +315,10 @@ func (r *EndpointReconciler) updateConditions(cr *securityv1alpha1.TLSCompliance
 		complianceCondition.Status = metav1.ConditionFalse
 		complianceCondition.Reason = "NonCompliant"
 		complianceCondition.Message = "Endpoint only supports legacy TLS versions (no TLS 1.2 or 1.3)"
+	case securityv1alpha1.ComplianceStatusLocalhostOnly:
+		complianceCondition.Status = metav1.ConditionUnknown
+		complianceCondition.Reason = "LocalhostOnly"
+		complianceCondition.Message = "Endpoint listens only on loopback and cannot be probed from the pod IP"
 	default:
 		complianceCondition.Status = metav1.ConditionUnknown
 		complianceCondition.Reason = "Unknown"

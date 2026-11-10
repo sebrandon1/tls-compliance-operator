@@ -215,6 +215,10 @@ func TestSortReports_CompliancePriority(t *testing.T) {
 			Spec:   securityv1alpha1.TLSComplianceReportSpec{Host: "notls.test"},
 			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusNoTLS},
 		},
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{Host: "loopback.test"},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusLocalhostOnly},
+		},
 	}
 
 	SortReports(reports, "compliance")
@@ -223,6 +227,7 @@ func TestSortReports_CompliancePriority(t *testing.T) {
 		securityv1alpha1.ComplianceStatusCompliant,
 		securityv1alpha1.ComplianceStatusNonCompliant,
 		securityv1alpha1.ComplianceStatusNoTLS,
+		securityv1alpha1.ComplianceStatusLocalhostOnly,
 		securityv1alpha1.ComplianceStatusUnreachable,
 	}
 

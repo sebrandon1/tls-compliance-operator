@@ -98,6 +98,11 @@ func TestHasNonCompliantReports(t *testing.T) {
 			expected: false,
 		},
 		{
+			name:     "LocalhostOnly does not trigger",
+			reports:  []securityv1alpha1.TLSComplianceReport{makeReport(securityv1alpha1.ComplianceStatusLocalhostOnly)},
+			expected: false,
+		},
+		{
 			name:     "Warning alone does not trigger",
 			reports:  []securityv1alpha1.TLSComplianceReport{makeReport(securityv1alpha1.ComplianceStatusWarning)},
 			expected: false,

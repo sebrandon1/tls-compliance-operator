@@ -184,7 +184,7 @@ func getOperatorResult(reportName string) NormalizedResult {
 	result := NormalizedResult{
 		Endpoint:         fmt.Sprintf("%s:%d", report.Spec.Host, report.Spec.Port),
 		Reachable:        !isUnreachable(s.ComplianceStatus),
-		TLSDetected:      s.ComplianceStatus != string(securityv1alpha1.ComplianceStatusNoTLS) && s.ComplianceStatus != string(securityv1alpha1.ComplianceStatusPlaintextHTTP),
+		TLSDetected:      s.ComplianceStatus != string(securityv1alpha1.ComplianceStatusNoTLS) && s.ComplianceStatus != string(securityv1alpha1.ComplianceStatusPlaintextHTTP) && s.ComplianceStatus != string(securityv1alpha1.ComplianceStatusLocalhostOnly),
 		TLS10:            s.TLSVersions.TLS10,
 		TLS11:            s.TLSVersions.TLS11,
 		TLS12:            s.TLSVersions.TLS12,
@@ -431,7 +431,8 @@ func isUnreachable(status string) bool {
 	case string(securityv1alpha1.ComplianceStatusUnreachable),
 		string(securityv1alpha1.ComplianceStatusTimeout),
 		string(securityv1alpha1.ComplianceStatusClosed),
-		string(securityv1alpha1.ComplianceStatusFiltered):
+		string(securityv1alpha1.ComplianceStatusFiltered),
+		string(securityv1alpha1.ComplianceStatusLocalhostOnly):
 		return true
 	}
 	return false

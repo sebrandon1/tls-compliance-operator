@@ -197,8 +197,8 @@ bin/manager --run-once --require-pqc --output-format junit --output-file results
 | `NoPQC` (no TLS detected) | skipped |
 
 Endpoints are also skipped when their compliance status is `Timeout`,
-`Unreachable`, `Closed`, `Filtered`, `MutualTLSRequired`, `Pending`, `Unknown`,
-or `PlaintextHTTP`. Skipped endpoints never fail the gate, and they are always
+`Unreachable`, `Closed`, `Filtered`, `LocalhostOnly`, `MutualTLSRequired`,
+`Pending`, `Unknown`, or `PlaintextHTTP`. Skipped endpoints never fail the gate, and they are always
 counted and listed in the summary so a skip is never silent — see the
 [CI integration guide](ci-integration.md#pqc-only-gate) for the full exit-code
 table and sample output.

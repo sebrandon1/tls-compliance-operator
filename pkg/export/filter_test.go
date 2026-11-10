@@ -76,6 +76,27 @@ func TestFilterReports_EmptyFilters(t *testing.T) {
 	}
 }
 
+func TestFilterReports_ByLocalhostOnlyStatus(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{Host: "10.244.1.5", Port: 8443},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusLocalhostOnly},
+		},
+		{
+			Spec:   securityv1alpha1.TLSComplianceReportSpec{Host: "svc.default", Port: 443},
+			Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant},
+		},
+	}
+
+	filtered, err := FilterReports(reports, &FilterOptions{Status: "localhostonly"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].Status.ComplianceStatus != securityv1alpha1.ComplianceStatusLocalhostOnly {
+		t.Fatalf("filtered = %+v, want the LocalhostOnly report", filtered)
+	}
+}
+
 func TestFilterReports_ByNamespace(t *testing.T) {
 	reports := testReports()
 	filtered, _ := FilterReports(reports, &FilterOptions{Namespace: "default"})

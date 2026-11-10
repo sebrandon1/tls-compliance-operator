@@ -283,7 +283,7 @@ kubectl get tlscompliancereports -o jsonpath='{.items[0].status.tlsProfileSource
 
 A container can serve TLS on a port it never declares in `containerPorts`; the
 operator misses those endpoints by default. With `--discover-listening-ports`,
-the operator execs into each pod's first container and reads
+the operator execs into each pod's containers (until one succeeds) and reads
 `/proc/net/tcp` and `/proc/net/tcp6`:
 
 ```bash
@@ -294,10 +294,29 @@ Every socket in `LISTEN` state is added to the pod's endpoints. Discovered
 ports still pass the usual TLS heuristic (known TLS ports or an `https` name)
 unless `--scan-all-ports` is set. Ports already declared are never duplicated.
 
+All containers in a pod share one network namespace, so any successful read
+describes the whole pod; the per-container reads make the feature work when the
+main container is distroless (a sidecar with `cat` can provide the table).
+
+The bind address of every listener is recorded in
+`status.listenAddresses` on the report. When the pod IP probe fails and every
+recorded address for the port is loopback (`127.0.0.1`/`::1`), the report is
+classified as `LocalhostOnly` instead of `Closed`/`Unreachable`: the listener
+is intentionally unreachable from outside the pod and is not a compliance
+failure. This classification requires `--discover-listening-ports`; when the
+flag is off, no new addresses are recorded and the report is classified by the
+probe result (`Closed`/`Timeout`/`Unreachable`). The last observed addresses
+stay in `status.listenAddresses` until discovery runs again.
+It appears as its own `status="LocalhostOnly"` value in
+`tls_compliance_endpoints_total`, is excluded from `--fail-on-non-compliant`,
+and is skipped by the `--require-pqc` gate. A listener that rebinds to a
+non-loopback address is reclassified on the next periodic scan, which refreshes
+`status.listenAddresses`.
+
 If the exec fails (RBAC, a container without `cat`, a paused container), the
 scan logs the failure and continues with the declared ports. The outcome is
 counted in `tls_compliance_port_discovery_total{method="exec|declared"}`, so a
-silent degradation is visible:
+silent degradation is visible (`exec` means at least one container succeeded):
 
 ```promql
 sum by (method) (rate(tls_compliance_port_discovery_total[1h]))

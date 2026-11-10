@@ -26,10 +26,12 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"text/template"
@@ -1759,6 +1761,107 @@ spec:
 		})
 	})
 
+})
+
+var _ = Describe("Localhost-Only Listeners", Label("localhost-only"), Ordered, func() {
+	const (
+		loopbackPod       = "e2e-loopback"
+		procNetReaderName = "procnet-reader"
+	)
+
+	BeforeAll(func() {
+		// This Describe can run without the Manager suite (label filter), so it
+		// must bring up the operator with listening-port discovery enabled.
+		ensureManagerDeployed()
+		addManagerArg("--discover-listening-ports")
+	})
+
+	AfterAll(func() {
+		_, _ = utils.Run(exec.Command("kubectl", "delete", "pod", loopbackPod,
+			"-n", "default", "--grace-period=0", "--force", "--ignore-not-found"))
+		// Leave the operator as it was for the rest of a full-suite run.
+		removeManagerArg("--discover-listening-ports")
+	})
+
+	It("reports a loopback-only listener as LocalhostOnly", func() {
+		By("deploying a TLS server bound only to 127.0.0.1 with a procnet sidecar")
+		// The server image is FROM scratch, so it has no `cat`; the busybox
+		// sidecar is what /proc/net/tcp is read through. The server is first on
+		// purpose: it proves discovery reads every container, not just the first.
+		kubectlApplyManifest(fmt.Sprintf(`apiVersion: v1
+kind: Pod
+metadata:
+  name: %s
+  namespace: default
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: server
+    image: %s
+    imagePullPolicy: IfNotPresent
+    env:
+    - name: LISTEN_ADDR
+      value: "127.0.0.1"
+    - name: LISTEN_PORT
+      value: "8443"
+    ports:
+    - containerPort: 8443
+      name: https
+      protocol: TCP
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]
+  - name: %s
+    image: busybox:1.36
+    command: ["sh", "-c", "sleep 3600"]
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]
+`, loopbackPod, testServerImage, procNetReaderName), "loopback test server pod")
+		waitForPodRunningIn("default", loopbackPod)
+
+		var report securityv1alpha1.TLSComplianceReport
+		Eventually(func(g Gomega) {
+			hosts := podIPs(g, "default", loopbackPod)
+			// A recreated pod reuses the name but gets a new IP, and the report
+			// name includes the host, so select the report for the live pod.
+			var found bool
+			for _, candidate := range findReports(g, securityv1alpha1.SourceKindPod, "default", loopbackPod, 8443) {
+				if slices.Contains(hosts, candidate.Spec.Host) {
+					report = candidate
+					found = true
+					break
+				}
+			}
+			g.Expect(found).To(BeTrue(), "no report for the live pod IPs %v", hosts)
+			g.Expect(report.Status.CheckCount).To(BeNumerically(">=", 1))
+			cond := findCondition(report, "Available")
+			g.Expect(cond).NotTo(BeNil())
+			g.Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			g.Expect(report.Status.ComplianceStatus).To(Equal(securityv1alpha1.ComplianceStatusLocalhostOnly))
+			g.Expect(report.Status.LastError).NotTo(BeEmpty(), "the pod-IP probe should have failed")
+			g.Expect(report.Status.ListenAddresses).NotTo(BeEmpty(), "bind addresses should be recorded")
+			for _, addr := range report.Status.ListenAddresses {
+				ip := net.ParseIP(addr)
+				g.Expect(ip).NotTo(BeNil(), "listen address %q should parse", addr)
+				g.Expect(ip.IsLoopback()).To(BeTrue(), "listen address %q should be loopback", addr)
+			}
+		}, 5*time.Minute, 5*time.Second).Should(Succeed())
+
+		By("expecting no warning events for the localhost-only endpoint")
+		Consistently(func(g Gomega) {
+			g.Expect(reportEventExists(g, "RetryExhausted", report.Name)).To(BeFalse())
+			g.Expect(reportEventExists(g, "TLSNonCompliant", report.Name)).To(BeFalse())
+			g.Expect(reportEventExists(g, "TLSWarning", report.Name)).To(BeFalse())
+			g.Expect(reportEventExists(g, "ComplianceChanged", report.Name)).To(BeFalse())
+		}).WithTimeout(5 * time.Second).WithPolling(time.Second).Should(Succeed())
+	})
 })
 
 var _ = Describe("Listening Port Discovery", Label("port-discovery"), Ordered, func() {

@@ -73,6 +73,9 @@ func printReportDetail(r *securityv1alpha1.TLSComplianceReport, writers ...io.Wr
 	_, _ = fmt.Fprintf(w, "  Cipher Grade:    %s\n", r.Status.OverallCipherGrade)
 	_, _ = fmt.Fprintf(w, "  Forward Secrecy: %v\n", r.Status.ForwardSecrecy)
 	_, _ = fmt.Fprintf(w, "  Server Prefers Own Ciphers: %s\n", optionalBoolString(r.Status.ServerPrefersOwnCiphers))
+	if len(r.Status.ListenAddresses) > 0 {
+		_, _ = fmt.Fprintf(w, "  Listen Addresses: %s\n", strings.Join(r.Status.ListenAddresses, ", "))
+	}
 
 	_, _ = fmt.Fprintf(w, "\nTLS Versions:\n")
 	_, _ = fmt.Fprintf(w, "  SSL 3.0:  %v\n", r.Status.TLSVersions.SSL30)

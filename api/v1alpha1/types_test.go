@@ -124,6 +124,7 @@ func TestCRDEnumValues(t *testing.T) {
 		{"Timeout", ComplianceStatusTimeout, "Timeout"},
 		{"Closed", ComplianceStatusClosed, "Closed"},
 		{"Filtered", ComplianceStatusFiltered, "Filtered"},
+		{"LocalhostOnly", ComplianceStatusLocalhostOnly, "LocalhostOnly"},
 		{"NoTLS", ComplianceStatusNoTLS, "NoTLS"},
 		{"PlaintextHTTP", ComplianceStatusPlaintextHTTP, "PlaintextHTTP"},
 		{"MutualTLSRequired", ComplianceStatusMutualTLSRequired, "MutualTLSRequired"},

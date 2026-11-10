@@ -59,6 +59,7 @@ type JSONReport struct {
 	IPAddresses             []string          `json:"ipAddresses,omitempty"`
 	ALPNProtocols           map[string]string `json:"alpnProtocols,omitempty"`
 	ScanDuration            string            `json:"scanDuration,omitempty"`
+	ListenAddresses         []string          `json:"listenAddresses,omitempty"`
 }
 
 // ToJSONReports converts CRs to the flattened snapshot type used by JSON/YAML
@@ -136,6 +137,7 @@ func reportToJSON(r *securityv1alpha1.TLSComplianceReport) JSONReport {
 
 	jr.ALPNProtocols = r.Status.ALPNProtocols
 	jr.ScanDuration = r.Status.ScanDuration
+	jr.ListenAddresses = r.Status.ListenAddresses
 
 	return jr
 }

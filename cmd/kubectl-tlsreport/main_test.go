@@ -1333,6 +1333,31 @@ func TestPrintReportDetail_FullReport(t *testing.T) {
 	}
 }
 
+func TestPrintReportDetail_ListenAddresses(t *testing.T) {
+	report := securityv1alpha1.TLSComplianceReport{}
+	report.Name = "loopback"
+	report.Spec.Host = "10.244.1.5"
+	report.Spec.Port = 8443
+	report.Spec.SourceKind = securityv1alpha1.SourceKindPod
+	report.Spec.SourceNamespace = "default"
+	report.Spec.SourceName = "loopback"
+	report.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusLocalhostOnly
+	report.Status.ListenAddresses = []string{"127.0.0.1", "::1"}
+
+	output := captureStdout(t, func() {
+		if err := printReportDetail(&report); err != nil {
+			t.Fatalf("printReportDetail() error = %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "LocalhostOnly") {
+		t.Errorf("output should render the status, got: %s", output)
+	}
+	if !strings.Contains(output, "Listen Addresses: 127.0.0.1, ::1") {
+		t.Errorf("output should render the listen addresses, got: %s", output)
+	}
+}
+
 func TestPrintReportDetail_OptionalCertificateFields(t *testing.T) {
 	report := &securityv1alpha1.TLSComplianceReport{
 		ObjectMeta: metav1.ObjectMeta{Name: "partial-report"},

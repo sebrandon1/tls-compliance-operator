@@ -66,6 +66,7 @@ are pruned. View the trail with `kubectl tlsreport describe <name>`.
 | **Timeout** | Connection timed out waiting for a response |
 | **Closed** | Port is not listening (connection refused) |
 | **Filtered** | Reserved for firewall-drop cases; the checker does not currently emit this status |
+| **LocalhostOnly** | Every discovered bind address for the port is loopback, so the pod IP cannot reach it. Only produced with `--discover-listening-ports`; not a compliance failure |
 | **Unreachable** | Could not connect to endpoint (unclassified network error) |
 | **NoTLS** | Port is open but does not speak TLS |
 | **PlaintextHTTP** | Port responds with HTTP and no TLS |

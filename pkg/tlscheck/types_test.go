@@ -31,6 +31,7 @@ func TestFailureReason_IsTransient(t *testing.T) {
 		{FailureReasonNoTLS, false},
 		{FailureReasonPlaintextHTTP, false},
 		{FailureReasonMutualTLSRequired, false},
+		{FailureReasonLocalhostOnly, false},
 		{FailureReason("SomethingElse"), false},
 	}
 

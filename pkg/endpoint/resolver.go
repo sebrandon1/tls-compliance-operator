@@ -20,6 +20,8 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"regexp"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,6 +46,13 @@ type Endpoint struct {
 	SourceNamespace string
 	SourceName      string
 	IsProbePort     bool
+	// ListenAddresses are the bind addresses observed for this port from
+	// /proc/net/tcp{,6}. Empty when discovery did not run or failed.
+	ListenAddresses []string
+	// ListenAddressesKnown is true only when ListenAddresses is the complete
+	// set observed for this port. An empty list with Known=true is
+	// authoritative: the port has no listener any more.
+	ListenAddressesKnown bool
 }
 
 const (
@@ -573,8 +582,22 @@ func ExtractFromPod(pod *corev1.Pod) []Endpoint {
 // ExtractFromPodWithPorts returns TLS endpoints from a Pod, including any
 // listening ports discovered in the container (for example from
 // /proc/net/tcp). Discovered ports run through the same TLS heuristic as
-// declared ports unless scan-all-ports is enabled.
+// declared ports unless scan-all-ports is enabled. Bind addresses are unknown
+// on this path.
 func ExtractFromPodWithPorts(pod *corev1.Pod, discoveredPorts []int32) []Endpoint {
+	listeners := make([]ProcNetListener, 0, len(discoveredPorts))
+	for _, port := range discoveredPorts {
+		listeners = append(listeners, ProcNetListener{Port: port})
+	}
+	return ExtractFromPodWithListeners(pod, listeners, false)
+}
+
+// ExtractFromPodWithListeners returns TLS endpoints from a Pod plus the bind
+// addresses observed for each port. addressesKnown reports whether listeners
+// is the complete set for the pod; when true an empty set for a port means the
+// port is not bound. Declared and discovered ports both carry the addresses,
+// because a declared port can be bound to loopback too.
+func ExtractFromPodWithListeners(pod *corev1.Pod, listeners []ProcNetListener, addressesKnown bool) []Endpoint {
 	if pod.Status.Phase != corev1.PodRunning {
 		return nil
 	}
@@ -586,6 +609,26 @@ func ExtractFromPodWithPorts(pod *corev1.Pod, discoveredPorts []int32) []Endpoin
 
 	probePorts := collectProbePorts(pod)
 	scanAll := scanAllPortsEnabled()
+
+	addrsByPort := make(map[int32][]string)
+	var discoveredPorts []int32
+	seenDiscovered := make(map[int32]bool)
+	for _, listener := range listeners {
+		if !seenDiscovered[listener.Port] {
+			seenDiscovered[listener.Port] = true
+			discoveredPorts = append(discoveredPorts, listener.Port)
+		}
+		if listener.Address == nil {
+			continue
+		}
+		addr := listener.Address.String()
+		if !slices.Contains(addrsByPort[listener.Port], addr) {
+			addrsByPort[listener.Port] = append(addrsByPort[listener.Port], addr)
+		}
+	}
+	for port := range addrsByPort {
+		sort.Strings(addrsByPort[port])
+	}
 
 	var endpoints []Endpoint
 	seen := make(map[int32]bool)
@@ -608,12 +651,14 @@ func ExtractFromPodWithPorts(pod *corev1.Pod, discoveredPorts []int32) []Endpoin
 
 				for _, ip := range ips {
 					endpoints = append(endpoints, Endpoint{
-						Host:            ip,
-						Port:            port.ContainerPort,
-						SourceKind:      securityv1alpha1.SourceKindPod,
-						SourceNamespace: pod.Namespace,
-						SourceName:      pod.Name,
-						IsProbePort:     isProbe,
+						Host:                 ip,
+						Port:                 port.ContainerPort,
+						SourceKind:           securityv1alpha1.SourceKindPod,
+						SourceNamespace:      pod.Namespace,
+						SourceName:           pod.Name,
+						IsProbePort:          isProbe,
+						ListenAddresses:      addrsByPort[port.ContainerPort],
+						ListenAddressesKnown: addressesKnown,
 					})
 				}
 			}
@@ -630,11 +675,13 @@ func ExtractFromPodWithPorts(pod *corev1.Pod, discoveredPorts []int32) []Endpoin
 		seen[port] = true
 		for _, ip := range ips {
 			endpoints = append(endpoints, Endpoint{
-				Host:            ip,
-				Port:            port,
-				SourceKind:      securityv1alpha1.SourceKindPod,
-				SourceNamespace: pod.Namespace,
-				SourceName:      pod.Name,
+				Host:                 ip,
+				Port:                 port,
+				SourceKind:           securityv1alpha1.SourceKindPod,
+				SourceNamespace:      pod.Namespace,
+				SourceName:           pod.Name,
+				ListenAddresses:      addrsByPort[port],
+				ListenAddressesKnown: addressesKnown,
 			})
 		}
 	}

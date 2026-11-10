@@ -45,7 +45,7 @@ func main() {
 		})
 	})
 
-	addr := fmt.Sprintf(":%d", cfg.port)
+	addr := net.JoinHostPort(cfg.listenAddr, strconv.Itoa(cfg.port))
 
 	if !cfg.tlsEnabled {
 		log.Printf("Serving plain HTTP on %s", addr)
@@ -82,6 +82,7 @@ type config struct {
 	mtlsRequired     bool
 	disableMLKEM     bool
 	port             int
+	listenAddr       string
 	certExpired      bool
 	certExpiryHours  int
 	certCN           string
@@ -97,6 +98,7 @@ func loadConfig() config {
 		certExpired:      envOrDefault("CERT_EXPIRED", "false") == "true",
 		certCN:           envOrDefault("CERT_CN", "tls-test-server"),
 		starttlsProtocol: envOrDefault("STARTTLS_PROTOCOL", ""),
+		listenAddr:       os.Getenv("LISTEN_ADDR"),
 	}
 
 	if h := os.Getenv("CERT_EXPIRY_HOURS"); h != "" {

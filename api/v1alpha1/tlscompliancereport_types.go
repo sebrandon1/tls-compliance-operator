@@ -44,7 +44,7 @@ const (
 const RescanAnnotation = "tls-compliance.telco.openshift.io/rescan"
 
 // ComplianceStatus indicates the TLS compliance status of an endpoint
-// +kubebuilder:validation:Enum=Compliant;NonCompliant;Warning;Unreachable;Timeout;Closed;Filtered;NoTLS;PlaintextHTTP;MutualTLSRequired;Pending;Unknown
+// +kubebuilder:validation:Enum=Compliant;NonCompliant;Warning;Unreachable;Timeout;Closed;Filtered;LocalhostOnly;NoTLS;PlaintextHTTP;MutualTLSRequired;Pending;Unknown
 type ComplianceStatus string
 
 const (
@@ -62,6 +62,11 @@ const (
 	ComplianceStatusClosed ComplianceStatus = "Closed"
 	// ComplianceStatusFiltered is reserved for future use — mapped but not currently produced by the checker
 	ComplianceStatusFiltered ComplianceStatus = "Filtered"
+	// ComplianceStatusLocalhostOnly means the probe of the pod IP failed and
+	// every discovered bind address for the port is loopback. It is only
+	// produced when listening-port discovery is enabled, and it is not a
+	// compliance failure.
+	ComplianceStatusLocalhostOnly ComplianceStatus = "LocalhostOnly"
 	// ComplianceStatusNoTLS means the port is open but does not speak TLS
 	ComplianceStatusNoTLS ComplianceStatus = "NoTLS"
 	// ComplianceStatusPlaintextHTTP means the port is serving plaintext HTTP without TLS
@@ -331,6 +336,14 @@ type TLSComplianceReportStatus struct {
 	// +optional
 	LastError string `json:"lastError,omitempty"`
 
+	// ListenAddresses are the bind addresses observed for this endpoint's port
+	// from /proc/net/tcp{,6}. Only populated for Pod sources when
+	// --discover-listening-ports is enabled. An empty list means the bind
+	// addresses are unknown or the port is no longer bound.
+	// +optional
+	// +listType=atomic
+	ListenAddresses []string `json:"listenAddresses,omitempty"`
+
 	// History contains a bounded audit trail of previous scan results
 	// +optional
 	// +listType=atomic
@@ -518,6 +531,7 @@ type ContainerImageCertInfo struct {
 // +kubebuilder:printcolumn:name="SSL3.0",type=boolean,JSONPath=`.status.tlsVersions.ssl30`,priority=1
 // +kubebuilder:printcolumn:name="MLKEM",type=boolean,JSONPath=`.status.mlkemSupported`,priority=1
 // +kubebuilder:printcolumn:name="PQC",type=string,JSONPath=`.status.pqcReadiness`
+// +kubebuilder:printcolumn:name="Listen",type=string,JSONPath=`.status.listenAddresses[0]`,priority=1
 // +kubebuilder:printcolumn:name="CertExpiry",type=integer,JSONPath=`.status.certificateInfo.daysUntilExpiry`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
