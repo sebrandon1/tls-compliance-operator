@@ -23,11 +23,13 @@ import (
 	"testing"
 	"time"
 
+	dto "github.com/prometheus/client_model/go"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
+	"github.com/sebrandon1/tls-compliance-operator/internal/metrics"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlscheck"
 )
 
@@ -180,5 +182,104 @@ func TestStartPeriodicScan_CatchUpAtWindowOpen(t *testing.T) {
 	time.Sleep(1800*time.Millisecond - time.Since(realStart))
 	if got := podListCalls.Load() - countAfterInitial; got != 1 {
 		t.Errorf("got %d scans after window open, want exactly 1 catch-up scan", got)
+	}
+}
+
+// scanSkippedCount reads the current value of the skip counter for a reason.
+func scanSkippedCount(t *testing.T, reason string) float64 {
+	t.Helper()
+	m := &dto.Metric{}
+	c, err := metrics.ScanCycleSkippedTotal.GetMetricWithLabelValues(reason)
+	if err != nil {
+		t.Fatalf("getting skip counter for %q: %v", reason, err)
+	}
+	if err := c.Write(m); err != nil {
+		t.Fatalf("reading skip counter for %q: %v", reason, err)
+	}
+	return m.GetCounter().GetValue()
+}
+
+// TestStartPeriodicScan_OutsideWindowRecordsSkipMetric verifies that a closed
+// window increments scan_cycle_skipped_total{reason="outside_window"} rather
+// than looking like a stalled loop.
+func TestStartPeriodicScan_OutsideWindowRecordsSkipMetric(t *testing.T) {
+	start, end := inactiveWindow()
+	r, _ := newWindowedReconciler(t, start, end)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	before := scanSkippedCount(t, metrics.ScanSkipReasonOutsideWindow)
+
+	r.StartPeriodicScan(ctx, 20*time.Millisecond, nil)
+	waitInitialScan(t, r)
+
+	deadline := time.After(5 * time.Second)
+	for scanSkippedCount(t, metrics.ScanSkipReasonOutsideWindow) == before {
+		select {
+		case <-deadline:
+			t.Fatal("expected outside_window skip counter to increment")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+// TestStartPeriodicScan_InvalidWindowRecordsSkipMetric verifies that an
+// unusable window configuration is recorded as invalid_window.
+func TestStartPeriodicScan_InvalidWindowRecordsSkipMetric(t *testing.T) {
+	r, _ := newWindowedReconciler(t, "bad", "06:00")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	before := scanSkippedCount(t, metrics.ScanSkipReasonInvalidWindow)
+
+	r.StartPeriodicScan(ctx, 20*time.Millisecond, nil)
+	waitInitialScan(t, r)
+
+	deadline := time.After(5 * time.Second)
+	for scanSkippedCount(t, metrics.ScanSkipReasonInvalidWindow) == before {
+		select {
+		case <-deadline:
+			t.Fatal("expected invalid_window skip counter to increment")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+// nextScanGauge reads the current value of the next-scheduled-scan gauge.
+func nextScanGauge(t *testing.T) float64 {
+	t.Helper()
+	m := &dto.Metric{}
+	if err := metrics.ScanCycleNextScheduledTimestamp.Write(m); err != nil {
+		t.Fatalf("reading next scan gauge: %v", err)
+	}
+	return m.GetGauge().GetValue()
+}
+
+// TestStartPeriodicScan_NextScanGauge verifies the gauge is set once the ticker
+// is armed and cleared when the operator stops.
+func TestStartPeriodicScan_NextScanGauge(t *testing.T) {
+	r, _ := newWindowedReconciler(t, "00:00", "23:59")
+	ctx, cancel := context.WithCancel(context.Background())
+
+	r.StartPeriodicScan(ctx, time.Hour, nil)
+	waitInitialScan(t, r)
+
+	deadline := time.After(5 * time.Second)
+	for nextScanGauge(t) == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("expected next scan gauge to be set after the ticker starts")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	cancel()
+	deadline = time.After(5 * time.Second)
+	for nextScanGauge(t) != 0 {
+		select {
+		case <-deadline:
+			t.Fatal("expected next scan gauge cleared after the scan loop stops")
+		case <-time.After(5 * time.Millisecond):
+		}
 	}
 }

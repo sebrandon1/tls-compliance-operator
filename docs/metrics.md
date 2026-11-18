@@ -23,6 +23,8 @@ All metrics use the `tls_compliance_` prefix.
 | `tls_compliance_check_errors_total` | Counter | `reason` | TLS check errors by failure reason |
 | `tls_compliance_circuit_open_skipped_total` | Counter | - | TLS checks skipped because the endpoint circuit breaker is open |
 | `tls_compliance_scan_cycle_last_completed_timestamp` | Gauge | - | Unix timestamp of last successful scan cycle |
+| `tls_compliance_scan_cycle_skipped_total` | Counter | `reason` | Scan cycles that did not run, by reason (`outside_window`, `invalid_window`, `already_running`) |
+| `tls_compliance_scan_cycle_next_scheduled_timestamp_seconds` | Gauge | - | Unix timestamp of the next expected scan cycle (0 when none is scheduled) |
 | `tls_compliance_cleanup_cycle_last_completed_timestamp` | Gauge | - | Unix timestamp of last successful cleanup cycle |
 | `tls_compliance_reports_ttl_deleted_total` | Counter | - | TLSComplianceReports deleted by retention policy |
 | `tls_compliance_scan_cycle_errors_total` | Counter | - | Total number of periodic scan cycle failures |
@@ -76,6 +78,22 @@ increase(tls_compliance_reports_ttl_deleted_total[24h])
 
 # Detect stalled scan loop (no completion in 2 hours)
 time() - tls_compliance_scan_cycle_last_completed_timestamp > 7200
+
+# Seconds until the next expected scan (negative means the loop is overdue)
+tls_compliance_scan_cycle_next_scheduled_timestamp_seconds - time()
+
+# Scan cycles skipped by reason
+sum by (reason) (rate(tls_compliance_scan_cycle_skipped_total[15m]))
+
+# Stalled inside an open window: the next scheduled scan is overdue by more
+# than an hour. Pair with the last-completion age so a closed window waiting
+# for its catch-up timer does not look like a stalled loop.
+(time() - tls_compliance_scan_cycle_next_scheduled_timestamp_seconds > 3600)
+  and
+(time() - tls_compliance_scan_cycle_last_completed_timestamp > 7200)
+
+# Invalid scan window configuration (cycles skipped without ever scheduling)
+increase(tls_compliance_scan_cycle_skipped_total{reason="invalid_window"}[15m]) > 0
 
 # Check if cluster is running in FIPS mode
 tls_compliance_fips_mode_enabled == 1
