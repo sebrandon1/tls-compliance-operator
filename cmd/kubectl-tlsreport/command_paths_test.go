@@ -259,3 +259,18 @@ func TestRunTargetDeleteAll(t *testing.T) {
 		t.Errorf("remaining targets = %d, want 0", len(remaining.Items))
 	}
 }
+
+func TestRunGet_RejectsNoHeadersWithNonTableFormat(t *testing.T) {
+	origFormat, origNoHeaders := outputFormat, noHeaders
+	t.Cleanup(func() { outputFormat, noHeaders = origFormat, origNoHeaders })
+
+	cmd := newGetCmd()
+	cmd.SetContext(context.Background())
+	outputFormat = "json"
+	noHeaders = true
+
+	err := runGet(cmd, nil, false)
+	if err == nil || !strings.Contains(err.Error(), "--no-headers is only valid with table or wide output") {
+		t.Fatalf("runGet() error = %v, want the --no-headers rejection", err)
+	}
+}

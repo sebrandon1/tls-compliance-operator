@@ -48,8 +48,14 @@ func newGetCmd() *cobra.Command {
   # Get reports as JSON
   kubectl tlsreport get -o json
 
+  # Print only resource names, one per line
+  kubectl tlsreport get -o name
+
   # Get reports with extra columns
   kubectl tlsreport get -o wide
+
+  # Print table rows without the header
+  kubectl tlsreport get --no-headers
 
   # Get a specific report
   kubectl tlsreport get my-service-443-abc12345
@@ -63,16 +69,34 @@ func newGetCmd() *cobra.Command {
 			return runGet(cmd, args, watchFlag)
 		},
 	}
-	cmd.Flags().StringVarP(&outputFormat, "output", "o", "table", "Output format: table, wide, json, yaml")
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "table", "Output format: "+supportedOutputFormats)
+	cmd.Flags().BoolVar(&noHeaders, "no-headers", false, "Do not print column headers (table and wide output only)")
 	cmd.Flags().BoolVarP(&watchFlag, "watch", "w", false, "Watch for create, update, and delete events")
 	_ = cmd.RegisterFlagCompletionFunc("output", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
-		return []string{"table", "wide", "json", "yaml"}, cobra.ShellCompDirectiveNoFileComp
+		return []string{"table", "wide", "name", "json", "yaml"}, cobra.ShellCompDirectiveNoFileComp
 	})
 
 	return cmd
 }
 
+// validateGetFlags rejects flag combinations that would silently do nothing.
+// It runs before any API call so a typo fails fast instead of after a list.
+func validateGetFlags() error {
+	if !noHeaders {
+		return nil
+	}
+	switch outputFormat {
+	case "table", "wide", "":
+		return nil
+	default:
+		return fmt.Errorf("--no-headers is only valid with table or wide output")
+	}
+}
+
 func runGet(cmd *cobra.Command, args []string, watchFlag bool) error {
+	if err := validateGetFlags(); err != nil {
+		return err
+	}
 	if watchFlag {
 		return runGetWatch(cmd, args)
 	}
@@ -395,12 +419,14 @@ func writeWatchSnapshot(w io.Writer, reports []securityv1alpha1.TLSComplianceRep
 			}
 		}
 		return nil
+	case "name":
+		return printNames(w, reports)
 	case "wide":
 		return writeWatchTable(w, reports, true)
 	case "table", "":
 		return writeWatchTable(w, reports, false)
 	default:
-		return fmt.Errorf("unknown output format: %s (supported: table, wide, json, yaml)", outputFormat)
+		return fmt.Errorf("unknown output format: %s (supported: %s)", outputFormat, supportedOutputFormats)
 	}
 }
 
@@ -410,6 +436,8 @@ func writeWatchEvent(w io.Writer, report *securityv1alpha1.TLSComplianceReport, 
 		return writeWatchJSON(w, report)
 	case "yaml":
 		return writeWatchYAML(w, report, true)
+	case "name":
+		return writeReportName(w, report.Name)
 	case "wide":
 		_, err := fmt.Fprintln(w, formatReportTableRow(report, true, deleted))
 		return err
@@ -417,7 +445,7 @@ func writeWatchEvent(w io.Writer, report *securityv1alpha1.TLSComplianceReport, 
 		_, err := fmt.Fprintln(w, formatReportTableRow(report, false, deleted))
 		return err
 	default:
-		return fmt.Errorf("unknown output format: %s (supported: table, wide, json, yaml)", outputFormat)
+		return fmt.Errorf("unknown output format: %s (supported: %s)", outputFormat, supportedOutputFormats)
 	}
 }
 
@@ -439,14 +467,17 @@ func writeWatchYAML(w io.Writer, report *securityv1alpha1.TLSComplianceReport, s
 	return err
 }
 
+// writeWatchTable prints the initial watch snapshot. The header is emitted at
+// most once per invocation — here, before streaming begins — so --no-headers is
+// evaluated only on this path and never per event.
 func writeWatchTable(w io.Writer, reports []securityv1alpha1.TLSComplianceReport, wide bool) error {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	if wide {
-		if _, err := fmt.Fprintln(tw, reportTableWideHeader); err != nil {
-			return err
+	if !noHeaders {
+		header := reportTableHeader
+		if wide {
+			header = reportTableWideHeader
 		}
-	} else {
-		if _, err := fmt.Fprintln(tw, reportTableHeader); err != nil {
+		if _, err := fmt.Fprintln(tw, header); err != nil {
 			return err
 		}
 	}
@@ -473,10 +504,10 @@ func outputReports(reports []securityv1alpha1.TLSComplianceReport, writers ...io
 			return export.WriteJSON(out, reports)
 		case "yaml":
 			return export.WriteYAML(out, reports)
-		case "wide", "table", "":
+		case "wide", "table", "name", "":
 			return nil
 		default:
-			return fmt.Errorf("unknown output format: %s (supported: table, wide, json, yaml)", outputFormat)
+			return fmt.Errorf("unknown output format: %s (supported: %s)", outputFormat, supportedOutputFormats)
 		}
 	}
 
@@ -485,13 +516,39 @@ func outputReports(reports []securityv1alpha1.TLSComplianceReport, writers ...io
 		return export.WriteJSON(out, reports)
 	case "yaml":
 		return export.WriteYAML(out, reports)
+	case "name":
+		return printNames(out, reports)
 	case "wide":
 		return printReportTableWide(reports, out, errOut)
 	case "table", "":
 		return printReportTable(reports, out, errOut)
 	default:
-		return fmt.Errorf("unknown output format: %s (supported: table, wide, json, yaml)", outputFormat)
+		return fmt.Errorf("unknown output format: %s (supported: %s)", outputFormat, supportedOutputFormats)
 	}
+}
+
+// supportedOutputFormats is the `-o` value list quoted in every unknown-format
+// error, so the help text and the errors cannot drift apart.
+const supportedOutputFormats = "table, wide, name, json, yaml"
+
+// reportResourceName is the kubectl name prefix for a TLSComplianceReport,
+// matching what `kubectl get -o name` prints for the CRD.
+const reportResourceName = "tlscompliancereport"
+
+// printNames writes one resource identifier per line, in the same shape as
+// `kubectl get -o name`, so shell pipelines can consume report names directly.
+func printNames(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) error {
+	for i := range reports {
+		if err := writeReportName(w, reports[i].Name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeReportName(w io.Writer, name string) error {
+	_, err := fmt.Fprintf(w, "%s/%s\n", reportResourceName, name)
+	return err
 }
 
 func printReportTable(reports []securityv1alpha1.TLSComplianceReport, writers ...io.Writer) error {
@@ -499,8 +556,10 @@ func printReportTable(reports []securityv1alpha1.TLSComplianceReport, writers ..
 		return printNoMatchingReports(writerOrDefault(writers, 1, os.Stderr))
 	}
 	w := tabwriter.NewWriter(writerOrDefault(writers, 0, os.Stdout), 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, reportTableHeader); err != nil {
-		return err
+	if !noHeaders {
+		if _, err := fmt.Fprintln(w, reportTableHeader); err != nil {
+			return err
+		}
 	}
 	for i := range reports {
 		if _, err := fmt.Fprintln(w, formatReportTableRow(&reports[i], false, false)); err != nil {
@@ -515,8 +574,10 @@ func printReportTableWide(reports []securityv1alpha1.TLSComplianceReport, writer
 		return printNoMatchingReports(writerOrDefault(writers, 1, os.Stderr))
 	}
 	w := tabwriter.NewWriter(writerOrDefault(writers, 0, os.Stdout), 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, reportTableWideHeader); err != nil {
-		return err
+	if !noHeaders {
+		if _, err := fmt.Fprintln(w, reportTableWideHeader); err != nil {
+			return err
+		}
 	}
 	for i := range reports {
 		if _, err := fmt.Fprintln(w, formatReportTableRow(&reports[i], true, false)); err != nil {

@@ -2807,3 +2807,237 @@ func targetNames(targets []securityv1alpha1.TLSComplianceTarget) []string {
 	}
 	return names
 }
+
+func TestGetCmd_NameAndNoHeadersFlags(t *testing.T) {
+	origFormat, origNoHeaders := outputFormat, noHeaders
+	t.Cleanup(func() { outputFormat, noHeaders = origFormat, origNoHeaders })
+
+	cmd := newGetCmd()
+	if cmd.Flags().Lookup("no-headers") == nil {
+		t.Fatal("expected a --no-headers flag")
+	}
+	if !strings.Contains(cmd.Flags().Lookup("output").Usage, "name") {
+		t.Errorf("expected -o help to list name, got %q", cmd.Flags().Lookup("output").Usage)
+	}
+}
+
+func TestGetCmd_OutputCompletionIncludesName(t *testing.T) {
+	origFormat, origNoHeaders := outputFormat, noHeaders
+	t.Cleanup(func() { outputFormat, noHeaders = origFormat, origNoHeaders })
+
+	cmd := newGetCmd()
+	fn, ok := cmd.GetFlagCompletionFunc("output")
+	if !ok {
+		t.Fatal("expected an output completion function")
+	}
+	got, _ := fn(cmd, nil, "")
+	want := []string{"table", "wide", "name", "json", "yaml"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("completions = %v, want %v", got, want)
+	}
+}
+
+func TestPrintNames(t *testing.T) {
+	first := sampleWatchReport("svc-443", "svc.example", "Compliant")
+	second := sampleWatchReport("api-8443", "api.example", "Compliant")
+	var buf bytes.Buffer
+	if err := printNames(&buf, []securityv1alpha1.TLSComplianceReport{*first, *second}); err != nil {
+		t.Fatalf("printNames() error = %v", err)
+	}
+	want := "tlscompliancereport/svc-443\ntlscompliancereport/api-8443\n"
+	if buf.String() != want {
+		t.Errorf("printNames() = %q, want %q", buf.String(), want)
+	}
+}
+
+func TestOutputReports_NameFormat(t *testing.T) {
+	outputFormat = "name"
+	defer func() { outputFormat = "" }()
+	report := sampleWatchReport("svc-443", "svc.example", "Compliant")
+	var stdout, stderr bytes.Buffer
+	if err := outputReports([]securityv1alpha1.TLSComplianceReport{*report}, &stdout, &stderr); err != nil {
+		t.Fatalf("outputReports() error = %v", err)
+	}
+	if stdout.String() != "tlscompliancereport/svc-443\n" {
+		t.Errorf("stdout = %q", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestOutputReports_NameFormatEmpty(t *testing.T) {
+	outputFormat = "name"
+	defer func() { outputFormat = "" }()
+	var stdout, stderr bytes.Buffer
+	if err := outputReports(nil, &stdout, &stderr); err != nil {
+		t.Fatalf("outputReports() error = %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want empty", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "No reports match the specified filters.") {
+		t.Errorf("stderr = %q", stderr.String())
+	}
+}
+
+func TestNoHeaders_TableAndWide(t *testing.T) {
+	report := sampleWatchReport("svc-443", "svc.example", "Compliant")
+	reports := []securityv1alpha1.TLSComplianceReport{*report}
+
+	t.Run("table", func(t *testing.T) {
+		outputFormat = "table"
+		noHeaders = true
+		defer func() { outputFormat = ""; noHeaders = false }()
+		var stdout, stderr bytes.Buffer
+		if err := outputReports(reports, &stdout, &stderr); err != nil {
+			t.Fatalf("outputReports() error = %v", err)
+		}
+		out := stdout.String()
+		if strings.Contains(out, "NAME") {
+			t.Errorf("expected no header, got %q", out)
+		}
+		if !strings.Contains(out, "svc-443") {
+			t.Errorf("expected the data row, got %q", out)
+		}
+		if got := len(strings.Split(strings.TrimSuffix(out, "\n"), "\n")); got != 1 {
+			t.Errorf("expected 1 line, got %d: %q", got, out)
+		}
+	})
+
+	t.Run("wide via printReportTableWide", func(t *testing.T) {
+		noHeaders = true
+		defer func() { noHeaders = false }()
+		var stdout, stderr bytes.Buffer
+		if err := printReportTableWide(reports, &stdout, &stderr); err != nil {
+			t.Fatalf("printReportTableWide() error = %v", err)
+		}
+		out := stdout.String()
+		if strings.Contains(out, "NAMESPACE") {
+			t.Errorf("expected no wide header, got %q", out)
+		}
+		if !strings.Contains(out, "svc-443") {
+			t.Errorf("expected the data row, got %q", out)
+		}
+	})
+}
+
+func TestValidateGetFlags(t *testing.T) {
+	origFormat, origNoHeaders := outputFormat, noHeaders
+	t.Cleanup(func() { outputFormat, noHeaders = origFormat, origNoHeaders })
+
+	t.Run("no-headers with table and wide passes", func(t *testing.T) {
+		noHeaders = true
+		for _, format := range []string{"table", "wide", ""} {
+			outputFormat = format
+			if err := validateGetFlags(); err != nil {
+				t.Errorf("format %q: unexpected error %v", format, err)
+			}
+		}
+	})
+
+	t.Run("no-headers with non-table formats is rejected", func(t *testing.T) {
+		noHeaders = true
+		for _, format := range []string{"json", "yaml", "name"} {
+			outputFormat = format
+			err := validateGetFlags()
+			if err == nil || !strings.Contains(err.Error(), "--no-headers is only valid with table or wide output") {
+				t.Errorf("format %q: error = %v", format, err)
+			}
+		}
+	})
+
+	t.Run("without no-headers every format passes", func(t *testing.T) {
+		noHeaders = false
+		for _, format := range []string{"table", "wide", "name", "json", "yaml"} {
+			outputFormat = format
+			if err := validateGetFlags(); err != nil {
+				t.Errorf("format %q: unexpected error %v", format, err)
+			}
+		}
+	})
+}
+
+func TestWriteWatch_HeaderPrintedOnce(t *testing.T) {
+	report := sampleWatchReport("svc-443", "svc.example", "Compliant")
+	reports := []securityv1alpha1.TLSComplianceReport{*report}
+
+	t.Run("header once across snapshot and events", func(t *testing.T) {
+		outputFormat = "table"
+		noHeaders = false
+		defer func() { outputFormat = ""; noHeaders = false }()
+		var buf bytes.Buffer
+		if err := writeWatchSnapshot(&buf, reports); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeWatchEvent(&buf, report, false); err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Count(buf.String(), "NAME"); got != 1 {
+			t.Errorf("expected the header exactly once, got %d in %q", got, buf.String())
+		}
+	})
+
+	t.Run("no header when no-headers is set", func(t *testing.T) {
+		outputFormat = "table"
+		noHeaders = true
+		defer func() { outputFormat = ""; noHeaders = false }()
+		var buf bytes.Buffer
+		if err := writeWatchSnapshot(&buf, reports); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeWatchEvent(&buf, report, false); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(buf.String(), "NAME") {
+			t.Errorf("expected no header, got %q", buf.String())
+		}
+		if !strings.Contains(buf.String(), "svc-443") {
+			t.Errorf("expected the row, got %q", buf.String())
+		}
+	})
+
+	t.Run("name format snapshot and event", func(t *testing.T) {
+		outputFormat = "name"
+		noHeaders = false
+		defer func() { outputFormat = "" }()
+		var buf bytes.Buffer
+		if err := writeWatchSnapshot(&buf, reports); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeWatchEvent(&buf, report, true); err != nil {
+			t.Fatal(err)
+		}
+		want := "tlscompliancereport/svc-443\ntlscompliancereport/svc-443\n"
+		if buf.String() != want {
+			t.Errorf("output = %q, want %q", buf.String(), want)
+		}
+	})
+}
+
+func TestGetCmd_FlagsBindToGlobals(t *testing.T) {
+	origFormat, origNoHeaders := outputFormat, noHeaders
+	t.Cleanup(func() { outputFormat, noHeaders = origFormat, origNoHeaders })
+
+	outputFormat = "table"
+	noHeaders = false
+	cmd := newGetCmd()
+	if err := cmd.ParseFlags([]string{"--no-headers", "-o", "name"}); err != nil {
+		t.Fatalf("ParseFlags() error = %v", err)
+	}
+	if !noHeaders {
+		t.Error("expected --no-headers to set noHeaders")
+	}
+	if outputFormat != "name" {
+		t.Errorf("outputFormat = %q, want name", outputFormat)
+	}
+}
+
+func TestPrintNames_WriterError(t *testing.T) {
+	wantErr := errors.New("write failed")
+	report := sampleWatchReport("svc-443", "svc.example", "Compliant")
+	err := printNames(failingWriter{err: wantErr}, []securityv1alpha1.TLSComplianceReport{*report})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("printNames() error = %v, want %v", err, wantErr)
+	}
+}

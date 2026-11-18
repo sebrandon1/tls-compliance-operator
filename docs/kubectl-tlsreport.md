@@ -117,12 +117,18 @@ kubectl tlsreport junit --fail-on-non-compliant > results.xml
 
 ### get
 
-Display reports in a table. Supports `table`, `wide`, `json`, and `yaml`
-output formats. Use `--watch` (`-w`) to stream create, update, and delete
-events until you interrupt the command (Ctrl-C). Filters (`--status`, `-l`,
-and the other report flags) apply to the initial snapshot and to later
+Display reports in a table. Supports `table`, `wide`, `name`, `json`, and
+`yaml` output formats. Use `--watch` (`-w`) to stream create, update, and
+delete events until you interrupt the command (Ctrl-C). Filters (`--status`,
+`-l`, and the other report flags) apply to the initial snapshot and to later
 events. Table output prints the header once, then one row per event;
 JSON and YAML emit one object per event.
+
+`-o name` prints one `tlscompliancereport/<name>` identifier per line, the
+same shape as `kubectl get -o name`, so report names can be handed straight to
+other commands. `--no-headers` suppresses the column header for `table` and
+`wide`, removing the need for `tail -n +2` in scripts; combining it with
+`json`, `yaml`, or `name` is rejected with an error rather than ignored.
 
 Default table columns: NAME, HOST, PORT, SOURCE, COMPLIANCE, GRADE, FS,
 TLS 1.3, TLS 1.2, PQC, MLKEM.
@@ -133,7 +139,8 @@ kubectl tlsreport get [name] [-o format] [--watch]
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
-| `--output` | `-o` | `table` | Output format: table, wide, json, yaml |
+| `--output` | `-o` | `table` | Output format: table, wide, name, json, yaml |
+| `--no-headers` | | `false` | Do not print column headers (table and wide only) |
 | `--watch` | `-w` | `false` | Watch for create, update, and delete events |
 
 ```bash
@@ -151,6 +158,12 @@ kubectl tlsreport get --status NonCompliant -n production
 
 # Get reports as JSON
 kubectl tlsreport get -o json
+
+# Print only resource names, one per line
+kubectl tlsreport get -o name
+
+# Print table rows without the header
+kubectl tlsreport get --no-headers
 
 # Watch reports as they are created or updated
 kubectl tlsreport get --watch

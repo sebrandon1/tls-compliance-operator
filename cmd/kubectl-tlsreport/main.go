@@ -88,6 +88,7 @@ var (
 	kubecontext         string
 	labelSelector       string
 	outputFormat        string
+	noHeaders           bool
 	targetOutputFormat  string
 	failOnNonCompliant  bool
 	requirePQC          bool

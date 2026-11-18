@@ -150,6 +150,12 @@ kubectl tlsreport get -o json
 
 # YAML output
 kubectl tlsreport get -o yaml
+
+# Resource names only, one per line (kubectl get -o name style)
+kubectl tlsreport get -o name
+
+# Table rows without the header, for scripts
+kubectl tlsreport get --no-headers
 ```
 
 ### Detailed report (`describe`)
