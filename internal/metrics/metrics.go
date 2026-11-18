@@ -45,9 +45,10 @@ const (
 	// ScanSkipReasonInvalidWindow marks a cycle skipped because the scan window
 	// configuration could not be evaluated.
 	ScanSkipReasonInvalidWindow = "invalid_window"
-	// ScanSkipReasonAlreadyRunning marks a cycle skipped because a previous
-	// scan was still in flight.
-	ScanSkipReasonAlreadyRunning = "already_running"
+	// Only reasons that can actually occur belong here. The periodic scan runs
+	// inline on its own goroutine, so a cycle is never skipped because a
+	// previous one is still running; a tick that lands during a scan is
+	// buffered by the ticker and runs immediately afterwards.
 )
 
 // cipherGrades is the fixed cipher grade scale. Only these values are ever

@@ -201,7 +201,6 @@ func TestRecordScanCycleSkipped(t *testing.T) {
 	for _, reason := range []string{
 		ScanSkipReasonOutsideWindow,
 		ScanSkipReasonInvalidWindow,
-		ScanSkipReasonAlreadyRunning,
 	} {
 		t.Run(reason, func(t *testing.T) {
 			before := counterVecValue(ScanCycleSkippedTotal, reason)
