@@ -676,7 +676,7 @@ func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval tim
 		}
 
 		logger.Info("running initial TLS scan of all endpoints")
-		scanErr := r.runScanCycleWithError(ctx, logger)
+		_, scanErr := r.runScanCycleWithError(ctx, logger)
 
 		if r.RunOnce {
 			logger.Info("run-once mode: scan complete, signaling done")
@@ -687,6 +687,20 @@ func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval tim
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		metrics.RecordNextScanTime(r.clock().Add(interval))
+
+		// runIntervalCycle runs one interval-driven cycle and records when it
+		// outlasts the interval. The ticker buffers a single tick, so an
+		// overrunning cycle makes the next one start immediately; nothing else
+		// reports that.
+		runIntervalCycle := func() {
+			duration, _ := r.runScanCycleWithError(ctx, logger)
+			if duration <= interval {
+				return
+			}
+			metrics.RecordScanCycleOverran()
+			logger.Info("scan cycle exceeded the scan interval; the next cycle starts immediately",
+				"duration", duration, "interval", interval)
+		}
 
 		// catchUp fires when the scan window next opens after a tick was
 		// skipped, so a window shorter than the interval is never starved.
@@ -713,7 +727,7 @@ func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval tim
 					logger.Error(werr, "invalid scan window configuration, skipping scan cycle")
 				case ok:
 					stopCatchUp()
-					_ = r.runScanCycleWithError(ctx, logger)
+					runIntervalCycle()
 					metrics.RecordNextScanTime(r.clock().Add(interval))
 				case catchUp != nil:
 					metrics.RecordScanCycleSkipped(metrics.ScanSkipReasonOutsideWindow)
@@ -734,7 +748,7 @@ func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval tim
 			case <-catchUpC:
 				catchUp, catchUpC = nil, nil
 				logger.Info("scan window opened, running catch-up scan")
-				_ = r.runScanCycleWithError(ctx, logger)
+				runIntervalCycle()
 				// Realign ticks to the window opening so the next tick is a
 				// full interval away instead of duplicating this scan.
 				ticker.Reset(interval)
@@ -798,7 +812,7 @@ func parseScanWindowTime(s string) (time.Time, error) {
 	return t, nil
 }
 
-func (r *EndpointReconciler) runScanCycleWithError(ctx context.Context, logger logr.Logger) error {
+func (r *EndpointReconciler) runScanCycleWithError(ctx context.Context, logger logr.Logger) (time.Duration, error) {
 	logger.Info("starting periodic TLS scan")
 	start := time.Now()
 
@@ -813,7 +827,7 @@ func (r *EndpointReconciler) runScanCycleWithError(ctx context.Context, logger l
 	duration := time.Since(start)
 	metrics.RecordScanCycleDuration(duration.Seconds())
 	logger.Info("periodic TLS scan finished", "duration", duration, "success", err == nil)
-	return err
+	return duration, err
 }
 
 // scanPodEndpoints lists all pods and processes them as TLS endpoints.

@@ -51,6 +51,16 @@ spec:
             description: "The 95th percentile scan cycle duration is {{ $value | humanizeDuration }}, exceeding the 5-minute threshold."
             runbook_url: "https://github.com/sebrandon1/tls-compliance-operator/blob/main/docs/configuration.md#scanning"
 
+        - alert: TLSScanCycleOverrunning
+          expr: increase(tls_compliance_scan_cycle_overran_total[1h]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "TLS scan cycles are overrunning the scan interval"
+            description: "{{ $value | humanize }} scan cycle(s) took longer than --scan-interval, so the next cycle started immediately with no gap. Raise --scan-interval or reduce the number of scanned endpoints."
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator/blob/main/docs/configuration.md#scanning"
+
         - alert: TLSScanCycleStalled
           expr: time() - tls_compliance_scan_cycle_last_completed_timestamp > 7200
           for: 10m

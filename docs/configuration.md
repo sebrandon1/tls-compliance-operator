@@ -36,6 +36,16 @@ STARTTLS negotiation and is not scanned.
 The `kubectl tlsreport` plugin only reads `TLSComplianceReport`s, so this flag
 applies to the manager only.
 
+### Scan Interval Overruns
+
+A cycle that takes longer than `--scan-interval` is not retimed. The ticker
+holds one pending tick, so the next cycle starts as soon as the previous one
+returns, with no gap. The operator counts such cycles in
+`tls_compliance_scan_cycle_overran_total` and logs the cycle duration next to
+the interval. If the counter grows, raise `--scan-interval` or reduce the
+number of scanned endpoints. The startup scan runs before the ticker exists and
+is not counted.
+
 ### Scan Window
 
 Restrict periodic scans to a daily time window. Outside the window the periodic
