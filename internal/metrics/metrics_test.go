@@ -197,6 +197,39 @@ func TestRecordScanCycleError(t *testing.T) {
 	})
 }
 
+func TestRecordScanCycleSkipped(t *testing.T) {
+	for _, reason := range []string{
+		ScanSkipReasonOutsideWindow,
+		ScanSkipReasonInvalidWindow,
+		ScanSkipReasonAlreadyRunning,
+	} {
+		t.Run(reason, func(t *testing.T) {
+			before := counterVecValue(ScanCycleSkippedTotal, reason)
+			RecordScanCycleSkipped(reason)
+			after := counterVecValue(ScanCycleSkippedTotal, reason)
+			if after != before+1 {
+				t.Errorf("expected %s counter to increment by 1, got %v -> %v", reason, before, after)
+			}
+		})
+	}
+}
+
+func TestRecordNextScanTime(t *testing.T) {
+	next := time.Date(2026, 1, 1, 3, 0, 0, 0, time.UTC)
+	RecordNextScanTime(next)
+	if got, want := gaugeValue(ScanCycleNextScheduledTimestamp), float64(next.Unix()); got != want {
+		t.Errorf("expected next scan timestamp %v, got %v", want, got)
+	}
+}
+
+func TestRecordNextScanTime_ZeroClearsGauge(t *testing.T) {
+	RecordNextScanTime(time.Date(2026, 1, 1, 3, 0, 0, 0, time.UTC))
+	RecordNextScanTime(time.Time{})
+	if got := gaugeValue(ScanCycleNextScheduledTimestamp); got != 0 {
+		t.Errorf("expected gauge cleared to 0 for a zero time, got %v", got)
+	}
+}
+
 func TestRecordScanCycleDuration(t *testing.T) {
 	before := histogramCount(ScanCycleDurationSeconds)
 	RecordScanCycleDuration(120.5)

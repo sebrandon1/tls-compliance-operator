@@ -662,6 +662,8 @@ func isWithinScanWindow(now time.Time, start, end, tz string) (bool, error) {
 func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval time.Duration, elected <-chan struct{}) {
 	go func() {
 		logger := log.FromContext(ctx).WithName("periodic-scan")
+		// A stopped operator must not advertise a future scan.
+		defer metrics.RecordNextScanTime(time.Time{})
 
 		if elected != nil {
 			logger.Info("waiting for leader election before initial scan")
@@ -684,6 +686,7 @@ func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval tim
 
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
+		metrics.RecordNextScanTime(r.clock().Add(interval))
 
 		// catchUp fires when the scan window next opens after a tick was
 		// skipped, so a window shorter than the interval is never starved.
@@ -706,21 +709,27 @@ func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval tim
 				ok, werr := isWithinScanWindow(now, r.ScanWindowStart, r.ScanWindowEnd, r.ScanWindowTimezone)
 				switch {
 				case werr != nil:
+					metrics.RecordScanCycleSkipped(metrics.ScanSkipReasonInvalidWindow)
 					logger.Error(werr, "invalid scan window configuration, skipping scan cycle")
 				case ok:
 					stopCatchUp()
 					_ = r.runScanCycleWithError(ctx, logger)
+					metrics.RecordNextScanTime(r.clock().Add(interval))
 				case catchUp != nil:
+					metrics.RecordScanCycleSkipped(metrics.ScanSkipReasonOutsideWindow)
 					logger.V(1).Info("outside scan window, skipping scan cycle")
 				default:
 					opens, err := nextWindowStart(now, r.ScanWindowStart, r.ScanWindowTimezone)
 					if err != nil {
+						metrics.RecordScanCycleSkipped(metrics.ScanSkipReasonInvalidWindow)
 						logger.Error(err, "invalid scan window configuration, skipping scan cycle")
 						continue
 					}
+					metrics.RecordScanCycleSkipped(metrics.ScanSkipReasonOutsideWindow)
 					logger.V(1).Info("outside scan window, scheduling catch-up scan at window open", "opens", opens)
 					catchUp = time.NewTimer(opens.Sub(now))
 					catchUpC = catchUp.C
+					metrics.RecordNextScanTime(opens)
 				}
 			case <-catchUpC:
 				catchUp, catchUpC = nil, nil
@@ -729,6 +738,8 @@ func (r *EndpointReconciler) StartPeriodicScan(ctx context.Context, interval tim
 				// Realign ticks to the window opening so the next tick is a
 				// full interval away instead of duplicating this scan.
 				ticker.Reset(interval)
+				// Compute after the reset so the gauge is a full interval away.
+				metrics.RecordNextScanTime(r.clock().Add(interval))
 			}
 		}
 	}()

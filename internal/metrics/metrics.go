@@ -18,6 +18,7 @@ package metrics
 
 import (
 	"slices"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
@@ -37,6 +38,16 @@ const (
 	NotificationSuccess = "success"
 	// NotificationError marks a webhook delivery that failed or was rejected.
 	NotificationError = "error"
+
+	// ScanSkipReasonOutsideWindow marks a cycle skipped because the configured
+	// daily scan window is closed.
+	ScanSkipReasonOutsideWindow = "outside_window"
+	// ScanSkipReasonInvalidWindow marks a cycle skipped because the scan window
+	// configuration could not be evaluated.
+	ScanSkipReasonInvalidWindow = "invalid_window"
+	// ScanSkipReasonAlreadyRunning marks a cycle skipped because a previous
+	// scan was still in flight.
+	ScanSkipReasonAlreadyRunning = "already_running"
 )
 
 // cipherGrades is the fixed cipher grade scale. Only these values are ever
@@ -184,12 +195,33 @@ var (
 		},
 	)
 
+	// ScanCycleSkippedTotal tracks periodic scan cycles that did not run, by
+	// reason. Reasons are a closed set (see the ScanSkipReason* constants).
+	ScanCycleSkippedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: MetricsNamespace,
+			Name:      "scan_cycle_skipped_total",
+			Help:      "Total number of periodic scan cycles skipped, by reason",
+		},
+		[]string{"reason"},
+	)
+
 	// ScanCycleLastCompletedTimestamp records the Unix timestamp of the last successful periodic scan
 	ScanCycleLastCompletedTimestamp = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: MetricsNamespace,
 			Name:      "scan_cycle_last_completed_timestamp",
 			Help:      "Unix timestamp of the last completed periodic scan cycle",
+		},
+	)
+
+	// ScanCycleNextScheduledTimestamp records when the next periodic scan is
+	// expected, so a stalled loop is distinguishable from a closed window.
+	ScanCycleNextScheduledTimestamp = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: MetricsNamespace,
+			Name:      "scan_cycle_next_scheduled_timestamp_seconds",
+			Help:      "Unix timestamp of the next expected periodic scan cycle (0 when none is scheduled)",
 		},
 	)
 
@@ -336,7 +368,9 @@ func init() {
 		CheckRetriesTotal,
 		CheckRetriesExhaustedTotal,
 		ReconcileErrorsTotal,
+		ScanCycleSkippedTotal,
 		ScanCycleLastCompletedTimestamp,
+		ScanCycleNextScheduledTimestamp,
 		CleanupCycleLastCompletedTimestamp,
 		ReportsTTLDeletedTotal,
 		FIPSModeEnabled,
@@ -455,6 +489,22 @@ func RecordRetriesExhausted() {
 // RecordReconcileError records an error during resource reconciliation
 func RecordReconcileError(sourceKind, errorType string) {
 	ReconcileErrorsTotal.WithLabelValues(sourceKind, errorType).Inc()
+}
+
+// RecordScanCycleSkipped records a periodic scan cycle that did not run.
+// Reason must be one of the ScanSkipReason* constants.
+func RecordScanCycleSkipped(reason string) {
+	ScanCycleSkippedTotal.WithLabelValues(reason).Inc()
+}
+
+// RecordNextScanTime records when the next periodic scan is expected. A zero
+// time clears the gauge, so a stopped operator does not advertise a future scan.
+func RecordNextScanTime(t time.Time) {
+	if t.IsZero() {
+		ScanCycleNextScheduledTimestamp.Set(0)
+		return
+	}
+	ScanCycleNextScheduledTimestamp.Set(float64(t.Unix()))
 }
 
 // RecordScanCycleCompleted sets the scan cycle timestamp to the current time
