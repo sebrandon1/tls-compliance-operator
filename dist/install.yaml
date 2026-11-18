@@ -11,7 +11,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.21.0
+    controller-gen.kubebuilder.io/version: v0.23.0
   name: tlscompliancereports.security.telco.openshift.io
 spec:
   group: security.telco.openshift.io
@@ -62,6 +62,10 @@ spec:
       type: boolean
     - jsonPath: .status.pqcReadiness
       name: PQC
+      type: string
+    - jsonPath: .status.listenAddresses[0]
+      name: Listen
+      priority: 1
       type: string
     - jsonPath: .status.certificateInfo.daysUntilExpiry
       name: CertExpiry
@@ -118,6 +122,7 @@ spec:
                 - TLSRoute
                 - GRPCRoute
                 - Gateway
+                - Host
                 type: string
               sourceName:
                 description: SourceName is the name of the source resource
@@ -249,6 +254,15 @@ spec:
                   subject:
                     description: Subject is the certificate subject
                     type: string
+                  trustError:
+                    description: TrustError explains why certificate chain verification
+                      failed
+                    type: string
+                  trusted:
+                    description: |-
+                      Trusted reports whether the certificate chain verified against the
+                      configured --ca-cert bundle. Absent when trust verification is disabled.
+                    type: boolean
                 type: object
               checkCount:
                 description: CheckCount is the number of TLS checks performed
@@ -280,6 +294,7 @@ spec:
                 - Timeout
                 - Closed
                 - Filtered
+                - LocalhostOnly
                 - NoTLS
                 - PlaintextHTTP
                 - MutualTLSRequired
@@ -351,6 +366,59 @@ spec:
                 description: ConsecutiveErrors is the number of consecutive check
                   errors
                 type: integer
+              customProfileCompliance:
+                description: |-
+                  CustomProfileCompliance contains the compliance result against the
+                  TLSSecurityProfile selected by the operator's --custom-profile flag.
+                  Nil when no custom profile is configured.
+                properties:
+                  compliant:
+                    description: Compliant indicates whether the endpoint meets the
+                      profile requirements
+                    type: boolean
+                  disallowedCiphers:
+                    description: |-
+                      DisallowedCiphers lists cipher suites negotiated by the endpoint that are
+                      not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  disallowedGroups:
+                    description: |-
+                      DisallowedGroups lists key exchange groups negotiated by the endpoint
+                      that are not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  groupsCompliant:
+                    description: |-
+                      GroupsCompliant indicates whether the endpoint's negotiated curves are
+                      in the profile's allowed groups list
+                    type: boolean
+                  minTLSVersionMet:
+                    description: |-
+                      MinTLSVersionMet indicates whether the endpoint does not support TLS versions
+                      below the profile's minimum
+                    type: boolean
+                  profileType:
+                    description: ProfileType is the configured profile type (Old,
+                      Intermediate, Modern, Custom)
+                    type: string
+                required:
+                - compliant
+                - groupsCompliant
+                - minTLSVersionMet
+                - profileType
+                type: object
+              exempt:
+                description: |-
+                  Exempt reports whether the policy marks this endpoint exempt from
+                  profile adherence. Exempt endpoints are still scanned and reported.
+                type: boolean
+              exemptReason:
+                description: ExemptReason describes the policy rule that granted the
+                  exemption.
+                type: string
               fipsDetected:
                 description: |-
                   FIPSDetected indicates whether the operator detected FIPS mode on the cluster.
@@ -365,6 +433,73 @@ spec:
                   ForwardSecrecy indicates whether all negotiated cipher suites use
                   ephemeral key exchange (ECDHE/DHE), providing perfect forward secrecy
                 type: boolean
+              history:
+                description: History contains a bounded audit trail of previous scan
+                  results
+                items:
+                  description: ComplianceHistoryEntry represents a single historical
+                    TLS scan result
+                  properties:
+                    certFingerprint:
+                      description: CertFingerprint is the SHA-256 digest of the certificate
+                        fingerprint
+                      type: string
+                    complianceStatus:
+                      description: ComplianceStatus is the TLS compliance status at
+                        that time
+                      enum:
+                      - Compliant
+                      - NonCompliant
+                      - Warning
+                      - Unreachable
+                      - Timeout
+                      - Closed
+                      - Filtered
+                      - LocalhostOnly
+                      - NoTLS
+                      - PlaintextHTTP
+                      - MutualTLSRequired
+                      - Pending
+                      - Unknown
+                      type: string
+                    overallCipherGrade:
+                      description: OverallCipherGrade is the worst grade across all
+                        negotiated cipher suites
+                      type: string
+                    timestamp:
+                      description: Timestamp is when the check was performed
+                      format: date-time
+                      type: string
+                    tlsVersions:
+                      description: TLSVersions indicates which TLS versions were supported
+                      properties:
+                        ssl30:
+                          description: SSL30 indicates if the deprecated SSLv3 protocol
+                            is supported
+                          type: boolean
+                        tls10:
+                          description: TLS10 indicates if TLS 1.0 is supported
+                          type: boolean
+                        tls11:
+                          description: TLS11 indicates if TLS 1.1 is supported
+                          type: boolean
+                        tls12:
+                          description: TLS12 indicates if TLS 1.2 is supported
+                          type: boolean
+                        tls13:
+                          description: TLS13 indicates if TLS 1.3 is supported
+                          type: boolean
+                      required:
+                      - tls10
+                      - tls11
+                      - tls12
+                      - tls13
+                      type: object
+                  required:
+                  - complianceStatus
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
               imageCertificationInfo:
                 description: |-
                   ImageCertificationInfo contains image certification data cross-referenced from
@@ -557,6 +692,16 @@ spec:
                 description: LastSeenAt is when this endpoint was last observed
                 format: date-time
                 type: string
+              listenAddresses:
+                description: |-
+                  ListenAddresses are the bind addresses observed for this endpoint's port
+                  from /proc/net/tcp{,6}. Only populated for Pod sources when
+                  --discover-listening-ports is enabled. An empty list means the bind
+                  addresses are unknown or the port is no longer bound.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
               mlkemSupported:
                 description: |-
                   MLKEMSupported indicates whether the endpoint accepted a hybrid ML-KEM
@@ -573,9 +718,19 @@ spec:
                 description: NextRetryAt is when the next retry attempt will happen
                 format: date-time
                 type: string
+              nextScanAt:
+                description: NextScanAt is the estimated time of the next TLS check
+                format: date-time
+                type: string
               overallCipherGrade:
                 description: OverallCipherGrade is the worst grade across all negotiated
                   cipher suites
+                type: string
+              policyProfile:
+                description: |-
+                  PolicyProfile is the component profile selected for this endpoint by the
+                  policy ConfigMap (apiserver, ingress, kubelet, or exempt). Empty when no
+                  policy is configured.
                 type: string
               pqcReadiness:
                 description: |-
@@ -601,11 +756,68 @@ spec:
                 description: ScanDuration is the wall-clock time taken by the last
                   TLS check (e.g. "1.23s")
                 type: string
+              selectedProfileCompliance:
+                description: |-
+                  SelectedProfileCompliance contains the compliance result against the
+                  TLS security profile selected by the source TLSComplianceTarget's
+                  `spec.scan.profile`. Nil when the target selects no profile.
+                properties:
+                  compliant:
+                    description: Compliant indicates whether the endpoint meets the
+                      profile requirements
+                    type: boolean
+                  disallowedCiphers:
+                    description: |-
+                      DisallowedCiphers lists cipher suites negotiated by the endpoint that are
+                      not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  disallowedGroups:
+                    description: |-
+                      DisallowedGroups lists key exchange groups negotiated by the endpoint
+                      that are not in the profile's allowed list
+                    items:
+                      type: string
+                    type: array
+                  groupsCompliant:
+                    description: |-
+                      GroupsCompliant indicates whether the endpoint's negotiated curves are
+                      in the profile's allowed groups list
+                    type: boolean
+                  minTLSVersionMet:
+                    description: |-
+                      MinTLSVersionMet indicates whether the endpoint does not support TLS versions
+                      below the profile's minimum
+                    type: boolean
+                  profileType:
+                    description: ProfileType is the configured profile type (Old,
+                      Intermediate, Modern, Custom)
+                    type: string
+                required:
+                - compliant
+                - groupsCompliant
+                - minTLSVersionMet
+                - profileType
+                type: object
+              serverPrefersOwnCiphers:
+                description: |-
+                  ServerPrefersOwnCiphers indicates whether the TLS 1.2 endpoint selects its
+                  own cipher order instead of following the client's offered order. A nil
+                  value means detection was disabled or inconclusive.
+                type: boolean
               tlsAdherence:
                 description: |-
                   TLSAdherence is the OpenShift APIServer TLS adherence mode
                   (e.g. LegacyAdheringComponentsOnly, StrictAllComponents).
                   Empty on non-OpenShift clusters or when the field is not set.
+                type: string
+              tlsProfileSource:
+                description: |-
+                  TLSProfileSource records where the TLS security profile used for this
+                  endpoint came from: "Cluster" when read from OpenShift config, or
+                  "Override" when forced with --tls-profile-type. Empty when no profile
+                  was applied.
                 type: string
               tlsVersions:
                 description: TLSVersions indicates which TLS versions are supported
@@ -632,6 +844,18 @@ spec:
                 - tls12
                 - tls13
                 type: object
+              workloadKind:
+                description: |-
+                  WorkloadKind is the kind of the workload controller that owns a Pod
+                  source (ReplicaSet, DaemonSet, StatefulSet, Job), taken from the pod's
+                  owner reference. Empty for non-Pod sources and for pods without an owner.
+                type: string
+              workloadName:
+                description: |-
+                  WorkloadName is the name of the owning workload controller for a Pod
+                  source. Unlike the pod name it survives pod recreation, which makes
+                  exported test names stable across runs.
+                type: string
             type: object
         required:
         - spec
@@ -645,7 +869,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.21.0
+    controller-gen.kubebuilder.io/version: v0.23.0
   name: tlscompliancetargets.security.telco.openshift.io
 spec:
   group: security.telco.openshift.io
@@ -712,11 +936,79 @@ spec:
                 minLength: 1
                 type: string
               port:
-                description: Port is the port number to scan
+                description: Port is the port number to scan. It defaults to 443 when
+                  the mutating webhook is enabled.
                 format: int32
                 maximum: 65535
                 minimum: 1
                 type: integer
+              scan:
+                description: |-
+                  Scan overrides the operator's global scan settings for this target.
+                  Unset fields fall back to the operator flags.
+                properties:
+                  clientCertificate:
+                    description: |-
+                      ClientCertificate references a Secret holding the client certificate
+                      presented when probing mTLS endpoints.
+                    properties:
+                      certKey:
+                        description: |-
+                          CertKey is the Secret key holding the PEM client certificate.
+                          Defaults to "tls.crt".
+                        type: string
+                      keyKey:
+                        description: |-
+                          KeyKey is the Secret key holding the PEM private key.
+                          Defaults to "tls.key".
+                        type: string
+                      name:
+                        description: Name of the Secret.
+                        minLength: 1
+                        type: string
+                      namespace:
+                        description: Namespace of the Secret.
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    - namespace
+                    type: object
+                  enumerateCiphers:
+                    description: EnumerateCiphers overrides the global cipher enumeration
+                      setting.
+                    type: boolean
+                  interval:
+                    description: Interval overrides the global scan interval for this
+                      target.
+                    type: string
+                  profile:
+                    description: |-
+                      Profile selects the built-in TLS security profile ("Old",
+                      "Intermediate", "Modern") to evaluate this target against, in addition
+                      to the cluster component profiles. Empty keeps the default behavior.
+                    enum:
+                    - Old
+                    - Intermediate
+                    - Modern
+                    type: string
+                  timeout:
+                    description: Timeout overrides the per-connection TLS probe timeout
+                      for this target.
+                    type: string
+                  tlsVersions:
+                    description: |-
+                      TLSVersions restricts which TLS versions are probed ("1.0", "1.1",
+                      "1.2", "1.3"). Empty probes every version, like the global setting.
+                    items:
+                      enum:
+                      - "1.0"
+                      - "1.1"
+                      - "1.2"
+                      - "1.3"
+                      type: string
+                    type: array
+                type: object
             required:
             - host
             - port
@@ -734,6 +1026,7 @@ spec:
                 - Timeout
                 - Closed
                 - Filtered
+                - LocalhostOnly
                 - NoTLS
                 - PlaintextHTTP
                 - MutualTLSRequired
@@ -821,6 +1114,91 @@ spec:
     subresources:
       status: {}
 ---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.23.0
+  name: tlssecurityprofiles.security.telco.openshift.io
+spec:
+  group: security.telco.openshift.io
+  names:
+    kind: TLSSecurityProfile
+    listKind: TLSSecurityProfileList
+    plural: tlssecurityprofiles
+    shortNames:
+    - tlsprofile
+    singular: tlssecurityprofile
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.minTLSVersion
+      name: Min Version
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          TLSSecurityProfile is the Schema for the tlssecurityprofiles API.
+          Select one with the operator's --custom-profile flag.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: Spec defines the profile's minimum version and allowed suites
+            properties:
+              ciphers:
+                description: |-
+                  Ciphers lists the allowed cipher suites in OpenSSL naming (for example
+                  ECDHE-RSA-AES128-GCM-SHA256). Empty means ciphers are not checked.
+                items:
+                  type: string
+                type: array
+              groups:
+                description: |-
+                  Groups lists the allowed TLS key exchange groups (for example
+                  X25519, secp256r1). Empty means groups are not checked.
+                items:
+                  type: string
+                type: array
+              minTLSVersion:
+                description: |-
+                  MinTLSVersion is the lowest acceptable TLS protocol version, using the
+                  OpenShift spelling (for example VersionTLS12).
+                enum:
+                - VersionTLS10
+                - VersionTLS11
+                - VersionTLS12
+                - VersionTLS13
+                type: string
+            required:
+            - minTLSVersion
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources: {}
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -864,13 +1242,7 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - events
-  verbs:
-  - create
-  - patch
-- apiGroups:
-  - ""
-  resources:
+  - configmaps
   - nodes
   - pods
   - services
@@ -878,6 +1250,25 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - pods/exec
+  verbs:
+  - create
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
 - apiGroups:
   - config.openshift.io
   resources:
@@ -950,6 +1341,7 @@ rules:
   resources:
   - imagecertificationinfoes
   - tlscompliancetargets
+  - tlssecurityprofiles
   verbs:
   - get
   - list
@@ -974,6 +1366,12 @@ rules:
   verbs:
   - get
   - patch
+  - update
+- apiGroups:
+  - security.telco.openshift.io
+  resources:
+  - tlscompliancetargets/finalizers
+  verbs:
   - update
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -1103,7 +1501,7 @@ spec:
           value: "1"
         - name: GOMEMLIMIT
           value: 460MiB
-        image: quay.io/bapalm/tls-compliance-operator:v1.1.12
+        image: quay.io/bapalm/tls-compliance-operator:v1.2.1
         livenessProbe:
           httpGet:
             path: /healthz

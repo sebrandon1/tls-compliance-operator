@@ -168,7 +168,7 @@ make run-once SCAN_NAMESPACES=my-app,my-other-app
 make deploy-run-once-scan SCAN_FORMAT=json SCAN_FILE=report.json
 
 # Deploy-scan with a specific image and namespace filter
-make deploy-run-once-scan IMG=quay.io/bapalm/tls-compliance-operator:v1.1.4 \
+make deploy-run-once-scan IMG=quay.io/bapalm/tls-compliance-operator:v1.2.1 \
   SCAN_NAMESPACES=my-app SCAN_FORMAT=json SCAN_FILE=report.json
 ```
 

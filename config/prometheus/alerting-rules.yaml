@@ -61,6 +61,16 @@ spec:
             description: "No scan cycle has completed in over 2 hours (default interval is 1 hour). The periodic scan goroutine may be stuck or crashed."
             runbook_url: "https://github.com/sebrandon1/tls-compliance-operator/blob/main/docs/troubleshooting.md#reports-stuck-in-pending"
 
+        - alert: TLSScanWindowInvalid
+          expr: increase(tls_compliance_scan_cycle_skipped_total{reason="invalid_window"}[15m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "TLS scan window configuration is invalid"
+            description: "{{ $value | humanize }} scan cycle(s) were skipped because the scan window could not be evaluated. Check --scan-window-start, --scan-window-end and --scan-window-timezone; no scan runs until the configuration parses."
+            runbook_url: "https://github.com/sebrandon1/tls-compliance-operator/blob/main/docs/configuration.md#scan-window"
+
         - alert: TLSCleanupCycleStalled
           expr: time() - tls_compliance_cleanup_cycle_last_completed_timestamp > 600
           for: 10m
