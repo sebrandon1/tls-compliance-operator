@@ -4,7 +4,7 @@ Contributions are welcome! This guide covers the development workflow.
 
 ## Prerequisites
 
-- Go 1.26+
+- Go 1.27.4+
 - Docker (for building images)
 - kubectl / oc CLI
 - A Kubernetes or OpenShift cluster (for testing)

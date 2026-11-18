@@ -53,7 +53,7 @@ make deploy IMG=<img>
 make build-installer IMG=<img>  # dist/install.yaml
 ```
 
-Requires **Go 1.26+**.
+Requires **Go 1.27.4+**.
 
 ## Layout
 

@@ -44,6 +44,30 @@
 4. **TLSComplianceReport** CR is created/updated with results
 5. **Events and Metrics** are emitted for observability
 
+## Scheduling
+
+The periodic scan is driven by `--scan-interval` (default `1h`).
+
+- The first scan runs at startup, as soon as the informer caches are synced, and is
+  **not** gated by the scan window.
+- `--scan-window-start` / `--scan-window-end` (`HH:MM`) together with
+  `--scan-window-timezone` confine scans to a daily window. Both bounds must be set
+  and must differ; the operator exits at startup otherwise.
+- When a tick fires outside the window, the cycle is skipped and a catch-up timer is
+  armed for the next window open. When that timer fires, the scan runs and the ticker
+  is reset, so the next scan is a full interval after the catch-up rather than
+  immediately after the tick that was skipped.
+- `--run-once` runs a single scan, reports the result, and returns without ever
+  starting the loop.
+- `--scan-interval` and the window flags are separate: a `1h` interval inside a
+  `22:00–02:00` window yields at most four scans per night.
+
+Two metrics expose this state: `tls_compliance_scan_cycle_next_scheduled_timestamp_seconds`
+is the next expected cycle and is cleared to `0` when the operator shuts down, and
+`tls_compliance_scan_cycle_skipped_total{reason}` counts cycles that did not run,
+labelled `outside_window` or `invalid_window`. See [Metrics](metrics.md) for the
+PromQL that distinguishes a closed window from a stalled loop.
+
 ## Compliance History
 
 Each `TLSComplianceReport` keeps a bounded `status.history` audit trail of prior scan

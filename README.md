@@ -47,6 +47,9 @@ kubectl apply -f https://github.com/sebrandon1/tls-compliance-operator/releases/
 
 For a walkthrough from deploy through export, see [Quick Start](docs/quickstart.md).
 
+Prefer OLM? The operator is also on [OperatorHub.io](https://operatorhub.io/operator/tls-compliance-operator)
+and in the OpenShift community catalog — see [Install with OperatorHub](docs/installation.md#install-with-operatorhub).
+
 To uninstall:
 
 ```bash
@@ -77,7 +80,7 @@ kubectl delete -f https://github.com/sebrandon1/tls-compliance-operator/releases
 - Kubernetes v1.28+ or OpenShift 4.x
 - kubectl or oc CLI
 - Cluster-admin privileges (for CRD installation)
-- Go 1.26+ (for development)
+- Go 1.27.4+ (for development)
 
 ## Development
 

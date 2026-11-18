@@ -23,7 +23,7 @@ All metrics use the `tls_compliance_` prefix.
 | `tls_compliance_check_errors_total` | Counter | `reason` | TLS check errors by failure reason |
 | `tls_compliance_circuit_open_skipped_total` | Counter | - | TLS checks skipped because the endpoint circuit breaker is open |
 | `tls_compliance_scan_cycle_last_completed_timestamp` | Gauge | - | Unix timestamp of last successful scan cycle |
-| `tls_compliance_scan_cycle_skipped_total` | Counter | `reason` | Scan cycles that did not run, by reason (`outside_window`, `invalid_window`, `already_running`) |
+| `tls_compliance_scan_cycle_skipped_total` | Counter | `reason` | Scan cycles that did not run, by reason (`outside_window`, `invalid_window`) |
 | `tls_compliance_scan_cycle_next_scheduled_timestamp_seconds` | Gauge | - | Unix timestamp of the next expected scan cycle (0 when none is scheduled) |
 | `tls_compliance_cleanup_cycle_last_completed_timestamp` | Gauge | - | Unix timestamp of last successful cleanup cycle |
 | `tls_compliance_reports_ttl_deleted_total` | Counter | - | TLSComplianceReports deleted by retention policy |
@@ -32,7 +32,6 @@ All metrics use the `tls_compliance_` prefix.
 | `tls_compliance_worker_pool_in_use` | Gauge | - | Worker pool slots currently in use |
 | `tls_compliance_endpoints_discovered_total` | Counter | `source_kind`, `namespace` | Endpoints discovered by source kind and namespace |
 | `tls_compliance_notifications_total` | Counter | `result` | Webhook delivery attempts by result (`success`, `error`) |
-
 
 Per-endpoint series (`tls_compliance_certificate_expiry_days`, `tls_compliance_version_support`, `tls_compliance_forward_secrecy`, `tls_compliance_pqc_readiness`, `tls_compliance_profile_compliant`, `tls_compliance_cipher_grade`) are emitted only when `--metrics-per-endpoint=true`. That flag defaults to `false` because host/port labels create high cardinality on large clusters. Aggregate metrics such as `tls_compliance_endpoints_total` are always emitted.
 
@@ -186,6 +185,7 @@ aggregate metrics that are always emitted.
 | `TLSCertificateExpired` | critical | Certificate expiry days <= 0 | Certificate has already expired |
 | `TLSScanCycleSlow` | warning | p95 scan duration > 5 minutes | Scan cycles taking longer than expected |
 | `TLSScanCycleStalled` | warning | No scan completion in 2 hours | Periodic scan loop may be stuck |
+| `TLSScanWindowInvalid` | warning | Scan cycles skipped with `invalid_window` | Scan window configuration cannot be evaluated, so no scan runs |
 | `TLSCleanupCycleStalled` | warning | No cleanup in 10 minutes | Cleanup loop may be stuck |
 | `TLSEndpointUnreachable` | info | Unreachable endpoints for > 24h | Persistent network connectivity issues |
 | `TLSComplianceReconcileErrorRate` | warning | Reconcile errors > 0.5/s for 5m | High reconciliation error rate |
