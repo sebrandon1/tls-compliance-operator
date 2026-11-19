@@ -77,6 +77,17 @@ func printReportDetail(r *securityv1alpha1.TLSComplianceReport, writers ...io.Wr
 		_, _ = fmt.Fprintf(w, "  Listen Addresses: %s\n", strings.Join(r.Status.ListenAddresses, ", "))
 	}
 
+	if r.Status.PolicyProfile != "" {
+		_, _ = fmt.Fprintf(w, "\nPolicy:\n")
+		_, _ = fmt.Fprintf(w, "  Profile: %s\n", r.Status.PolicyProfile)
+		if r.Status.PolicyRule != "" {
+			_, _ = fmt.Fprintf(w, "  Rule:    %s\n", r.Status.PolicyRule)
+		}
+		if r.Status.Exempt {
+			_, _ = fmt.Fprintf(w, "  Exempt:  true\n")
+		}
+	}
+
 	_, _ = fmt.Fprintf(w, "\nTLS Versions:\n")
 	_, _ = fmt.Fprintf(w, "  SSL 3.0:  %v\n", r.Status.TLSVersions.SSL30)
 	_, _ = fmt.Fprintf(w, "  TLS 1.0:  %v\n", r.Status.TLSVersions.TLS10)

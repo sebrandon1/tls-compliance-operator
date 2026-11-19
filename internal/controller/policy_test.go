@@ -85,6 +85,54 @@ rules:
 	}
 }
 
+func TestApplyPolicy_RecordsMatchedRule(t *testing.T) {
+	r := &EndpointReconciler{Policy: compilePolicy(t, `
+rules:
+  - namespace: "^prod$"
+    profile: ingress
+  - namespace: "^openshift-ingress$"
+    process: "^router$"
+    component: "^Service$"
+    profile: kubelet
+`)}
+	cr := policyReport("openshift-ingress", "router")
+
+	r.applyPolicy(cr)
+	if cr.Status.PolicyRuleIndex == nil || *cr.Status.PolicyRuleIndex != 1 {
+		t.Fatalf("PolicyRuleIndex = %v, want 1", cr.Status.PolicyRuleIndex)
+	}
+	want := "rules[1] namespace=^openshift-ingress$ process=^router$ component=^Service$ profile=kubelet"
+	if cr.Status.PolicyRule != want {
+		t.Errorf("PolicyRule = %q, want %q", cr.Status.PolicyRule, want)
+	}
+}
+
+func TestApplyPolicy_DefaultMatchClearsRuleAttribution(t *testing.T) {
+	r := &EndpointReconciler{Policy: compilePolicy(t, `
+rules:
+  - namespace: "^prod$"
+    profile: ingress
+`)}
+	cr := policyReport("prod", "svc")
+	r.applyPolicy(cr)
+	if cr.Status.PolicyRuleIndex == nil {
+		t.Fatal("PolicyRuleIndex = nil, want 0 for the matching rule")
+	}
+
+	// Same report, endpoint no longer covered by a rule.
+	cr.Spec.SourceNamespace = "dev"
+	r.applyPolicy(cr)
+	if cr.Status.PolicyRuleIndex != nil {
+		t.Errorf("PolicyRuleIndex = %v, want nil after a default match", *cr.Status.PolicyRuleIndex)
+	}
+	if cr.Status.PolicyRule != "" {
+		t.Errorf("PolicyRule = %q, want empty", cr.Status.PolicyRule)
+	}
+	if cr.Status.PolicyProfile != string(policy.DefaultProfile) {
+		t.Errorf("PolicyProfile = %q, want %q", cr.Status.PolicyProfile, policy.DefaultProfile)
+	}
+}
+
 func TestApplyPolicy_NilPolicyLeavesFieldsEmpty(t *testing.T) {
 	r := &EndpointReconciler{}
 	cr := policyReport("default", "svc")
@@ -175,5 +223,34 @@ func TestProfileResultFor_SelectsComponent(t *testing.T) {
 	}
 	if got := profileResultFor(cr, "unknown"); got == nil || got.ProfileType != "apiserver" {
 		t.Errorf("profileResultFor(unknown) = %+v, want the apiserver default", got)
+	}
+}
+
+func TestDescribePolicyRule(t *testing.T) {
+	cases := []struct {
+		name  string
+		index int
+		spec  policy.RuleSpec
+		want  string
+	}{
+		{
+			name:  "all selectors",
+			index: 2,
+			spec:  policy.RuleSpec{Namespace: "prod", Process: "api", Port: "443", Component: "Service", Profile: "exempt"},
+			want:  "rules[2] namespace=prod process=api port=443 component=Service profile=exempt",
+		},
+		{
+			name:  "profile only",
+			index: 0,
+			spec:  policy.RuleSpec{Profile: "kubelet"},
+			want:  "rules[0] profile=kubelet",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := describePolicyRule(tc.index, &tc.spec); got != tc.want {
+				t.Errorf("describePolicyRule() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

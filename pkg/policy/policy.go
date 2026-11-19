@@ -177,15 +177,30 @@ func ruleKey(spec *RuleSpec) string {
 // Match returns the profile selected for target, using first-match-wins
 // ordering and DefaultProfile when nothing matches.
 func (p *Policy) Match(target Target) Profile {
+	profile, _ := p.MatchDetailed(target)
+	return profile
+}
+
+// MatchDetailed returns the profile selected for target and the index of the
+// matching rule, or -1 when no rule matched or p is nil.
+func (p *Policy) MatchDetailed(target Target) (Profile, int) {
 	if p == nil {
-		return DefaultProfile
+		return DefaultProfile, -1
 	}
 	for i := range p.rules {
 		if p.rules[i].matches(target) {
-			return p.rules[i].Profile
+			return p.rules[i].Profile, i
 		}
 	}
-	return DefaultProfile
+	return DefaultProfile, -1
+}
+
+// SpecAt returns the original spec of the rule at index.
+func (p *Policy) SpecAt(index int) (RuleSpec, bool) {
+	if p == nil || index < 0 || index >= len(p.rules) {
+		return RuleSpec{}, false
+	}
+	return p.rules[index].Spec, true
 }
 
 // matches reports whether every configured matcher accepts target.

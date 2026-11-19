@@ -394,6 +394,17 @@ type TLSComplianceReportStatus struct {
 	// +optional
 	PolicyProfile string `json:"policyProfile,omitempty"`
 
+	// PolicyRuleIndex is the zero-based index of the policy rule that selected
+	// PolicyProfile. Nil when no rule matched and the default profile applied.
+	// +optional
+	PolicyRuleIndex *int `json:"policyRuleIndex,omitempty"`
+
+	// PolicyRule is a compact rendering of the matched rule, for example
+	// "rules[2] namespace=prod component=Pod profile=exempt". Empty when no
+	// rule matched.
+	// +optional
+	PolicyRule string `json:"policyRule,omitempty"`
+
 	// Exempt reports whether the policy marks this endpoint exempt from
 	// profile adherence. Exempt endpoints are still scanned and reported.
 	// +optional
