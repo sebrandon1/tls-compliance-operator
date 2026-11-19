@@ -379,7 +379,27 @@ name (the workload owner for pods) and `component` is the source kind
   report records `status.exempt`, `status.exemptReason`, and
   `status.policyProfile`.
 
-The policy is read once at startup; a change requires an operator restart.
+#### Policy reload
+
+The operator watches the policy ConfigMap. Editing `policy.yaml` takes effect
+within seconds, with no restart:
+
+```
+INFO  watching the policy ConfigMap for changes  {"configMap": "tls-compliance-operator-system/tls-compliance-operator-policy"}
+INFO  policy reloaded                            {"configMap": "tls-compliance-operator-system/tls-compliance-operator-policy"}
+```
+
+- A reload applies to subsequent reconciles. A report keeps its previous
+  `status.policyProfile` and `status.exempt` until it is reconciled again, which
+  is at most one scan interval.
+- An edit that fails to compile (bad regular expression, unknown profile, or
+  malformed YAML) is logged and the previous policy stays in force:
+  `ERROR policy reload rejected; keeping the previous policy`. The operator does
+  not crash and does not fall back to an empty policy.
+- Warnings about shadowed rules are re-logged on each accepted reload.
+- Startup still hard-fails on an invalid policy, so a bad ConfigMap cannot be
+  deployed alongside a fresh operator.
+
 ### Host-mode scanning
 
 Single-node and edge deployments (MicroShift) often run TLS listeners on the

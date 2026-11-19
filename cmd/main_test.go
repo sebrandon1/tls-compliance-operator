@@ -28,6 +28,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/sebrandon1/tls-compliance-operator/pkg/policy"
+
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 )
 
@@ -1193,4 +1200,96 @@ func TestCheckConfig_Durations(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+}
+
+func newTestPolicyReloader(t *testing.T, initial string) (*policyReloader, *policy.Store) {
+	t.Helper()
+	compiled, err := policy.Compile([]byte(initial))
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	store := policy.NewStore(compiled.Policy)
+	reloader := &policyReloader{
+		store: store,
+		key:   client.ObjectKey{Namespace: "tls-compliance-operator-system", Name: "policy"},
+		log:   logr.Discard(),
+	}
+	reloader.markApplied(initial)
+	return reloader, store
+}
+
+func TestPolicyReloader_AppliesUpdatedConfigMap(t *testing.T) {
+	reloader, store := newTestPolicyReloader(t, "rules:\n  - namespace: prod\n    profile: exempt\n")
+	if got := store.Match(policy.Target{Namespace: "prod"}); got != policy.ProfileExempt {
+		t.Fatalf("Match() before reload = %q, want exempt", got)
+	}
+
+	reloader.apply(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "tls-compliance-operator-system", Name: "policy"},
+		Data:       map[string]string{"policy.yaml": "rules:\n  - namespace: prod\n    profile: kubelet\n"},
+	})
+
+	if got := store.Match(policy.Target{Namespace: "prod"}); got != policy.ProfileKubelet {
+		t.Errorf("Match() after reload = %q, want kubelet", got)
+	}
+}
+
+func TestPolicyReloader_InvalidEditKeepsPreviousPolicy(t *testing.T) {
+	reloader, store := newTestPolicyReloader(t, "rules:\n  - namespace: prod\n    profile: exempt\n")
+
+	reloader.apply(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "tls-compliance-operator-system", Name: "policy"},
+		Data:       map[string]string{"policy.yaml": "rules:\n  - profile: not-a-profile\n"},
+	})
+
+	if got := store.Match(policy.Target{Namespace: "prod"}); got != policy.ProfileExempt {
+		t.Errorf("Match() after rejected reload = %q, want exempt (previous policy)", got)
+	}
+	if got := reloader.lastApplied(); got != "rules:\n  - namespace: prod\n    profile: exempt\n" {
+		t.Errorf("lastApplied() changed after a rejected reload: %q", got)
+	}
+}
+
+func TestPolicyReloader_SkipsUnchangedAndForeignObjects(t *testing.T) {
+	initial := "rules:\n  - namespace: prod\n    profile: exempt\n"
+	reloader, store := newTestPolicyReloader(t, initial)
+	// Poison the store so an unwanted reload is observable.
+	poisoned, err := policy.Compile([]byte("rules:\n  - namespace: prod\n    profile: kubelet\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Set(poisoned.Policy)
+
+	reloader.apply(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "tls-compliance-operator-system", Name: "policy"},
+		Data:       map[string]string{"policy.yaml": initial},
+	})
+	reloader.apply(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "other", Name: "policy"},
+		Data:       map[string]string{"policy.yaml": "rules:\n  - namespace: prod\n    profile: exempt\n"},
+	})
+	reloader.apply("not a configmap")
+
+	if got := store.Match(policy.Target{Namespace: "prod"}); got != policy.ProfileKubelet {
+		t.Errorf("Match() = %q, want the untouched policy", got)
+	}
+}
+
+func TestPolicyReloader_ZeroValueStartsEmpty(t *testing.T) {
+	reloader := &policyReloader{
+		store: policy.NewStore(nil),
+		key:   client.ObjectKey{Namespace: "tls-compliance-operator-system", Name: "policy"},
+		log:   logr.Discard(),
+	}
+	if got := reloader.lastApplied(); got != "" {
+		t.Fatalf("lastApplied() = %q, want empty before any apply", got)
+	}
+
+	reloader.apply(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "tls-compliance-operator-system", Name: "policy"},
+	})
+
+	if got := reloader.store.Match(policy.Target{Namespace: "prod"}); got != policy.DefaultProfile {
+		t.Errorf("Match() = %q, want the default profile for an empty document", got)
+	}
 }

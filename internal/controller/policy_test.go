@@ -29,13 +29,13 @@ import (
 	"github.com/sebrandon1/tls-compliance-operator/pkg/tlsprofile"
 )
 
-func compilePolicy(t *testing.T, doc string) *policy.Policy {
+func compilePolicy(t *testing.T, doc string) *policy.Store {
 	t.Helper()
 	result, err := policy.Compile([]byte(doc))
 	if err != nil {
 		t.Fatalf("policy.Compile() error = %v", err)
 	}
-	return result.Policy
+	return policy.NewStore(result.Policy)
 }
 
 func policyReport(namespace, name string) *securityv1alpha1.TLSComplianceReport {

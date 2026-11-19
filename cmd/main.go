@@ -28,8 +28,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
+	"github.com/go-logr/logr"
 	"golang.org/x/time/rate"
 	corev1 "k8s.io/api/core/v1"
 
@@ -41,10 +43,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	toolscache "k8s.io/client-go/tools/cache"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -716,15 +720,19 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 			"minTLSVersion", resolved.MinTLSVersion)
 	}
 
-	var policyRules *policy.Policy
+	var policyStore *policy.Store
+	var policyKey client.ObjectKey
+	var policyData string
 	if cfg.policyConfigMap != "" {
 		namespace, name, _ := strings.Cut(cfg.policyConfigMap, "/")
+		policyKey = client.ObjectKey{Namespace: namespace, Name: name}
 		var policyCM corev1.ConfigMap
-		if err := mgr.GetAPIReader().Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &policyCM); err != nil {
+		if err := mgr.GetAPIReader().Get(ctx, policyKey, &policyCM); err != nil {
 			setupLog.Error(err, "failed to load --policy-configmap", "configMap", cfg.policyConfigMap)
 			os.Exit(1)
 		}
-		compiled, err := policy.Compile([]byte(policyCM.Data["policy.yaml"]))
+		policyData = policyCM.Data["policy.yaml"]
+		compiled, err := policy.Compile([]byte(policyData))
 		if err != nil {
 			setupLog.Error(err, "invalid policy", "configMap", cfg.policyConfigMap)
 			os.Exit(1)
@@ -732,7 +740,7 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 		for _, warning := range compiled.Warnings {
 			setupLog.Info("policy warning", "warning", warning)
 		}
-		policyRules = compiled.Policy
+		policyStore = policy.NewStore(compiled.Policy)
 		setupLog.Info("TLS component policy loaded", "configMap", cfg.policyConfigMap)
 	}
 
@@ -762,7 +770,7 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 		GatewayGVKs:            gatewayGVKs,
 		ProfileFetcher:         profileFetcher,
 		CustomProfile:          customProfile,
-		Policy:                 policyRules,
+		Policy:                 policyStore,
 		DiscoverListeningPorts: cfg.discoverListeningPorts,
 		HostScanPorts:          hostScanPorts,
 		ProcNetReader:          &controller.ExecProcNetReader{Config: mgr.GetConfig()},
@@ -802,6 +810,17 @@ func setupManager(ctx context.Context, cfg *operatorConfig) (ctrl.Manager, *cont
 		endpointReconciler.StartCleanupLoop(ctx, cfg.cleanupInterval, mgr.Elected())
 		if profileFetcher != nil {
 			profileFetcher.StartPeriodicRefresh(ctx, cfg.profileRefreshInterval)
+		}
+	}
+
+	if policyStore != nil {
+		reloader := &policyReloader{store: policyStore, key: policyKey, log: setupLog}
+		reloader.markApplied(policyData)
+		if err = mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			return reloader.watch(ctx, mgr)
+		})); err != nil {
+			setupLog.Error(err, "unable to watch the policy ConfigMap")
+			os.Exit(1)
 		}
 	}
 
@@ -1171,4 +1190,88 @@ func parsePortList(value string) (map[int32]bool, error) {
 		ports[int32(p)] = true
 	}
 	return ports, nil
+}
+
+// policyReloader compiles the policy ConfigMap on change and swaps it into the
+// store, so an edit takes effect without restarting the operator. A rejected
+// edit leaves the previous policy in force.
+type policyReloader struct {
+	store *policy.Store
+	key   client.ObjectKey
+	log   logr.Logger
+	// applied holds the policy.yaml text of the in-force policy so the initial
+	// informer replay does not look like a change.
+	applied atomic.Value // string
+}
+
+// watch waits for the cache to sync and then applies every change to the
+// policy ConfigMap. It blocks until ctx is cancelled.
+func (p *policyReloader) watch(ctx context.Context, mgr ctrl.Manager) error {
+	if !mgr.GetCache().WaitForCacheSync(ctx) {
+		return fmt.Errorf("cache did not sync while watching the policy ConfigMap")
+	}
+	informer, err := mgr.GetCache().GetInformer(ctx, &corev1.ConfigMap{})
+	if err != nil {
+		return fmt.Errorf("get ConfigMap informer: %w", err)
+	}
+	_, err = informer.AddEventHandler(toolscache.FilteringResourceEventHandler{
+		FilterFunc: func(obj interface{}) bool {
+			_, ok := p.owningConfigMap(obj)
+			return ok
+		},
+		Handler: toolscache.ResourceEventHandlerFuncs{
+			AddFunc:    p.apply,
+			UpdateFunc: func(_, newObj interface{}) { p.apply(newObj) },
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("watch policy ConfigMap: %w", err)
+	}
+	p.log.Info("watching the policy ConfigMap for changes", "configMap", p.key.String())
+	<-ctx.Done()
+	return nil
+}
+
+// markApplied records data as the in-force policy text.
+func (p *policyReloader) markApplied(data string) {
+	p.applied.Store(data)
+}
+
+// lastApplied returns the in-force policy text.
+func (p *policyReloader) lastApplied() string {
+	data, _ := p.applied.Load().(string)
+	return data
+}
+
+// owningConfigMap reports whether obj is the watched ConfigMap, returning it
+// when it is. The informer filter and apply share this single predicate.
+func (p *policyReloader) owningConfigMap(obj interface{}) (*corev1.ConfigMap, bool) {
+	cm, ok := obj.(*corev1.ConfigMap)
+	if !ok || cm.Namespace != p.key.Namespace || cm.Name != p.key.Name {
+		return nil, false
+	}
+	return cm, true
+}
+
+// apply compiles an updated ConfigMap and swaps it into the store.
+func (p *policyReloader) apply(obj interface{}) {
+	cm, ok := p.owningConfigMap(obj)
+	if !ok {
+		return
+	}
+	data := cm.Data["policy.yaml"]
+	if data == p.lastApplied() {
+		return
+	}
+	compiled, err := policy.Compile([]byte(data))
+	if err != nil {
+		p.log.Error(err, "policy reload rejected; keeping the previous policy", "configMap", p.key.String())
+		return
+	}
+	p.store.Set(compiled.Policy)
+	p.markApplied(data)
+	for _, warning := range compiled.Warnings {
+		p.log.Info("policy warning", "warning", warning)
+	}
+	p.log.Info("policy reloaded", "configMap", p.key.String())
 }

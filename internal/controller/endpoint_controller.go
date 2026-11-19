@@ -117,8 +117,10 @@ type EndpointReconciler struct {
 	// DiscoverListeningPorts is set.
 	ProcNetReader endpoint.ProcNetReader
 	// Policy maps endpoints to the component profile used for adherence and
-	// marks exempt endpoints. Nil means every profile is evaluated as before.
-	Policy                *policy.Policy
+	// marks exempt endpoints. The store is shared by every controller copy so a
+	// ConfigMap reload applies to all of them. Nil means every profile is
+	// evaluated as before.
+	Policy                *policy.Store
 	Workers               int
 	MaxRetries            int
 	RetryBackoff          time.Duration
