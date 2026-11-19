@@ -19,6 +19,7 @@ package policy
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func mustCompile(t *testing.T, doc string) *CompileResult {
@@ -212,5 +213,68 @@ func TestPolicy_SpecAt(t *testing.T) {
 	var nilPol *Policy
 	if _, ok := nilPol.SpecAt(0); ok {
 		t.Error("SpecAt on a nil policy should report no rule")
+	}
+}
+
+func TestCompile_InvalidNotAfter(t *testing.T) {
+	for _, value := range []string{"tomorrow", "2026-13-01", "2026-01-01T25:00:00Z"} {
+		_, err := Compile([]byte("rules:\n  - namespace: prod\n    profile: exempt\n    notAfter: \"" + value + "\"\n"))
+		if err == nil {
+			t.Fatalf("Compile() with notAfter %q succeeded, want an error", value)
+		}
+		if !strings.Contains(err.Error(), "rule 0") || !strings.Contains(err.Error(), "notAfter") {
+			t.Errorf("error = %v, want it to name rule 0 and notAfter", err)
+		}
+	}
+}
+
+func TestPolicy_MatchAt_ExpiredRuleFallsThrough(t *testing.T) {
+	pol := mustCompile(t, `
+rules:
+  - namespace: "^prod$"
+    profile: exempt
+    notAfter: "2026-01-01"
+  - namespace: "^prod$"
+    profile: kubelet
+`).Policy
+
+	before := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	if profile, index := pol.MatchAt(Target{Namespace: "prod"}, before); profile != ProfileExempt || index != 0 {
+		t.Errorf("MatchAt(before expiry) = (%q, %d), want (exempt, 0)", profile, index)
+	}
+
+	// Date-only values expire at the end of the day in UTC.
+	after := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	if profile, index := pol.MatchAt(Target{Namespace: "prod"}, after); profile != ProfileKubelet || index != 1 {
+		t.Errorf("MatchAt(after expiry) = (%q, %d), want (kubelet, 1)", profile, index)
+	}
+}
+
+func TestPolicy_MatchAt_ExpiredOnlyRuleFallsBackToDefault(t *testing.T) {
+	pol := mustCompile(t, `
+rules:
+  - namespace: "^prod$"
+    profile: exempt
+    notAfter: "2026-06-01T00:00:00Z"
+`).Policy
+
+	if profile, index := pol.MatchAt(Target{Namespace: "prod"}, time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)); profile != DefaultProfile || index != -1 {
+		t.Errorf("MatchAt() = (%q, %d), want (default, -1)", profile, index)
+	}
+}
+
+func TestPolicy_MatchAt_NoExpiryNeverExpires(t *testing.T) {
+	pol := mustCompile(t, "rules:\n  - namespace: \"^prod$\"\n    profile: exempt\n").Policy
+	far := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
+	if profile, _ := pol.MatchAt(Target{Namespace: "prod"}, far); profile != ProfileExempt {
+		t.Errorf("MatchAt(far future) = %q, want exempt", profile)
+	}
+}
+
+func TestPolicy_SpecAtReason(t *testing.T) {
+	pol := mustCompile(t, "rules:\n  - namespace: prod\n    profile: exempt\n    reason: migration\n    notAfter: \"2026-12-31\"\n").Policy
+	spec, ok := pol.SpecAt(0)
+	if !ok || spec.Reason != "migration" || spec.NotAfter != "2026-12-31" {
+		t.Errorf("SpecAt(0) = (%+v, %v), want the reason and notAfter", spec, ok)
 	}
 }

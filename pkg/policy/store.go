@@ -16,7 +16,10 @@ limitations under the License.
 
 package policy
 
-import "sync/atomic"
+import (
+	"sync/atomic"
+	"time"
+)
 
 // Store holds the in-force policy so a ConfigMap update can swap it without
 // restarting the operator. A compiled Policy is immutable, so readers take a
@@ -60,6 +63,13 @@ func (s *Store) Match(target Target) Profile {
 // profile, matching a nil *Policy.
 func (s *Store) MatchDetailed(target Target) (Profile, int) {
 	return s.Get().MatchDetailed(target)
+}
+
+// MatchAt returns the profile selected for target at now and the index of the
+// matching rule, or -1 when nothing matched. An empty store selects the default
+// profile, matching a nil *Policy.
+func (s *Store) MatchAt(target Target, now time.Time) (Profile, int) {
+	return s.Get().MatchAt(target, now)
 }
 
 // SpecAt returns the original spec of the rule at index in the in-force policy.

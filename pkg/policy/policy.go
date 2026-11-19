@@ -22,6 +22,7 @@ package policy
 import (
 	"fmt"
 	"regexp"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -57,6 +58,13 @@ type RuleSpec struct {
 	Component string `yaml:"component,omitempty"`
 	// Profile is one of apiserver, ingress, kubelet, or exempt.
 	Profile string `yaml:"profile"`
+	// Reason is a human explanation of the rule, surfaced as the exemption
+	// reason on exempt endpoints.
+	Reason string `yaml:"reason,omitempty"`
+	// NotAfter is when the rule stops applying: either an RFC3339 timestamp or
+	// a YYYY-MM-DD date, which expires at the end of that day in UTC. Empty
+	// means the rule never expires.
+	NotAfter string `yaml:"notAfter,omitempty"`
 }
 
 // Rule is a compiled policy rule.
@@ -66,6 +74,8 @@ type Rule struct {
 	port      *regexp.Regexp
 	component *regexp.Regexp
 	Profile   Profile
+	// notAfter is when the rule stops applying; zero means it never does.
+	notAfter time.Time
 	// Spec keeps the original text for messages.
 	Spec RuleSpec
 }
@@ -136,7 +146,11 @@ func compileRule(spec *RuleSpec) (Rule, error) {
 	}
 
 	rule := Rule{Profile: profile, Spec: *spec}
-	var err error
+	notAfter, err := parseNotAfter(spec.NotAfter)
+	if err != nil {
+		return Rule{}, err
+	}
+	rule.notAfter = notAfter
 	if rule.namespace, err = compileMatcher(spec.Namespace); err != nil {
 		return Rule{}, fmt.Errorf("namespace: %w", err)
 	}
@@ -150,6 +164,26 @@ func compileRule(spec *RuleSpec) (Rule, error) {
 		return Rule{}, fmt.Errorf("component: %w", err)
 	}
 	return rule, nil
+}
+
+// parseNotAfter parses a rule expiry. A date-only value expires at the end of
+// that day in UTC, so the same rule behaves identically in every timezone.
+func parseNotAfter(value string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, nil
+	}
+	if ts, err := time.Parse(time.RFC3339, value); err == nil {
+		return ts, nil
+	}
+	if day, err := time.Parse("2006-01-02", value); err == nil {
+		return day.Add(24 * time.Hour), nil
+	}
+	return time.Time{}, fmt.Errorf("invalid notAfter %q (want RFC3339 or YYYY-MM-DD)", value)
+}
+
+// activeAt reports whether the rule still applies at now.
+func (r *Rule) activeAt(now time.Time) bool {
+	return r.notAfter.IsZero() || now.Before(r.notAfter)
 }
 
 // compileMatcher anchors a rule expression. An empty expression matches
@@ -171,24 +205,34 @@ func ruleKey(spec *RuleSpec) string {
 	if isCatchAll(spec) {
 		return ""
 	}
-	return spec.Namespace + "\x00" + spec.Process + "\x00" + spec.Port + "\x00" + spec.Component
+	// notAfter is part of the key: two rules with the same matchers but
+	// different expiry are not duplicates.
+	return spec.Namespace + "\x00" + spec.Process + "\x00" + spec.Port + "\x00" + spec.Component +
+		"\x00" + spec.NotAfter
 }
 
-// Match returns the profile selected for target, using first-match-wins
-// ordering and DefaultProfile when nothing matches.
+// Match returns the profile selected for target at the current time, using
+// first-match-wins ordering and DefaultProfile when nothing matches.
 func (p *Policy) Match(target Target) Profile {
-	profile, _ := p.MatchDetailed(target)
+	profile, _ := p.MatchAt(target, time.Now())
 	return profile
 }
 
-// MatchDetailed returns the profile selected for target and the index of the
-// matching rule, or -1 when no rule matched or p is nil.
+// MatchDetailed returns the profile selected for target at the current time
+// and the index of the matching rule, or -1 when no rule matched.
 func (p *Policy) MatchDetailed(target Target) (Profile, int) {
+	return p.MatchAt(target, time.Now())
+}
+
+// MatchAt returns the profile selected for target at now and the index of the
+// matching rule, or -1 when no rule matched. An expired rule does not match,
+// so later rules and the default still apply.
+func (p *Policy) MatchAt(target Target, now time.Time) (Profile, int) {
 	if p == nil {
 		return DefaultProfile, -1
 	}
 	for i := range p.rules {
-		if p.rules[i].matches(target) {
+		if p.rules[i].activeAt(now) && p.rules[i].matches(target) {
 			return p.rules[i].Profile, i
 		}
 	}

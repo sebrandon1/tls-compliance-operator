@@ -78,6 +78,7 @@ const (
 	EventReasonEndpointDiscovered  = "EndpointDiscovered"
 	EventReasonRetryExhausted      = "RetryExhausted"
 	EventReasonPolicyExempt        = "PolicyExempt"
+	EventReasonPolicyExemptLapsed  = "PolicyExemptLapsed"
 	EventReasonPQCReady            = "PQCReady"
 	EventReasonPQCNotReady         = "PQCNotReady"
 	EventReasonRescanSkipped       = "RescanSkipped"
