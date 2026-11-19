@@ -19,6 +19,7 @@ package export
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -52,18 +53,18 @@ func TestWriteSARIF_Empty(t *testing.T) {
 	if len(log.Runs[0].Results) != 0 {
 		t.Errorf("results = %d, want 0", len(log.Runs[0].Results))
 	}
-	if len(log.Runs[0].Tool.Driver.Rules) != 4 {
-		t.Errorf("rules = %d, want 4", len(log.Runs[0].Tool.Driver.Rules))
+	if len(log.Runs[0].Tool.Driver.Rules) != 9 {
+		t.Errorf("rules = %d, want 9", len(log.Runs[0].Tool.Driver.Rules))
 	}
 }
 
 func TestWriteSARIF_MixedStatus(t *testing.T) {
 	reports := []securityv1alpha1.TLSComplianceReport{
-		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "ok.example", Port: 443}, Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant}},
-		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "legacy.example", Port: 443}, Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusNonCompliant}},
+		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "ok.example", Port: 443}, Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusCompliant, ForwardSecrecy: true, PQCReadiness: securityv1alpha1.PQCReadinessPQCReady}},
+		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "legacy.example", Port: 443}, Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusNonCompliant, ForwardSecrecy: true, PQCReadiness: securityv1alpha1.PQCReadinessTLS13Capable}},
 		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "plain.example", Port: 80}, Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusPlaintextHTTP}},
 		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "none.example", Port: 443}, Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusNoTLS}},
-		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "warn.example", Port: 443}, Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusWarning}},
+		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "warn.example", Port: 443}, Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusWarning, ForwardSecrecy: true, PQCReadiness: securityv1alpha1.PQCReadinessTLS13Capable}},
 		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "timeout.example", Port: 443}, Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusTimeout}},
 	}
 
@@ -125,38 +126,54 @@ func sarifReportForTest(namespace string) *securityv1alpha1.TLSComplianceReport 
 	}
 }
 
+// statusResult returns the compliance-status result, which reportToSARIFResults
+// appends first when the status maps to a rule.
+func statusResult(t *testing.T, r *securityv1alpha1.TLSComplianceReport) sarifResult {
+	t.Helper()
+	results := reportToSARIFResults(r)
+	if len(results) == 0 {
+		t.Fatal("expected at least one result")
+	}
+	return results[0]
+}
+
 func TestSARIFResult_FingerprintIsStable(t *testing.T) {
 	r := sarifReportForTest("prod")
 
-	first, ok := reportToSARIFResult(r)
-	if !ok {
-		t.Fatal("expected a result")
-	}
-	second, ok := reportToSARIFResult(r)
-	if !ok {
-		t.Fatal("expected a result")
-	}
+	first := statusResult(t, r).PartialFingerprints[sarifFingerprintKey]
+	second := statusResult(t, r).PartialFingerprints[sarifFingerprintKey]
 
-	fp := first.PartialFingerprints[sarifFingerprintKey]
-	if fp == "" {
+	if first == "" {
 		t.Fatal("expected a partialFingerprints entry")
 	}
-	if len(fp) != 64 {
-		t.Errorf("fingerprint = %q, want 64 hex characters", fp)
+	if len(first) != 64 {
+		t.Errorf("fingerprint = %q, want 64 hex characters", first)
 	}
-	if second.PartialFingerprints[sarifFingerprintKey] != fp {
-		t.Errorf("fingerprint not stable across calls: %q != %q", fp, second.PartialFingerprints[sarifFingerprintKey])
+	if second != first {
+		t.Errorf("fingerprint not stable across calls: %q != %q", first, second)
 	}
 }
 
 func TestSARIFResult_FingerprintTracksSource(t *testing.T) {
-	prod, _ := reportToSARIFResult(sarifReportForTest("prod"))
-	staging, _ := reportToSARIFResult(sarifReportForTest("staging"))
+	prod := statusResult(t, sarifReportForTest("prod")).PartialFingerprints[sarifFingerprintKey]
+	staging := statusResult(t, sarifReportForTest("staging")).PartialFingerprints[sarifFingerprintKey]
+	if prod == staging {
+		t.Errorf("expected differing fingerprints for different namespaces, got %q for both", prod)
+	}
+}
 
-	prodFP := prod.PartialFingerprints[sarifFingerprintKey]
-	stagingFP := staging.PartialFingerprints[sarifFingerprintKey]
-	if prodFP == stagingFP {
-		t.Errorf("expected differing fingerprints for different namespaces, got %q for both", prodFP)
+func TestSARIFFingerprint_IncludesRuleAndEndpoint(t *testing.T) {
+	r := sarifReportForTest("prod")
+	base := sarifFingerprint(sarifRuleWarning, r)
+
+	if got := sarifFingerprint(sarifRuleNoTLS, r); got == base {
+		t.Error("expected different rule ids to produce different fingerprints")
+	}
+
+	other := sarifReportForTest("prod")
+	other.Spec.Port = 8443
+	if got := sarifFingerprint(sarifRuleWarning, other); got == base {
+		t.Error("expected different ports to produce different fingerprints")
 	}
 }
 
@@ -169,13 +186,9 @@ func TestSARIFRules_AllHaveHelpURI(t *testing.T) {
 }
 
 func TestSARIFResultMessage_NamesSourceObject(t *testing.T) {
-	result, ok := reportToSARIFResult(sarifReportForTest("prod"))
-	if !ok {
-		t.Fatal("expected a result")
-	}
 	want := "Route prod/api-443 (api.example:443) is NonCompliant"
-	if result.Message.Text != want {
-		t.Errorf("message = %q, want %q", result.Message.Text, want)
+	if got := statusResult(t, sarifReportForTest("prod")).Message.Text; got != want {
+		t.Errorf("message = %q, want %q", got, want)
 	}
 }
 
@@ -184,13 +197,9 @@ func TestSARIFResultMessage_FallsBackWithoutSource(t *testing.T) {
 		Spec:   securityv1alpha1.TLSComplianceReportSpec{Host: "bare.example", Port: 443},
 		Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusWarning},
 	}
-	result, ok := reportToSARIFResult(r)
-	if !ok {
-		t.Fatal("expected a result")
-	}
 	want := "bare.example:443 is Warning"
-	if result.Message.Text != want {
-		t.Errorf("message = %q, want %q", result.Message.Text, want)
+	if got := statusResult(t, r).Message.Text; got != want {
+		t.Errorf("message = %q, want %q", got, want)
 	}
 }
 
@@ -231,17 +240,168 @@ func TestSARIFSourceObject(t *testing.T) {
 	}
 }
 
-func TestSARIFFingerprint_IncludesRuleAndEndpoint(t *testing.T) {
-	r := sarifReportForTest("prod")
-	base := sarifFingerprint(sarifRuleWarning, r)
+func sarifTLSReport(status securityv1alpha1.ComplianceStatus) *securityv1alpha1.TLSComplianceReport {
+	return &securityv1alpha1.TLSComplianceReport{
+		Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "tls.example", Port: 443},
+		Status: securityv1alpha1.TLSComplianceReportStatus{
+			ComplianceStatus: status,
+			ForwardSecrecy:   true,
+			PQCReadiness:     securityv1alpha1.PQCReadinessPQCReady,
+		},
+	}
+}
 
-	if got := sarifFingerprint(sarifRuleNoTLS, r); got == base {
-		t.Error("expected different rule ids to produce different fingerprints")
+func sarifRuleIDs(results []sarifResult) []string {
+	ids := make([]string, 0, len(results))
+	for _, r := range results {
+		ids = append(ids, r.RuleID)
+	}
+	return ids
+}
+
+func TestReportToSARIFResults_CertificateFindings(t *testing.T) {
+	cases := []struct {
+		name string
+		cert *securityv1alpha1.CertificateInfo
+		want []string
+	}{
+		{
+			name: "no certificate record",
+			cert: nil,
+			want: nil,
+		},
+		{
+			name: "healthy certificate",
+			cert: &securityv1alpha1.CertificateInfo{DaysUntilExpiry: 200},
+			want: nil,
+		},
+		{
+			name: "expired certificate",
+			cert: &securityv1alpha1.CertificateInfo{IsExpired: true, DaysUntilExpiry: -3},
+			want: []string{sarifRuleCertificateExpired},
+		},
+		{
+			name: "expiring soon",
+			cert: &securityv1alpha1.CertificateInfo{DaysUntilExpiry: sarifCertExpiryWarningDays},
+			want: []string{sarifRuleCertificateExpiring},
+		},
+		{
+			name: "just outside the horizon",
+			cert: &securityv1alpha1.CertificateInfo{DaysUntilExpiry: sarifCertExpiryWarningDays + 1},
+			want: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := sarifTLSReport(securityv1alpha1.ComplianceStatusCompliant)
+			r.Status.CertificateInfo = tc.cert
+			if got := sarifRuleIDs(reportToSARIFResults(r)); !slices.Equal(got, tc.want) {
+				t.Errorf("rules = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestReportToSARIFResults_CipherAndPQC(t *testing.T) {
+	cases := []struct {
+		name  string
+		mutfn func(*securityv1alpha1.TLSComplianceReport)
+		want  []string
+	}{
+		{
+			name:  "weak grade",
+			mutfn: func(r *securityv1alpha1.TLSComplianceReport) { r.Status.OverallCipherGrade = "F" },
+			want:  []string{sarifRuleWeakCipher},
+		},
+		{
+			name:  "grade C is fine",
+			mutfn: func(r *securityv1alpha1.TLSComplianceReport) { r.Status.OverallCipherGrade = "C" },
+			want:  nil,
+		},
+		{
+			name:  "no forward secrecy",
+			mutfn: func(r *securityv1alpha1.TLSComplianceReport) { r.Status.ForwardSecrecy = false },
+			want:  []string{sarifRuleNoForwardSecrecy},
+		},
+		{
+			name: "legacy PQC",
+			mutfn: func(r *securityv1alpha1.TLSComplianceReport) {
+				r.Status.PQCReadiness = securityv1alpha1.PQCReadinessLegacyTLS
+			},
+			want: []string{sarifRulePQCNotReady},
+		},
+		{
+			name: "no PQC",
+			mutfn: func(r *securityv1alpha1.TLSComplianceReport) {
+				r.Status.PQCReadiness = securityv1alpha1.PQCReadinessNoPQC
+			},
+			want: []string{sarifRulePQCNotReady},
+		},
+		{
+			name: "TLS 1.3 capable is not a finding",
+			mutfn: func(r *securityv1alpha1.TLSComplianceReport) {
+				r.Status.PQCReadiness = securityv1alpha1.PQCReadinessTLS13Capable
+			},
+			want: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := sarifTLSReport(securityv1alpha1.ComplianceStatusCompliant)
+			tc.mutfn(r)
+			if got := sarifRuleIDs(reportToSARIFResults(r)); !slices.Equal(got, tc.want) {
+				t.Errorf("rules = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestReportToSARIFResults_ConnectivityStatusHasNoFindings(t *testing.T) {
+	for _, status := range []securityv1alpha1.ComplianceStatus{
+		securityv1alpha1.ComplianceStatusTimeout,
+		securityv1alpha1.ComplianceStatusClosed,
+		securityv1alpha1.ComplianceStatusUnreachable,
+		securityv1alpha1.ComplianceStatusNoTLS,
+		securityv1alpha1.ComplianceStatusPlaintextHTTP,
+		securityv1alpha1.ComplianceStatusMutualTLSRequired,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			r := sarifTLSReport(status)
+			r.Status.CertificateInfo = &securityv1alpha1.CertificateInfo{IsExpired: true}
+			r.Status.ForwardSecrecy = false
+			r.Status.PQCReadiness = securityv1alpha1.PQCReadinessNoPQC
+			r.Status.OverallCipherGrade = "F"
+			for _, result := range reportToSARIFResults(r) {
+				switch result.RuleID {
+				case sarifRuleCertificateExpired, sarifRuleCertificateExpiring,
+					sarifRuleWeakCipher, sarifRuleNoForwardSecrecy, sarifRulePQCNotReady:
+					t.Errorf("unexpected %s result for %s", result.RuleID, status)
+				}
+			}
+		})
+	}
+}
+
+func TestWriteSARIF_Deterministic(t *testing.T) {
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "b.example", Port: 443}, Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusWarning}},
+		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "a.example", Port: 443}, Status: securityv1alpha1.TLSComplianceReportStatus{ComplianceStatus: securityv1alpha1.ComplianceStatusNonCompliant}},
+	}
+	var first, second bytes.Buffer
+	if err := WriteSARIF(&first, reports); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteSARIF(&second, reports); err != nil {
+		t.Fatal(err)
+	}
+	if first.String() != second.String() {
+		t.Error("expected byte-identical output across two exports")
 	}
 
-	other := sarifReportForTest("prod")
-	other.Spec.Port = 8443
-	if got := sarifFingerprint(sarifRuleWarning, other); got == base {
-		t.Error("expected different ports to produce different fingerprints")
+	results := decodeSARIF(t, &first).Runs[0].Results
+	for i := 1; i < len(results); i++ {
+		if results[i-1].RuleID > results[i].RuleID {
+			t.Errorf("results are not sorted by rule id: %q before %q", results[i-1].RuleID, results[i].RuleID)
+		}
 	}
 }
