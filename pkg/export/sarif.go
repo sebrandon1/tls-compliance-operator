@@ -17,16 +17,26 @@ limitations under the License.
 package export
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"strconv"
+	"strings"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 )
 
 const sarifSchema = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/sarif-2.1/schema/sarif-schema-2.1.0.json"
+
+// sarifHelpURI points every rule at the SARIF section of the exporting docs.
+const sarifHelpURI = "https://github.com/sebrandon1/tls-compliance-operator/blob/main/docs/exporting-reports.md#sarif"
+
+// sarifFingerprintKey is the partialFingerprints property name. It is part of
+// the alert identity GitHub Code Scanning stores, so it must not change.
+const sarifFingerprintKey = "tlsComplianceIdentity/v1"
 
 const (
 	sarifRuleNonCompliant  = "tls-non-compliant"
@@ -60,6 +70,7 @@ type sarifRule struct {
 	ID               string       `json:"id"`
 	ShortDescription sarifMessage `json:"shortDescription"`
 	FullDescription  sarifMessage `json:"fullDescription"`
+	HelpURI          string       `json:"helpUri,omitempty"`
 	DefaultConfig    sarifConfig  `json:"defaultConfiguration"`
 }
 
@@ -68,10 +79,11 @@ type sarifConfig struct {
 }
 
 type sarifResult struct {
-	RuleID    string          `json:"ruleId"`
-	Level     string          `json:"level"`
-	Message   sarifMessage    `json:"message"`
-	Locations []sarifLocation `json:"locations"`
+	RuleID              string            `json:"ruleId"`
+	Level               string            `json:"level"`
+	Message             sarifMessage      `json:"message"`
+	Locations           []sarifLocation   `json:"locations"`
+	PartialFingerprints map[string]string `json:"partialFingerprints,omitempty"`
 }
 
 type sarifMessage struct {
@@ -95,24 +107,28 @@ var sarifRules = []sarifRule{
 		ID:               sarifRuleNonCompliant,
 		ShortDescription: sarifMessage{Text: "Endpoint supports only legacy TLS"},
 		FullDescription:  sarifMessage{Text: "The endpoint does not support TLS 1.2 or TLS 1.3."},
+		HelpURI:          sarifHelpURI,
 		DefaultConfig:    sarifConfig{Level: "error"},
 	},
 	{
 		ID:               sarifRuleNoTLS,
 		ShortDescription: sarifMessage{Text: "Endpoint does not offer TLS"},
 		FullDescription:  sarifMessage{Text: "The endpoint accepted a connection but did not negotiate TLS."},
+		HelpURI:          sarifHelpURI,
 		DefaultConfig:    sarifConfig{Level: "error"},
 	},
 	{
 		ID:               sarifRulePlaintextHTTP,
 		ShortDescription: sarifMessage{Text: "Endpoint serves plaintext HTTP"},
 		FullDescription:  sarifMessage{Text: "The endpoint responded with plaintext HTTP instead of TLS."},
+		HelpURI:          sarifHelpURI,
 		DefaultConfig:    sarifConfig{Level: "error"},
 	},
 	{
 		ID:               sarifRuleWarning,
 		ShortDescription: sarifMessage{Text: "Endpoint supports modern TLS alongside legacy versions"},
 		FullDescription:  sarifMessage{Text: "The endpoint supports TLS 1.2 or 1.3 but also accepts TLS 1.0, TLS 1.1, or SSL 3.0."},
+		HelpURI:          sarifHelpURI,
 		DefaultConfig:    sarifConfig{Level: "warning"},
 	},
 }
@@ -155,15 +171,59 @@ func reportToSARIFResult(r *securityv1alpha1.TLSComplianceReport) (sarifResult, 
 
 	endpoint := net.JoinHostPort(r.Spec.Host, strconv.Itoa(int(r.Spec.Port)))
 	return sarifResult{
-		RuleID:  ruleID,
-		Level:   level,
-		Message: sarifMessage{Text: fmt.Sprintf("%s is %s", endpoint, r.Status.ComplianceStatus)},
+		RuleID:              ruleID,
+		Level:               level,
+		Message:             sarifMessage{Text: sarifResultMessage(r, endpoint)},
+		PartialFingerprints: map[string]string{sarifFingerprintKey: sarifFingerprint(ruleID, r)},
 		Locations: []sarifLocation{{
 			PhysicalLocation: sarifPhysicalLocation{
 				ArtifactLocation: sarifArtifactLocation{URI: "tls://" + endpoint},
 			},
 		}},
 	}, true
+}
+
+// sarifResultMessage names the source object alongside the endpoint so the
+// Code Scanning alert can be triaged without opening the report.
+func sarifResultMessage(r *securityv1alpha1.TLSComplianceReport, endpoint string) string {
+	source := sarifSourceObject(r)
+	if source == "" {
+		return fmt.Sprintf("%s is %s", endpoint, r.Status.ComplianceStatus)
+	}
+	return fmt.Sprintf("%s (%s) is %s", source, endpoint, r.Status.ComplianceStatus)
+}
+
+// sarifSourceObject renders the source object as "Kind namespace/name", or
+// the empty string when the report does not record one.
+func sarifSourceObject(r *securityv1alpha1.TLSComplianceReport) string {
+	if r.Spec.SourceName == "" {
+		return ""
+	}
+	name := r.Spec.SourceName
+	if r.Spec.SourceNamespace != "" {
+		name = r.Spec.SourceNamespace + "/" + name
+	}
+	if r.Spec.SourceKind == "" {
+		return name
+	}
+	return string(r.Spec.SourceKind) + " " + name
+}
+
+// sarifFingerprint derives a stable alert identity from the source object,
+// the endpoint, and the rule. GitHub otherwise keys alerts off the rule id and
+// the tls:// artifact URI, which collapses two sources exposing one host:port.
+func sarifFingerprint(ruleID string, r *securityv1alpha1.TLSComplianceReport) string {
+	parts := []string{
+		"v1",
+		ruleID,
+		string(r.Spec.SourceKind),
+		r.Spec.SourceNamespace,
+		r.Spec.SourceName,
+		r.Spec.Host,
+		strconv.Itoa(int(r.Spec.Port)),
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return hex.EncodeToString(sum[:])
 }
 
 func sarifRuleForStatus(status securityv1alpha1.ComplianceStatus) (ruleID, level string, ok bool) {
