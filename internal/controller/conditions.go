@@ -259,17 +259,17 @@ func (r *EndpointReconciler) applyPolicy(cr *securityv1alpha1.TLSComplianceRepor
 		process = cr.Status.WorkloadName
 	}
 	wasExempt := cr.Status.Exempt
-	selected, ruleIndex := r.Policy.MatchDetailed(policy.Target{
+	selected, ruleIndex := r.Policy.MatchAt(policy.Target{
 		Namespace: cr.Spec.SourceNamespace,
 		Process:   process,
 		Port:      cr.Spec.Port,
 		Component: string(cr.Spec.SourceKind),
-	})
+	}, r.clock())
 	cr.Status.PolicyProfile = string(selected)
 	recordPolicyRule(cr, r.Policy, ruleIndex)
 	cr.Status.Exempt = selected == policy.ProfileExempt
 	if cr.Status.Exempt {
-		cr.Status.ExemptReason = "policy"
+		cr.Status.ExemptReason = policyExemptReason(r.Policy, ruleIndex)
 		if r.MetricsPerEndpoint {
 			metrics.RecordPolicyExemption(string(selected))
 		}
@@ -280,6 +280,21 @@ func (r *EndpointReconciler) applyPolicy(cr *securityv1alpha1.TLSComplianceRepor
 		return
 	}
 	cr.Status.ExemptReason = ""
+	// An exemption that lapsed — because its notAfter passed or the policy
+	// changed — must be visible, otherwise compliance flips with no explanation.
+	if wasExempt && r.Recorder != nil {
+		r.Recorder.Eventf(cr, nil, corev1.EventTypeNormal, EventReasonPolicyExemptLapsed, EventActionScan,
+			"Endpoint %s is no longer exempt from TLS profile adherence", hostPort(cr.Spec.Host, cr.Spec.Port))
+	}
+}
+
+// policyExemptReason returns the rule's reason for an exemption, falling back
+// to the generic marker when the rule has none.
+func policyExemptReason(pol *policy.Store, ruleIndex int) string {
+	if spec, ok := pol.SpecAt(ruleIndex); ok && spec.Reason != "" {
+		return spec.Reason
+	}
+	return "policy"
 }
 
 // recordPolicyRule stores which policy rule selected the endpoint's profile,

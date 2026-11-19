@@ -18,10 +18,13 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/events"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
 	"github.com/sebrandon1/tls-compliance-operator/pkg/policy"
@@ -130,6 +133,63 @@ rules:
 	}
 	if cr.Status.PolicyProfile != string(policy.DefaultProfile) {
 		t.Errorf("PolicyProfile = %q, want %q", cr.Status.PolicyProfile, policy.DefaultProfile)
+	}
+}
+
+func TestApplyPolicy_UsesRuleReason(t *testing.T) {
+	r := &EndpointReconciler{Policy: compilePolicy(t, `
+rules:
+  - namespace: "^openshift-e2e-loki$"
+    profile: exempt
+    reason: "loki has no TLS listener"
+`)}
+	cr := policyReport("openshift-e2e-loki", "loki")
+
+	r.applyPolicy(cr)
+	if !cr.Status.Exempt {
+		t.Fatal("Exempt = false, want true")
+	}
+	if cr.Status.ExemptReason != "loki has no TLS listener" {
+		t.Errorf("ExemptReason = %q, want the rule reason", cr.Status.ExemptReason)
+	}
+}
+
+func TestApplyPolicy_ExemptionLapsesAfterNotAfter(t *testing.T) {
+	recorder := events.NewFakeRecorder(10)
+	r := &EndpointReconciler{
+		Policy:   compilePolicy(t, "rules:\n  - namespace: \"^prod$\"\n    profile: exempt\n    notAfter: \"2026-06-01\"\n"),
+		Recorder: recorder,
+		now:      func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	}
+	cr := policyReport("prod", "svc")
+	r.applyPolicy(cr)
+	if !cr.Status.Exempt {
+		t.Fatalf("Exempt = false before expiry, want true (reason %q)", cr.Status.ExemptReason)
+	}
+	drainEvents(recorder)
+
+	// Time moves past the rule's expiry.
+	r.now = func() time.Time { return time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC) }
+	r.applyPolicy(cr)
+	if cr.Status.Exempt {
+		t.Error("Exempt = true after expiry, want false")
+	}
+	if cr.Status.ExemptReason != "" {
+		t.Errorf("ExemptReason = %q, want empty after the lapse", cr.Status.ExemptReason)
+	}
+	if cr.Status.PolicyProfile != string(policy.DefaultProfile) {
+		t.Errorf("PolicyProfile = %q, want the default profile", cr.Status.PolicyProfile)
+	}
+
+	var lapsed bool
+	for _, event := range drainEvents(recorder) {
+		if strings.Contains(event, EventReasonPolicyExemptLapsed) {
+			lapsed = true
+		}
+	}
+	if !lapsed {
+		t.Error("expected a PolicyExemptLapsed event")
+
 	}
 }
 
@@ -252,5 +312,23 @@ func TestDescribePolicyRule(t *testing.T) {
 				t.Errorf("describePolicyRule() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestApplyPolicy_LapseWithoutRecorderDoesNotPanic(t *testing.T) {
+	r := &EndpointReconciler{
+		Policy: compilePolicy(t, "rules:\n  - namespace: \"^prod$\"\n    profile: exempt\n    notAfter: \"2020-01-01\"\n"),
+	}
+	cr := policyReport("prod", "svc")
+	cr.Status.Exempt = true
+	cr.Status.ExemptReason = "old policy"
+
+	r.applyPolicy(cr)
+	if cr.Status.Exempt {
+		t.Error("Exempt = true, want false after the rule expired")
+	}
+	if cr.Status.ExemptReason != "" {
+		t.Errorf("ExemptReason = %q, want empty", cr.Status.ExemptReason)
+
 	}
 }

@@ -358,6 +358,8 @@ data:
         profile: kubelet
       - namespace: "^openshift-e2e-loki$"
         profile: exempt
+        reason: "loki has no TLS listener; tracked in OCPBU-1234"
+        notAfter: "2026-12-31"
 ```
 
 Start the operator with `--policy-configmap=tls-compliance-operator-system/tls-compliance-operator-policy`.
@@ -378,6 +380,17 @@ name (the workload owner for pods) and `component` is the source kind
   as non-compliant for adherence, and a `PolicyExempt` event is emitted. The
   report records `status.exempt`, `status.exemptReason`, and
   `status.policyProfile`.
+- `reason` is optional. When set on the matching rule it becomes
+  `status.exemptReason`, so the justification travels with the report instead of
+  living only in the ConfigMap. Without it the reason stays `policy`.
+- `notAfter` makes an exemption temporary. It accepts an RFC3339 timestamp or a
+  `YYYY-MM-DD` date; a date-only value expires at the end of that day in UTC, so
+  the rule behaves identically in every timezone. An expired rule is treated as
+  non-matching: later rules and the default still apply. When an endpoint stops
+  being exempt, the operator emits a `PolicyExemptLapsed` event so the compliance
+  change is explained rather than silent.
+- Expiry is evaluated when the report reconciles, so an expired exemption is
+  noticed at most one scan interval after `notAfter`.
 
 #### Policy reload
 
