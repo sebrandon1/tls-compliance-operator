@@ -23,10 +23,12 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 
 	securityv1alpha1 "github.com/sebrandon1/tls-compliance-operator/api/v1alpha1"
+	"github.com/sebrandon1/tls-compliance-operator/pkg/tlscheck"
 )
 
 const sarifSchema = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/sarif-2.1/schema/sarif-schema-2.1.0.json"
@@ -43,7 +45,18 @@ const (
 	sarifRuleNoTLS         = "tls-no-tls"
 	sarifRulePlaintextHTTP = "tls-plaintext-http"
 	sarifRuleWarning       = "tls-warning"
+
+	sarifRuleCertificateExpired  = "tls-certificate-expired"
+	sarifRuleCertificateExpiring = "tls-certificate-expiring-soon"
+	sarifRuleWeakCipher          = "tls-weak-cipher"
+	sarifRuleNoForwardSecrecy    = "tls-no-forward-secrecy"
+	sarifRulePQCNotReady         = "tls-pqc-not-ready"
 )
+
+// sarifCertExpiryWarningDays mirrors the certificate expiry horizon used for
+// the "expiring soon" result. Keep it in one place so the thresholds cannot
+// drift apart.
+const sarifCertExpiryWarningDays = 14
 
 type sarifLog struct {
 	Version string     `json:"version"`
@@ -131,16 +144,57 @@ var sarifRules = []sarifRule{
 		HelpURI:          sarifHelpURI,
 		DefaultConfig:    sarifConfig{Level: "warning"},
 	},
+	{
+		ID:               sarifRuleCertificateExpired,
+		ShortDescription: sarifMessage{Text: "Endpoint certificate has expired"},
+		FullDescription:  sarifMessage{Text: "The certificate presented by the endpoint is past its notAfter date."},
+		HelpURI:          sarifHelpURI,
+		DefaultConfig:    sarifConfig{Level: "error"},
+	},
+	{
+		ID:               sarifRuleCertificateExpiring,
+		ShortDescription: sarifMessage{Text: "Endpoint certificate expires soon"},
+		FullDescription:  sarifMessage{Text: "The certificate presented by the endpoint expires within 14 days."},
+		HelpURI:          sarifHelpURI,
+		DefaultConfig:    sarifConfig{Level: "warning"},
+	},
+	{
+		ID:               sarifRuleWeakCipher,
+		ShortDescription: sarifMessage{Text: "Endpoint negotiates weak cipher suites"},
+		FullDescription:  sarifMessage{Text: "At least one negotiated cipher suite grades D or F."},
+		HelpURI:          sarifHelpURI,
+		DefaultConfig:    sarifConfig{Level: "warning"},
+	},
+	{
+		ID:               sarifRuleNoForwardSecrecy,
+		ShortDescription: sarifMessage{Text: "Endpoint cipher suites lack forward secrecy"},
+		FullDescription:  sarifMessage{Text: "Not every negotiated cipher suite uses ephemeral key exchange (ECDHE or DHE)."},
+		HelpURI:          sarifHelpURI,
+		DefaultConfig:    sarifConfig{Level: "warning"},
+	},
+	{
+		ID:               sarifRulePQCNotReady,
+		ShortDescription: sarifMessage{Text: "Endpoint is not post-quantum ready"},
+		FullDescription:  sarifMessage{Text: "The endpoint is limited to legacy TLS or offers no hybrid ML-KEM key exchange."},
+		HelpURI:          sarifHelpURI,
+		DefaultConfig:    sarifConfig{Level: "note"},
+	},
 }
 
 // WriteSARIF writes TLSComplianceReport items as a SARIF 2.1.0 log for GitHub Code Scanning.
 func WriteSARIF(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) error {
 	results := make([]sarifResult, 0)
 	for i := range reports {
-		if result, ok := reportToSARIFResult(&reports[i]); ok {
-			results = append(results, result)
-		}
+		results = append(results, reportToSARIFResults(&reports[i])...)
 	}
+	// Deterministic output: same reports in, same bytes out.
+	sort.SliceStable(results, func(i, j int) bool {
+		if results[i].RuleID != results[j].RuleID {
+			return results[i].RuleID < results[j].RuleID
+		}
+		return results[i].Locations[0].PhysicalLocation.ArtifactLocation.URI <
+			results[j].Locations[0].PhysicalLocation.ArtifactLocation.URI
+	})
 
 	log := sarifLog{
 		Version: "2.1.0",
@@ -163,24 +217,91 @@ func WriteSARIF(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) err
 	return nil
 }
 
-func reportToSARIFResult(r *securityv1alpha1.TLSComplianceReport) (sarifResult, bool) {
-	ruleID, level, ok := sarifRuleForStatus(r.Status.ComplianceStatus)
-	if !ok {
-		return sarifResult{}, false
+// reportToSARIFResults maps one report to every finding it carries: the
+// compliance status plus certificate, cipher, forward-secrecy, and PQC
+// findings. Findings that need a certificate or a negotiated cipher are only
+// emitted when the probe completed a TLS handshake.
+func reportToSARIFResults(r *securityv1alpha1.TLSComplianceReport) []sarifResult {
+	endpoint := net.JoinHostPort(r.Spec.Host, strconv.Itoa(int(r.Spec.Port)))
+	results := make([]sarifResult, 0, 6)
+
+	if ruleID, level, ok := sarifRuleForStatus(r.Status.ComplianceStatus); ok {
+		results = append(results, newSARIFResult(r, endpoint, ruleID, level,
+			sarifResultMessage(r, endpoint)))
+	}
+	if !sarifTLSProbeSucceeded(r.Status.ComplianceStatus) {
+		return results
 	}
 
-	endpoint := net.JoinHostPort(r.Spec.Host, strconv.Itoa(int(r.Spec.Port)))
+	results = append(results, sarifCertificateResults(r, endpoint)...)
+	results = append(results, sarifCipherResults(r, endpoint)...)
+	return results
+}
+
+// sarifTLSProbeSucceeded reports whether the given status implies a completed
+// TLS handshake, so certificate and cipher fields are meaningful.
+func sarifTLSProbeSucceeded(status securityv1alpha1.ComplianceStatus) bool {
+	switch status {
+	case securityv1alpha1.ComplianceStatusCompliant,
+		securityv1alpha1.ComplianceStatusNonCompliant,
+		securityv1alpha1.ComplianceStatusWarning:
+		return true
+	default:
+		return false
+	}
+}
+
+// sarifCertificateResults emits the expired and expiring-soon findings.
+func sarifCertificateResults(r *securityv1alpha1.TLSComplianceReport, endpoint string) []sarifResult {
+	cert := r.Status.CertificateInfo
+	if cert == nil {
+		return nil
+	}
+	if cert.IsExpired {
+		return []sarifResult{newSARIFResult(r, endpoint, sarifRuleCertificateExpired, "error",
+			fmt.Sprintf("%s: certificate has expired", endpoint))}
+	}
+	if cert.DaysUntilExpiry <= sarifCertExpiryWarningDays {
+		return []sarifResult{newSARIFResult(r, endpoint, sarifRuleCertificateExpiring, "warning",
+			fmt.Sprintf("%s: certificate expires in %d day(s)", endpoint, cert.DaysUntilExpiry))}
+	}
+	return nil
+}
+
+// sarifCipherResults emits the weak cipher, missing forward secrecy, and PQC
+// findings.
+func sarifCipherResults(r *securityv1alpha1.TLSComplianceReport, endpoint string) []sarifResult {
+	var results []sarifResult
+	switch r.Status.OverallCipherGrade {
+	case string(tlscheck.GradeD), string(tlscheck.GradeF):
+		results = append(results, newSARIFResult(r, endpoint, sarifRuleWeakCipher, "warning",
+			fmt.Sprintf("%s: overall cipher grade %s", endpoint, r.Status.OverallCipherGrade)))
+	}
+	if !r.Status.ForwardSecrecy {
+		results = append(results, newSARIFResult(r, endpoint, sarifRuleNoForwardSecrecy, "warning",
+			fmt.Sprintf("%s: not every cipher suite uses forward secrecy", endpoint)))
+	}
+	switch r.Status.PQCReadiness {
+	case securityv1alpha1.PQCReadinessLegacyTLS, securityv1alpha1.PQCReadinessNoPQC:
+		results = append(results, newSARIFResult(r, endpoint, sarifRulePQCNotReady, "note",
+			fmt.Sprintf("%s: PQC readiness is %s", endpoint, r.Status.PQCReadiness)))
+	}
+	return results
+}
+
+// newSARIFResult builds one result pointing at the endpoint's artifact URI.
+func newSARIFResult(r *securityv1alpha1.TLSComplianceReport, endpoint, ruleID, level, message string) sarifResult {
 	return sarifResult{
 		RuleID:              ruleID,
 		Level:               level,
-		Message:             sarifMessage{Text: sarifResultMessage(r, endpoint)},
+		Message:             sarifMessage{Text: message},
 		PartialFingerprints: map[string]string{sarifFingerprintKey: sarifFingerprint(ruleID, r)},
 		Locations: []sarifLocation{{
 			PhysicalLocation: sarifPhysicalLocation{
 				ArtifactLocation: sarifArtifactLocation{URI: "tls://" + endpoint},
 			},
 		}},
-	}, true
+	}
 }
 
 // sarifResultMessage names the source object alongside the endpoint so the

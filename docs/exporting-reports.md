@@ -128,11 +128,12 @@ and the same per-endpoint columns as Markdown. Status and grade are color-coded.
 kubectl tlsreport sarif > tls-compliance.sarif
 ```
 
-SARIF 2.1.0 with one result per NonCompliant, NoTLS, PlaintextHTTP (error),
-or Warning (warning) endpoint. Compliant and infrastructure statuses are omitted.
-Upload with `github/codeql-action/upload-sarif`.
-
 ### SARIF
+
+SARIF 2.1.0 with one result per finding. Results are sorted by rule id and
+endpoint, so exporting the same reports twice produces byte-identical output.
+The export honours the same filters (`--namespace`, `--compliance`, ...) as the
+table output. Upload with `github/codeql-action/upload-sarif`.
 
 | Rule id | Level | Trigger |
 |---------|-------|---------|
@@ -140,6 +141,20 @@ Upload with `github/codeql-action/upload-sarif`.
 | `tls-no-tls` | error | Port is open but does not negotiate TLS |
 | `tls-plaintext-http` | error | Port serves plaintext HTTP |
 | `tls-warning` | warning | Modern TLS supported alongside SSL 3.0 / TLS 1.0 / TLS 1.1 |
+| `tls-certificate-expired` | error | Certificate is past its notAfter date |
+| `tls-certificate-expiring-soon` | warning | Certificate expires within 14 days |
+| `tls-weak-cipher` | warning | Worst negotiated cipher suite grades D or F |
+| `tls-no-forward-secrecy` | warning | Not every negotiated cipher suite uses ECDHE/DHE |
+| `tls-pqc-not-ready` | note | PQC readiness is `LegacyTLS` or `NoPQC` |
+
+The certificate, cipher, forward-secrecy, and PQC rules are only emitted when
+the probe completed a TLS handshake (Compliant, NonCompliant, or Warning
+statuses). Timeout, Closed, Unreachable, NoTLS, PlaintextHTTP, and
+MutualTLSRequired reports carry only their compliance-status result, so a
+connection failure never masquerades as a cipher or certificate finding.
+
+New rule ids appear as new alert types in GitHub Code Scanning on the first
+upload after an upgrade.
 
 Each rule carries a `helpUri` pointing at this section, so the alert in the
 GitHub Security tab links here.
