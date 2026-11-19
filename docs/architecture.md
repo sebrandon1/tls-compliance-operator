@@ -61,11 +61,17 @@ The periodic scan is driven by `--scan-interval` (default `1h`).
   starting the loop.
 - `--scan-interval` and the window flags are separate: a `1h` interval inside a
   `22:00–02:00` window yields at most four scans per night.
+- A cycle that outlasts `--scan-interval` is not retimed. The ticker buffers a
+  single tick, so the next cycle starts as soon as the previous one returns.
+  The cycle increments `tls_compliance_scan_cycle_overran_total` and logs the
+  duration alongside the interval. The startup scan runs before the ticker
+  exists and is not compared against the interval.
 
 Two metrics expose this state: `tls_compliance_scan_cycle_next_scheduled_timestamp_seconds`
 is the next expected cycle and is cleared to `0` when the operator shuts down, and
 `tls_compliance_scan_cycle_skipped_total{reason}` counts cycles that did not run,
-labelled `outside_window` or `invalid_window`. See [Metrics](metrics.md) for the
+labelled `outside_window` or `invalid_window`. `tls_compliance_scan_cycle_overran_total`
+counts cycles that ran over the interval. See [Metrics](metrics.md) for the
 PromQL that distinguishes a closed window from a stalled loop.
 
 ## Compliance History

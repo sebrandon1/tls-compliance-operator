@@ -196,6 +196,17 @@ var (
 		},
 	)
 
+	// ScanCycleOverranTotal tracks periodic scan cycles that took longer than
+	// the configured scan interval. The ticker buffers one tick, so an
+	// overrunning cycle makes the next one start with no gap.
+	ScanCycleOverranTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: MetricsNamespace,
+			Name:      "scan_cycle_overran_total",
+			Help:      "Total number of periodic scan cycles that took longer than the configured scan interval",
+		},
+	)
+
 	// ScanCycleSkippedTotal tracks periodic scan cycles that did not run, by
 	// reason. Reasons are a closed set (see the ScanSkipReason* constants).
 	ScanCycleSkippedTotal = prometheus.NewCounterVec(
@@ -366,6 +377,7 @@ func init() {
 		ReconcileTotal,
 		ScanCycleDurationSeconds,
 		ScanCycleErrorsTotal,
+		ScanCycleOverranTotal,
 		CheckRetriesTotal,
 		CheckRetriesExhaustedTotal,
 		ReconcileErrorsTotal,
@@ -475,6 +487,12 @@ func RecordScanCycleDuration(durationSeconds float64) {
 // RecordScanCycleError records a periodic scan cycle failure
 func RecordScanCycleError() {
 	ScanCycleErrorsTotal.Inc()
+}
+
+// RecordScanCycleOverran records a scan cycle that ran longer than the
+// configured scan interval.
+func RecordScanCycleOverran() {
+	ScanCycleOverranTotal.Inc()
 }
 
 // RecordRetry records a TLS check retry attempt with the given failure reason

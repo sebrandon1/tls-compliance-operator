@@ -18,6 +18,7 @@ All metrics use the `tls_compliance_` prefix.
 | `tls_compliance_reconcile_latency_seconds` | Histogram | `source_kind` | End-to-end reconciliation latency |
 | `tls_compliance_reconcile_in_flight` | Gauge | - | Reconciliations currently in progress |
 | `tls_compliance_scan_cycle_duration_seconds` | Histogram | - | Full scan cycle duration |
+| `tls_compliance_scan_cycle_overran_total` | Counter | - | Interval-driven scan cycles that took longer than `--scan-interval`, so the next cycle started immediately. The startup scan is not counted. |
 | `tls_compliance_check_retries_total` | Counter | `reason` | TLS check retry attempts by failure reason |
 | `tls_compliance_check_retries_exhausted_total` | Counter | - | Times TLS check retries were exhausted without success |
 | `tls_compliance_check_errors_total` | Counter | `reason` | TLS check errors by failure reason |
@@ -93,6 +94,9 @@ sum by (reason) (rate(tls_compliance_scan_cycle_skipped_total[15m]))
 
 # Invalid scan window configuration (cycles skipped without ever scheduling)
 increase(tls_compliance_scan_cycle_skipped_total{reason="invalid_window"}[15m]) > 0
+
+# Scan cycles that outlasted --scan-interval
+increase(tls_compliance_scan_cycle_overran_total[1h])
 
 # Check if cluster is running in FIPS mode
 tls_compliance_fips_mode_enabled == 1
@@ -184,6 +188,7 @@ aggregate metrics that are always emitted.
 | `TLSCertificateExpiringSoon` | warning | Certificate expires in < 30 days | Upcoming certificate expiration |
 | `TLSCertificateExpired` | critical | Certificate expiry days <= 0 | Certificate has already expired |
 | `TLSScanCycleSlow` | warning | p95 scan duration > 5 minutes | Scan cycles taking longer than expected |
+| `TLSScanCycleOverrunning` | warning | Scan cycles longer than `--scan-interval` within 1h | Cycles outlast the interval, so the next one starts with no gap |
 | `TLSScanCycleStalled` | warning | No scan completion in 2 hours | Periodic scan loop may be stuck |
 | `TLSScanWindowInvalid` | warning | Scan cycles skipped with `invalid_window` | Scan window configuration cannot be evaluated, so no scan runs |
 | `TLSCleanupCycleStalled` | warning | No cleanup in 10 minutes | Cleanup loop may be stuck |

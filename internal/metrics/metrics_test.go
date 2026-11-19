@@ -213,6 +213,12 @@ func TestRecordScanCycleSkipped(t *testing.T) {
 	}
 }
 
+func TestRecordScanCycleOverran(t *testing.T) {
+	assertCounterInc(t, ScanCycleOverranTotal, func() {
+		RecordScanCycleOverran()
+	})
+}
+
 func TestRecordNextScanTime(t *testing.T) {
 	next := time.Date(2026, 1, 1, 3, 0, 0, 0, time.UTC)
 	RecordNextScanTime(next)

@@ -245,6 +245,58 @@ func TestStartPeriodicScan_InvalidWindowRecordsSkipMetric(t *testing.T) {
 	}
 }
 
+// overranCount reads the current value of the overrun counter.
+func overranCount(t *testing.T) float64 {
+	t.Helper()
+	m := &dto.Metric{}
+	if err := metrics.ScanCycleOverranTotal.Write(m); err != nil {
+		t.Fatalf("reading overrun counter: %v", err)
+	}
+	return m.GetCounter().GetValue()
+}
+
+// TestStartPeriodicScan_OverrunRecordsMetric verifies that an interval-driven
+// cycle longer than the interval increments scan_cycle_overran_total. A 1ns
+// interval cannot be met by any cycle, so the first ticker-driven scan overruns.
+func TestStartPeriodicScan_OverrunRecordsMetric(t *testing.T) {
+	r, _ := newWindowedReconciler(t, "00:00", "23:59")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	before := overranCount(t)
+
+	r.StartPeriodicScan(ctx, time.Nanosecond, nil)
+	waitInitialScan(t, r)
+
+	deadline := time.After(5 * time.Second)
+	for overranCount(t) == before {
+		select {
+		case <-deadline:
+			t.Fatal("expected overrun counter to increment for a cycle longer than the interval")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+// TestStartPeriodicScan_InitialScanNotCountedAsOverrun verifies the overrun
+// counter covers interval-driven cycles only: the startup scan runs before the
+// ticker starts and is not compared against the interval.
+func TestStartPeriodicScan_InitialScanNotCountedAsOverrun(t *testing.T) {
+	r, _ := newWindowedReconciler(t, "00:00", "23:59")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	before := overranCount(t)
+
+	r.StartPeriodicScan(ctx, time.Hour, nil)
+	waitInitialScan(t, r)
+	time.Sleep(100 * time.Millisecond)
+
+	if got := overranCount(t); got != before {
+		t.Errorf("expected no overrun with a 1h interval, got %v -> %v", before, got)
+	}
+}
+
 // nextScanGauge reads the current value of the next-scheduled-scan gauge.
 func nextScanGauge(t *testing.T) float64 {
 	t.Helper()
