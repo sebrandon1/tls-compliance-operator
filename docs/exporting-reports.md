@@ -132,6 +132,31 @@ SARIF 2.1.0 with one result per NonCompliant, NoTLS, PlaintextHTTP (error),
 or Warning (warning) endpoint. Compliant and infrastructure statuses are omitted.
 Upload with `github/codeql-action/upload-sarif`.
 
+### SARIF
+
+| Rule id | Level | Trigger |
+|---------|-------|---------|
+| `tls-non-compliant` | error | Endpoint supports only legacy TLS (no TLS 1.2/1.3) |
+| `tls-no-tls` | error | Port is open but does not negotiate TLS |
+| `tls-plaintext-http` | error | Port serves plaintext HTTP |
+| `tls-warning` | warning | Modern TLS supported alongside SSL 3.0 / TLS 1.0 / TLS 1.1 |
+
+Each rule carries a `helpUri` pointing at this section, so the alert in the
+GitHub Security tab links here.
+
+Every result carries a `partialFingerprints` entry under the
+`tlsComplianceIdentity/v1` key. The value is a SHA-256 over the rule id, the
+source object (`sourceKind`, `sourceNamespace`, `sourceName`), the host, and
+the port. GitHub otherwise derives alert identity from the rule id and the
+`tls://host:port` artifact URI, which collapses two sources exposing the same
+host and port (a Route and an Ingress for one hostname, or a Service and a Pod
+behind it) into a single alert.
+
+The result message names the source object, for example
+`Route prod/api-443 (api.example:443) is NonCompliant`. Because the source
+object is part of the fingerprint, renaming a source object is treated as a
+new endpoint: the old alert closes and a new one opens.
+
 ## Querying Reports
 
 ### List reports (`get`)
