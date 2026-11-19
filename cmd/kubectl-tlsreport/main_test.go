@@ -3041,3 +3041,48 @@ func TestPrintNames_WriterError(t *testing.T) {
 		t.Fatalf("printNames() error = %v, want %v", err, wantErr)
 	}
 }
+
+func TestPrintReportDetail_PolicyAttribution(t *testing.T) {
+	index := 2
+	report := securityv1alpha1.TLSComplianceReport{}
+	report.Name = "test-report"
+	report.Spec.Host = "example.com"
+	report.Spec.Port = 443
+	report.Spec.SourceKind = securityv1alpha1.SourceKindPod
+	report.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusCompliant
+	report.Status.PolicyProfile = "exempt"
+	report.Status.PolicyRuleIndex = &index
+	report.Status.PolicyRule = "rules[2] namespace=prod profile=exempt"
+	report.Status.Exempt = true
+
+	output := captureStdout(t, func() {
+		_ = printReportDetail(&report)
+	})
+
+	for _, want := range []string{
+		"Policy:",
+		"Profile: exempt",
+		"Rule:    rules[2] namespace=prod profile=exempt",
+		"Exempt:  true",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("expected output to contain %q, got:\n%s", want, output)
+		}
+	}
+}
+
+func TestPrintReportDetail_NoPolicySectionWithoutProfile(t *testing.T) {
+	report := securityv1alpha1.TLSComplianceReport{}
+	report.Name = "test-report"
+	report.Spec.Host = "example.com"
+	report.Spec.Port = 443
+	report.Status.ComplianceStatus = securityv1alpha1.ComplianceStatusCompliant
+
+	output := captureStdout(t, func() {
+		_ = printReportDetail(&report)
+	})
+
+	if strings.Contains(output, "Policy:") {
+		t.Errorf("expected no Policy section, got:\n%s", output)
+	}
+}

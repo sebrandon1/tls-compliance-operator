@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -258,13 +259,14 @@ func (r *EndpointReconciler) applyPolicy(cr *securityv1alpha1.TLSComplianceRepor
 		process = cr.Status.WorkloadName
 	}
 	wasExempt := cr.Status.Exempt
-	selected := r.Policy.Match(policy.Target{
+	selected, ruleIndex := r.Policy.MatchDetailed(policy.Target{
 		Namespace: cr.Spec.SourceNamespace,
 		Process:   process,
 		Port:      cr.Spec.Port,
 		Component: string(cr.Spec.SourceKind),
 	})
 	cr.Status.PolicyProfile = string(selected)
+	recordPolicyRule(cr, r.Policy, ruleIndex)
 	cr.Status.Exempt = selected == policy.ProfileExempt
 	if cr.Status.Exempt {
 		cr.Status.ExemptReason = "policy"
@@ -278,6 +280,35 @@ func (r *EndpointReconciler) applyPolicy(cr *securityv1alpha1.TLSComplianceRepor
 		return
 	}
 	cr.Status.ExemptReason = ""
+}
+
+// recordPolicyRule stores which policy rule selected the endpoint's profile,
+// so the attribution is visible on the report itself. A default match clears it.
+func recordPolicyRule(cr *securityv1alpha1.TLSComplianceReport, pol *policy.Store, index int) {
+	if spec, ok := pol.SpecAt(index); ok {
+		cr.Status.PolicyRuleIndex = &index
+		cr.Status.PolicyRule = describePolicyRule(index, &spec)
+		return
+	}
+	cr.Status.PolicyRuleIndex = nil
+	cr.Status.PolicyRule = ""
+}
+
+// describePolicyRule renders a matched rule compactly for the report and the
+// describe output. It lists only the four selectors, not the whole document.
+func describePolicyRule(index int, spec *policy.RuleSpec) string {
+	parts := []string{fmt.Sprintf("rules[%d]", index)}
+	for _, selector := range []struct{ name, value string }{
+		{"namespace", spec.Namespace},
+		{"process", spec.Process},
+		{"port", spec.Port},
+		{"component", spec.Component},
+	} {
+		if selector.value != "" {
+			parts = append(parts, selector.name+"="+selector.value)
+		}
+	}
+	return strings.Join(append(parts, "profile="+spec.Profile), " ")
 }
 
 // profileResultFor returns the stored compliance result for a component name.

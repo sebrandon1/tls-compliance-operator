@@ -327,6 +327,11 @@ func (in *TLSComplianceReportStatus) DeepCopyInto(out *TLSComplianceReportStatus
 		*out = new(TLSProfileComplianceResult)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.PolicyRuleIndex != nil {
+		in, out := &in.PolicyRuleIndex, &out.PolicyRuleIndex
+		*out = new(int)
+		**out = **in
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]v1.Condition, len(*in))

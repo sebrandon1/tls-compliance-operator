@@ -157,3 +157,60 @@ rules:
 		t.Errorf("Match() = %q, want default when the component differs", got)
 	}
 }
+
+func TestPolicy_MatchDetailed(t *testing.T) {
+	pol := mustCompile(t, `
+rules:
+  - namespace: "^openshift-ingress$"
+    profile: ingress
+  - port: "^10250$"
+    profile: kubelet
+`).Policy
+
+	cases := []struct {
+		name      string
+		target    Target
+		want      Profile
+		wantIndex int
+	}{
+		{name: "first rule", target: Target{Namespace: "openshift-ingress", Port: 443}, want: ProfileIngress, wantIndex: 0},
+		{name: "second rule", target: Target{Namespace: "prod", Port: 10250}, want: ProfileKubelet, wantIndex: 1},
+		{name: "no match", target: Target{Namespace: "prod", Port: 443}, want: DefaultProfile, wantIndex: -1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			profile, index := pol.MatchDetailed(tc.target)
+			if profile != tc.want || index != tc.wantIndex {
+				t.Errorf("MatchDetailed() = (%q, %d), want (%q, %d)", profile, index, tc.want, tc.wantIndex)
+			}
+			if got := pol.Match(tc.target); got != tc.want {
+				t.Errorf("Match() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPolicy_MatchDetailedNil(t *testing.T) {
+	var pol *Policy
+	if profile, index := pol.MatchDetailed(Target{}); profile != DefaultProfile || index != -1 {
+		t.Errorf("MatchDetailed() = (%q, %d), want (%q, -1)", profile, index, DefaultProfile)
+	}
+}
+
+func TestPolicy_SpecAt(t *testing.T) {
+	pol := mustCompile(t, "rules:\n  - namespace: prod\n    profile: exempt\n").Policy
+	spec, ok := pol.SpecAt(0)
+	if !ok || spec.Namespace != "prod" || spec.Profile != "exempt" {
+		t.Errorf("SpecAt(0) = (%+v, %v), want the prod rule", spec, ok)
+	}
+	if _, ok := pol.SpecAt(1); ok {
+		t.Error("SpecAt(1) should report no rule")
+	}
+	if _, ok := pol.SpecAt(-1); ok {
+		t.Error("SpecAt(-1) should report no rule")
+	}
+	var nilPol *Policy
+	if _, ok := nilPol.SpecAt(0); ok {
+		t.Error("SpecAt on a nil policy should report no rule")
+	}
+}

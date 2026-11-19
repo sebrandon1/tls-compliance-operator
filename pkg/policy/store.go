@@ -54,3 +54,15 @@ func (s *Store) Get() *Policy {
 func (s *Store) Match(target Target) Profile {
 	return s.Get().Match(target)
 }
+
+// MatchDetailed returns the profile selected for target and the index of the
+// matching rule, or -1 when nothing matched. An empty store selects the default
+// profile, matching a nil *Policy.
+func (s *Store) MatchDetailed(target Target) (Profile, int) {
+	return s.Get().MatchDetailed(target)
+}
+
+// SpecAt returns the original spec of the rule at index in the in-force policy.
+func (s *Store) SpecAt(index int) (RuleSpec, bool) {
+	return s.Get().SpecAt(index)
+}
