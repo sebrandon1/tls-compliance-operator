@@ -43,6 +43,10 @@ jobs:
             bin/k8s/
           key: envtest-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Makefile', 'go.sum') }}
 
+      - name: Running test server tests
+        # test/testserver is a separate module, so `make test` does not reach it.
+        run: make test-testserver
+
       - name: Running Tests
         # The race detector roughly doubles runtime; it runs on main pushes and
         # nightly, not on pull requests.

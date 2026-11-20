@@ -32,6 +32,7 @@ make run
 make run-once                 # single scan, then exit
 
 # E2E / parity
+make test-testserver          # unit tests for the STARTTLS fixtures (separate module)
 make setup-test-e2e
 make test-e2e                 # Kind cluster, run, cleanup
 make cleanup-test-e2e

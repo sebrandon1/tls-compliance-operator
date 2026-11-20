@@ -64,6 +64,12 @@ test: manifests generate fmt vet setup-envtest test-krew ## Run tests.
 test-krew: ## Validate Krew plugin packaging and manifest generation.
 	hack/krew_test.sh
 
+# test/testserver is a separate Go module, so the root `go test ./...` and the
+# root coverage gate cannot see it.
+.PHONY: test-testserver
+test-testserver: ## Run unit tests for the STARTTLS test-server preludes.
+	cd test/testserver && go vet ./... && go test ./...
+
 .PHONY: benchmark
 benchmark: ## Run Go benchmark tests.
 	go test -bench=. -benchmem ./pkg/tlscheck/ ./pkg/endpoint/
