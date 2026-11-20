@@ -43,7 +43,13 @@ func serveSTARTTLS(addr, protocol string, tlsCfg *tls.Config) error {
 	if err != nil {
 		return err
 	}
+	return serveSTARTTLSListener(listener, protocol, tlsCfg)
+}
 
+// serveSTARTTLSListener accepts connections on listener until it is closed.
+// It is split out of serveSTARTTLS so tests can own the listener's address and
+// close it without racing the accept loop.
+func serveSTARTTLSListener(listener net.Listener, protocol string, tlsCfg *tls.Config) error {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
