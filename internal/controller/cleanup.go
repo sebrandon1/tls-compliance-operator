@@ -76,6 +76,13 @@ func sourceKey(namespace, name string) string {
 	return namespace + "/" + name
 }
 
+// hostSourceKey builds the key for a host-mode endpoint. All ports on a node
+// share the same SourceName (the hostname), so the port is what distinguishes
+// them.
+func hostSourceKey(port int32) string {
+	return fmt.Sprintf("host:%d", port)
+}
+
 // cleanupOrphanedCRs removes TLSComplianceReport CRs whose source resources no longer exist.
 // It batches source resource lookups by listing each resource type once, then cross-referencing
 // in memory to avoid N+1 API calls. All listings use paginated API calls to bound peak memory.
@@ -101,6 +108,7 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 				sourceKind:      cr.Spec.SourceKind,
 				sourceNamespace: cr.Spec.SourceNamespace,
 				sourceName:      cr.Spec.SourceName,
+				port:            cr.Spec.Port,
 				lastActivity:    lastActivity,
 			})
 		}
@@ -171,6 +179,17 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 		}
 	}
 
+	if neededKinds[securityv1alpha1.SourceKindHost] {
+		hostSet, err := r.hostSourceSet()
+		if err != nil {
+			// Leave the set unset so nothing is deleted when the socket
+			// tables cannot be read.
+			logger.Error(err, "failed to read host listeners for cleanup")
+		} else {
+			existingSources[securityv1alpha1.SourceKindHost] = hostSet
+		}
+	}
+
 	if r.GatewayAPIAvailable {
 		for _, gvk := range r.GatewayGVKs {
 			var kind securityv1alpha1.SourceKind
@@ -211,10 +230,15 @@ func (r *EndpointReconciler) cleanupOrphanedCRs(ctx context.Context) error {
 
 		sourceSet, known := existingSources[ref.sourceKind]
 		if known {
-			key := sourceKey(ref.sourceNamespace, ref.sourceName)
+			var key string
+			if ref.sourceKind == securityv1alpha1.SourceKindHost {
+				key = hostSourceKey(ref.port)
+			} else {
+				key = sourceKey(ref.sourceNamespace, ref.sourceName)
+			}
 			if !sourceSet[key] {
 				logger.Info("deleting orphaned TLSComplianceReport", "name", ref.name,
-					"sourceKind", ref.sourceKind, "sourceName", ref.sourceName)
+					"sourceKind", ref.sourceKind, "sourceName", ref.sourceName, "sourcePort", ref.port)
 				r.deleteCleanupReport(ctx, ref, false)
 				continue
 			}
@@ -235,7 +259,28 @@ type reportRef struct {
 	sourceKind      securityv1alpha1.SourceKind
 	sourceNamespace string
 	sourceName      string
+	port            int32
 	lastActivity    time.Time
+}
+
+// hostSourceSet returns the host endpoints that still exist: each listening
+// port inside the configured range. When host scanning is disabled it returns
+// an empty set, so every host report is treated as orphaned. An error reading
+// the socket tables is propagated so the caller can skip deletion for this
+// cycle.
+func (r *EndpointReconciler) hostSourceSet() (map[string]bool, error) {
+	set := make(map[string]bool)
+	if r.HostScanPorts == nil {
+		return set, nil
+	}
+	ports, err := readHostListeners(r.procNetDir())
+	if err != nil {
+		return nil, err
+	}
+	for _, port := range r.HostScanPorts.Filter(ports) {
+		set[hostSourceKey(port)] = true
+	}
+	return set, nil
 }
 
 func (r *EndpointReconciler) deleteCleanupReport(ctx context.Context, ref *reportRef, ttl bool) {

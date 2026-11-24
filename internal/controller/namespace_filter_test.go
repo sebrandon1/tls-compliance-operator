@@ -108,6 +108,8 @@ func TestIsReportFiltered(t *testing.T) {
 		{name: "excluded", exclude: map[string]bool{"b": true}, kind: securityv1alpha1.SourceKindIngress, ns: "b", want: true},
 		{name: "target with include", include: map[string]bool{"a": true}, kind: securityv1alpha1.SourceKindTarget, ns: "cluster-scoped", want: false},
 		{name: "target with exclude", exclude: map[string]bool{"cluster-scoped": true}, kind: securityv1alpha1.SourceKindTarget, ns: "cluster-scoped", want: false},
+		{name: "host with include", include: map[string]bool{"a": true}, kind: securityv1alpha1.SourceKindHost, ns: "host", want: false},
+		{name: "host with exclude", exclude: map[string]bool{"host": true}, kind: securityv1alpha1.SourceKindHost, ns: "host", want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

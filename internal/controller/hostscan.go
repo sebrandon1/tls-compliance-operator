@@ -46,10 +46,7 @@ func (r *EndpointReconciler) scanHostEndpoints(ctx context.Context) error {
 		return err
 	}
 
-	hostname, _ := os.Hostname()
-	if hostname == "" {
-		hostname = "node"
-	}
+	hostname := hostNodeName()
 
 	for _, port := range r.HostScanPorts.Filter(ports) {
 		ep := endpoint.Endpoint{
@@ -64,6 +61,17 @@ func (r *EndpointReconciler) scanHostEndpoints(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// hostNodeName returns the name used as the SourceName of host reports. It
+// falls back to "node" when the hostname cannot be read, and both the scan and
+// cleanup paths use it so their keys agree.
+func hostNodeName() string {
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "node"
+	}
+	return hostname
 }
 
 // procNetDir returns the directory holding the socket tables.
