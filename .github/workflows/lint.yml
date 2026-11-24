@@ -37,6 +37,14 @@ jobs:
             bin/golangci-lint*
           key: golangci-lint-${{ runner.os }}-${{ hashFiles('Makefile', 'go.mod', '.golangci.yml') }}
 
+      - name: Cache bundle tooling
+        uses: actions/cache@v6
+        with:
+          path: |
+            bin/operator-sdk*
+            bin/kustomize*
+          key: bundle-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Makefile') }}
+
       - name: Run linter
         run: make lint
 
@@ -44,6 +52,13 @@ jobs:
         run: |
           make manifests generate
           git diff --exit-code -- api config
+
+      - name: Check OLM bundle is up to date
+        run: |
+          make bundle
+          # operator-sdk rewrites metadata.annotations.createdAt in the CSV on
+          # every run, so compare only the generated CRDs.
+          git diff --exit-code -- 'bundle/manifests/security.telco.openshift.io_*.yaml'
 
       - name: Check go.mod/go.sum are tidy
         run: |
