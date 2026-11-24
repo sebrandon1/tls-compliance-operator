@@ -415,6 +415,55 @@ kubectl tlsreport target delete google-com-443
 kubectl tlsreport target delete --all
 ```
 
+#### target export
+
+```bash
+kubectl tlsreport target export [--file targets.yaml]
+```
+
+Writes every `TLSComplianceTarget` as a `TLSComplianceTargetList` YAML document
+that `target export` and `target import` both accept. Prints to stdout unless
+`--file` is given.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--file` | | Write the export to this file instead of stdout |
+
+```bash
+# Review the current targets
+kubectl tlsreport target export
+
+# Save them for another cluster
+kubectl tlsreport target export --file targets.yaml
+```
+
+#### target import
+
+```bash
+kubectl tlsreport target import --from-file targets.yaml
+```
+
+Creates targets from a `TLSComplianceTargetList`, a single
+`TLSComplianceTarget`, or a plain host list with one `host[:port]` per line
+(default port `443`; blank lines and `#` comments are skipped; IPv6 literals
+must be bracketed, as in `[2001:db8::1]:8443`). Existing targets are skipped,
+not overwritten, and the command reports how many were created versus skipped.
+Names are derived deterministically from host and port, matching
+`target create`.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--from-file` | | Required. YAML export or one `host[:port]` per line |
+
+```bash
+# Recreate the targets from another cluster
+kubectl tlsreport target export --file targets.yaml
+kubectl tlsreport target import --from-file targets.yaml
+
+# Import a plain list
+kubectl tlsreport target import --from-file endpoints.txt
+```
+
 ### doctor
 
 Diagnose why the report list is empty or stale. Runs read-only checks and
