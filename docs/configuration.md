@@ -427,8 +427,11 @@ in `LISTEN` state inside the range, and probes them at `127.0.0.1:<port>`:
 Each discovered listener becomes a report with `sourceKind: Host`,
 `sourceNamespace: host`, and the node's hostname as the source name. Host
 listeners go through the normal TLS check, report, event, metric, and export
-paths; they are not owned by any Kubernetes object, so cleanup leaves them
-alone and they are re-discovered on every scan cycle.
+paths. Because `host` is not a real namespace, host reports are exempt from the
+namespace include/exclude filters. Cleanup removes a host report once its
+listener disappears from `/proc/net/tcp{,6}` or falls outside the configured
+range, or when `--scan-host-ports` is turned off; the next scan cycle
+re-creates the reports that still have a live listener.
 
 **Prerequisites:** the manager must run with `hostNetwork: true` so the pod
 shares the node's network namespace and with `hostPID: true` so `/proc` is the

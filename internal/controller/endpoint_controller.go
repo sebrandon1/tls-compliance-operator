@@ -768,9 +768,11 @@ func (r *EndpointReconciler) isNamespaceFiltered(namespace string) bool {
 
 // isReportFiltered reports whether an existing TLSComplianceReport falls
 // outside the current namespace filter. TLSComplianceTarget reports are
-// cluster-scoped and have no source namespace, so they are never filtered.
+// cluster-scoped and have no source namespace, and Host reports carry the
+// pseudo-namespace "host"; neither is a real namespace, so they are never
+// filtered.
 func (r *EndpointReconciler) isReportFiltered(kind securityv1alpha1.SourceKind, sourceNamespace string) bool {
-	if kind == securityv1alpha1.SourceKindTarget {
+	if kind == securityv1alpha1.SourceKindTarget || kind == securityv1alpha1.SourceKindHost {
 		return false
 	}
 	return r.isNamespaceFiltered(sourceNamespace)
