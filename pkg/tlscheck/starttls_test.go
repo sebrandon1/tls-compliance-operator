@@ -20,6 +20,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -338,6 +339,81 @@ func TestCheckEndpoint_STARTTLS_Postgres(t *testing.T) {
 	}
 }
 
+func TestCheckEndpoint_STARTTLS_TrustVerification(t *testing.T) {
+	caCert, caParsed := generateCACert(t)
+	serverCert := generateServerCertSignedBy(t, caCert, caParsed, net.ParseIP("127.0.0.1"))
+	host, port, cleanup := startSTARTTLSServer(t, starttlsProtocolSMTP, serverCert)
+	defer cleanup()
+
+	trustedPool := x509.NewCertPool()
+	trustedPool.AddCert(caParsed)
+
+	checker := checkerWithSTARTTLSOverride(3*time.Second, port, starttlsProtocolSMTP)
+	checker.TrustRoots = trustedPool
+
+	result, err := checker.CheckEndpoint(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("CheckEndpoint() error = %v", err)
+	}
+	if result.Certificate == nil || result.Certificate.Trusted == nil {
+		t.Fatal("expected trust verification to be recorded for a STARTTLS endpoint")
+	}
+	if !*result.Certificate.Trusted {
+		t.Errorf("expected a chain signed by the configured CA to be trusted, got error %q",
+			result.Certificate.TrustError)
+	}
+	if result.Certificate.TrustError != "" {
+		t.Errorf("expected no trust error, got %q", result.Certificate.TrustError)
+	}
+}
+
+func TestCheckEndpoint_STARTTLS_TrustVerification_RejectsUnknownCA(t *testing.T) {
+	caCert, caParsed := generateCACert(t)
+	serverCert := generateServerCertSignedBy(t, caCert, caParsed, net.ParseIP("127.0.0.1"))
+	host, port, cleanup := startSTARTTLSServer(t, starttlsProtocolIMAP, serverCert)
+	defer cleanup()
+
+	_, otherParsed := generateCACert(t)
+	wrongPool := x509.NewCertPool()
+	wrongPool.AddCert(otherParsed)
+
+	checker := checkerWithSTARTTLSOverride(3*time.Second, port, starttlsProtocolIMAP)
+	checker.TrustRoots = wrongPool
+
+	result, err := checker.CheckEndpoint(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("CheckEndpoint() error = %v", err)
+	}
+	if result.Certificate == nil || result.Certificate.Trusted == nil {
+		t.Fatal("expected trust verification to be recorded for a STARTTLS endpoint")
+	}
+	if *result.Certificate.Trusted {
+		t.Error("expected a chain from an unknown CA to be untrusted")
+	}
+	if result.Certificate.TrustError == "" {
+		t.Error("expected a non-empty trust error for an unknown CA")
+	}
+}
+
+func TestCheckEndpoint_STARTTLS_NoTrustRootsLeavesVerdictUnset(t *testing.T) {
+	cert, _ := generateTestCert(t)
+	host, port, cleanup := startSTARTTLSServer(t, starttlsProtocolPostgres, cert)
+	defer cleanup()
+
+	checker := checkerWithSTARTTLSOverride(3*time.Second, port, starttlsProtocolPostgres)
+
+	result, err := checker.CheckEndpoint(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("CheckEndpoint() error = %v", err)
+	}
+	if result.Certificate == nil {
+		t.Fatal("expected a certificate to be recorded")
+	}
+	if result.Certificate.Trusted != nil {
+		t.Errorf("expected no trust verdict without --ca-cert, got %v", *result.Certificate.Trusted)
+	}
+}
+
 func TestCheckEndpoint_STARTTLS_UpgradeRefused(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -437,7 +513,7 @@ func TestTrySTARTTLSVersion_ContextCancelledDuringUpgrade(t *testing.T) {
 	}
 	outcomeCh := make(chan probeOutcome, 1)
 	go func() {
-		supported, cipherID, _, _, _, _, err := checker.trySTARTTLSVersion(
+		supported, cipherID, _, _, _, _, _, err := checker.trySTARTTLSVersion(
 			ctx, addr, "127.0.0.1", starttlsProtocolSMTP, tls.VersionTLS12)
 		outcomeCh <- probeOutcome{supported: supported, cipherID: cipherID, err: err}
 	}()
@@ -471,7 +547,7 @@ func TestTrySTARTTLSVersion_SilentServerHonorsTimeout(t *testing.T) {
 	checker := NewTLSChecker(200 * time.Millisecond)
 
 	start := time.Now()
-	supported, _, _, _, _, _, err := checker.trySTARTTLSVersion(
+	supported, _, _, _, _, _, _, err := checker.trySTARTTLSVersion(
 		ctx, addr, "127.0.0.1", starttlsProtocolSMTP, tls.VersionTLS12)
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Errorf("probe took %v, want it bounded by the 200ms probe timeout", elapsed)

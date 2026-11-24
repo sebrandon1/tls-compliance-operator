@@ -20,6 +20,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -315,10 +316,10 @@ func upgradePostgres(conn net.Conn) error {
 // completes a TLS handshake pinned to version. It mirrors tryTLSVersion.
 func (c *TLSChecker) trySTARTTLSVersion(
 	ctx context.Context, addr, host string, proto starttlsProtocol, version uint16,
-) (supported bool, cipherID uint16, cipherSuite, curveName, alpnProto string, cert *CertificateDetails, err error) {
+) (supported bool, cipherID uint16, cipherSuite, curveName, alpnProto string, cert *CertificateDetails, peerCerts []*x509.Certificate, err error) {
 	rawConn, stopCancel, err := c.dialProbe(ctx, addr)
 	if err != nil {
-		return false, 0, "", "", "", nil, err
+		return false, 0, "", "", "", nil, nil, err
 	}
 
 	// The close-on-cancel hook only matters for the plaintext upgrade's blocking
@@ -328,9 +329,9 @@ func (c *TLSChecker) trySTARTTLSVersion(
 	if upgradeErr != nil {
 		_ = rawConn.Close()
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return false, 0, "", "", "", nil, ctxErr
+			return false, 0, "", "", "", nil, nil, ctxErr
 		}
-		return false, 0, "", "", "", nil, upgradeErr
+		return false, 0, "", "", "", nil, nil, upgradeErr
 	}
 
 	tlsCfg := &tls.Config{
@@ -349,9 +350,9 @@ func (c *TLSChecker) trySTARTTLSVersion(
 
 	if err := tlsConn.HandshakeContext(ctx); err != nil {
 		if isMTLSError(err) {
-			return true, 0, "", "", "", nil, err
+			return true, 0, "", "", "", nil, nil, err
 		}
-		return false, 0, "", "", "", nil, err
+		return false, 0, "", "", "", nil, nil, err
 	}
 
 	state := tlsConn.ConnectionState()
@@ -365,7 +366,7 @@ func (c *TLSChecker) trySTARTTLSVersion(
 		certDetails = ParseCertificate(state.PeerCertificates[0], host)
 		certDetails.ChainLength = len(state.PeerCertificates)
 	}
-	return true, state.CipherSuite, cipherSuiteName, curve, state.NegotiatedProtocol, certDetails, nil
+	return true, state.CipherSuite, cipherSuiteName, curve, state.NegotiatedProtocol, certDetails, state.PeerCertificates, nil
 }
 
 // probeSTARTTLS runs TLS version probes concurrently over STARTTLS-upgraded connections.
@@ -376,7 +377,7 @@ func (c *TLSChecker) probeSTARTTLS(ctx context.Context, addr, host string, proto
 	for i, vi := range tlsVersionInfo {
 		g.Go(func() error {
 			pr := &probeResults[i]
-			pr.supported, _, pr.cipherSuite, pr.curveName, pr.alpnProto, pr.cert, pr.err = c.trySTARTTLSVersion(gctx, addr, host, proto, vi.version)
+			pr.supported, _, pr.cipherSuite, pr.curveName, pr.alpnProto, pr.cert, pr.peerCerts, pr.err = c.trySTARTTLSVersion(gctx, addr, host, proto, vi.version)
 			return nil
 		})
 	}
@@ -404,6 +405,11 @@ func (c *TLSChecker) probeSTARTTLS(ctx context.Context, addr, host string, proto
 			}
 			if pr.cert != nil && result.Certificate == nil {
 				result.Certificate = pr.cert
+				if c.TrustRoots != nil {
+					trusted, trustErr := verifyPeerChain(pr.peerCerts, c.TrustRoots, host)
+					result.Certificate.Trusted = &trusted
+					result.Certificate.TrustError = trustErr
+				}
 			}
 		}
 	}
