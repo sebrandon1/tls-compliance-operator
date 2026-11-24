@@ -1,5 +1,10 @@
 # Troubleshooting
 
+**Start here:** `kubectl tlsreport doctor` runs read-only checks for API
+reachability, CRD installation, RBAC, operator health, scan freshness, and the
+admission webhook, and prints a FAIL/WARN row with a remediation for anything
+wrong. See [the doctor docs](kubectl-tlsreport.md#doctor).
+
 ## Reports Stuck in "Pending"
 
 Reports start as `Pending` and transition after TLS checks complete. If reports

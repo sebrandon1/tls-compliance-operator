@@ -30,7 +30,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -205,6 +208,7 @@ Use --kubeconfig and --context to target a specific cluster.`,
 	rootCmd.AddCommand(newDiffCmd())
 	rootCmd.AddCommand(newRescanCmd())
 	rootCmd.AddCommand(newTargetCmd())
+	rootCmd.AddCommand(newDoctorCmd())
 	rootCmd.AddCommand(newVersionCmd())
 	rootCmd.AddCommand(cobrautil.NewCompletionCommand(rootCmd, "kubectl-tlsreport"))
 
@@ -304,6 +308,20 @@ func printConditions(w io.Writer, conditions []metav1.Condition) error {
 }
 
 func buildClient() (client.WithWatch, error) {
+	restConfig, err := buildRestConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	c, err := client.NewWithWatch(restConfig, client.Options{Scheme: scheme})
+	if err != nil {
+		return nil, fmt.Errorf("creating client: %w", err)
+	}
+	return c, nil
+}
+
+// buildRestConfig resolves --kubeconfig/--context into a REST config.
+func buildRestConfig() (*rest.Config, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if kubeconfig != "" {
 		loadingRules.ExplicitPath = kubeconfig
@@ -318,12 +336,29 @@ func buildClient() (client.WithWatch, error) {
 	if err != nil {
 		return nil, fmt.Errorf("building kubeconfig: %w", err)
 	}
+	return restConfig, nil
+}
 
+// buildDoctorClients builds the discovery, typed, and controller-runtime
+// clients the doctor checks use. All are read-only.
+func buildDoctorClients() (doctorClients, error) {
+	restConfig, err := buildRestConfig()
+	if err != nil {
+		return doctorClients{}, err
+	}
+	disco, err := discovery.NewDiscoveryClientForConfig(restConfig)
+	if err != nil {
+		return doctorClients{}, fmt.Errorf("creating discovery client: %w", err)
+	}
+	kube, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return doctorClients{}, fmt.Errorf("creating Kubernetes client: %w", err)
+	}
 	c, err := client.NewWithWatch(restConfig, client.Options{Scheme: scheme})
 	if err != nil {
-		return nil, fmt.Errorf("creating client: %w", err)
+		return doctorClients{}, fmt.Errorf("creating client: %w", err)
 	}
-	return c, nil
+	return doctorClients{discovery: disco, kube: kube, reader: c}, nil
 }
 
 func fetchReports(ctx context.Context) ([]securityv1alpha1.TLSComplianceReport, error) {
