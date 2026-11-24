@@ -415,6 +415,40 @@ kubectl tlsreport target delete google-com-443
 kubectl tlsreport target delete --all
 ```
 
+### doctor
+
+Diagnose why the report list is empty or stale. Runs read-only checks and
+prints PASS/WARN/FAIL for each, exiting non-zero when any check FAILs.
+
+| Check | PASS means |
+|-------|------------|
+| `api-server` | The API server answers and reports its version |
+| `crds` | `tlscompliancereports` and `tlscompliancetargets` are served by `security.telco.openshift.io/v1alpha1` |
+| `rbac` | You may `list` and `get` both CRDs (evaluated with SelfSubjectAccessReview) |
+| `operator` | The manager Deployment in `--operator-namespace` has ready replicas; reports leader election |
+| `scan-freshness` | The newest `status.lastCheckAt` is within two scan intervals and no report is stuck `Pending` |
+| `webhook` | The optional validating webhook is installed and its Service has ready endpoints (WARN when absent) |
+
+```bash
+# Diagnose an empty or stale report list
+kubectl tlsreport doctor
+
+# Point at a non-default install namespace
+kubectl tlsreport doctor --operator-namespace my-namespace
+
+# Machine-readable output; never fail the script
+kubectl tlsreport doctor -o json --fail-on-error=false
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--operator-namespace` | `tls-compliance-operator-system` | Namespace the operator is installed in |
+| `--scan-interval` | `1h` | Configured scan interval, used to judge freshness |
+| `--fail-on-error` | `true` | Exit with code 1 when any check FAILs |
+| `--output` | `table` | `table` or `json` |
+
+The command creates, updates, and deletes nothing.
+
 ### version
 
 Print the plugin version.
