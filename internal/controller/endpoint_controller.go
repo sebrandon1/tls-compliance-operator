@@ -69,19 +69,20 @@ var routeGVK = schema.GroupVersionKind{
 
 // Event reasons and actions for Kubernetes events
 const (
-	EventActionScan                = "Scan"
-	EventReasonTLSWarning          = "TLSWarning"
-	EventReasonTLSNonCompliant     = "TLSNonCompliant"
-	EventReasonComplianceChanged   = "ComplianceChanged"
-	EventReasonCertificateExpiring = "CertificateExpiring"
-	EventReasonCertificateExpired  = "CertificateExpired"
-	EventReasonEndpointDiscovered  = "EndpointDiscovered"
-	EventReasonRetryExhausted      = "RetryExhausted"
-	EventReasonPolicyExempt        = "PolicyExempt"
-	EventReasonPolicyExemptLapsed  = "PolicyExemptLapsed"
-	EventReasonPQCReady            = "PQCReady"
-	EventReasonPQCNotReady         = "PQCNotReady"
-	EventReasonRescanSkipped       = "RescanSkipped"
+	EventActionScan                 = "Scan"
+	EventReasonTLSWarning           = "TLSWarning"
+	EventReasonTLSNonCompliant      = "TLSNonCompliant"
+	EventReasonComplianceChanged    = "ComplianceChanged"
+	EventReasonCertificateExpiring  = "CertificateExpiring"
+	EventReasonCertificateExpired   = "CertificateExpired"
+	EventReasonCertificateUntrusted = "CertificateUntrusted"
+	EventReasonEndpointDiscovered   = "EndpointDiscovered"
+	EventReasonRetryExhausted       = "RetryExhausted"
+	EventReasonPolicyExempt         = "PolicyExempt"
+	EventReasonPolicyExemptLapsed   = "PolicyExemptLapsed"
+	EventReasonPQCReady             = "PQCReady"
+	EventReasonPQCNotReady          = "PQCNotReady"
+	EventReasonRescanSkipped        = "RescanSkipped"
 )
 
 var errWorkersBusy = errors.New("TLS check deferred: workers busy")

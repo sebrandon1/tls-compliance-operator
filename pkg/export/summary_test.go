@@ -1209,3 +1209,46 @@ func TestWriteSummary_OmitsEmptyNewSections(t *testing.T) {
 		t.Error("expected namespace breakdown even when other new sections are empty")
 	}
 }
+
+func TestComputeSummary_CertificateTrust(t *testing.T) {
+	trusted, untrusted := true, false
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{Status: securityv1alpha1.TLSComplianceReportStatus{
+			CertificateInfo: &securityv1alpha1.CertificateInfo{Trusted: &trusted},
+		}},
+		{Status: securityv1alpha1.TLSComplianceReportStatus{
+			CertificateInfo: &securityv1alpha1.CertificateInfo{Trusted: &untrusted},
+		}},
+		{Status: securityv1alpha1.TLSComplianceReportStatus{
+			CertificateInfo: &securityv1alpha1.CertificateInfo{},
+		}},
+		{},
+	}
+
+	s := ComputeSummary(reports, time.Now())
+	if s.CertTrusted != 1 || s.CertUntrusted != 1 || s.CertTrustUnknown != 2 {
+		t.Errorf("trust counters = trusted %d, untrusted %d, unknown %d; want 1/1/2",
+			s.CertTrusted, s.CertUntrusted, s.CertTrustUnknown)
+	}
+}
+
+func TestWriteSummary_CertificateTrustSection(t *testing.T) {
+	trusted, untrusted := true, false
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "a"}},
+		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "b"}},
+	}
+	reports[0].Status.CertificateInfo = &securityv1alpha1.CertificateInfo{Trusted: &trusted}
+	reports[1].Status.CertificateInfo = &securityv1alpha1.CertificateInfo{Trusted: &untrusted}
+
+	var buf strings.Builder
+	if err := WriteSummary(&buf, reports); err != nil {
+		t.Fatalf("WriteSummary() error = %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{"Certificate Chain Trust", "Trusted:", "Untrusted:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("summary missing %q\n%s", want, out)
+		}
+	}
+}

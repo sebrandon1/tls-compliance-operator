@@ -169,8 +169,17 @@ second, opt-in check.
 | `--ca-cert` | `TLS_COMPLIANCE_CA_CERT` | string | `""` | Path to a PEM-encoded CA bundle. When set, every successful check re-handshakes with the endpoint and verifies the presented chain (including the hostname) against this bundle. The verdict is recorded as `status.certificateInfo.trusted` and, on failure, `status.certificateInfo.trustError`. The bundle must contain at least one PEM certificate or the manager exits at startup. |
 
 Trust verification never changes `ComplianceStatus`: an untrusted chain is
-recorded on the certificate, not treated as a TLS compliance failure. Alert on
-`trusted: "false"` in the report or via the exported reports.
+recorded on the certificate, not treated as a TLS compliance failure.
+
+The verdict is surfaced everywhere the certificate is: `trusted`/`trustError`
+in JSON and YAML, `Trusted`/`TrustError` columns in CSV, a `Trust` column in
+Markdown and HTML, `certTrusted` properties in JUnit, a
+`tls-certificate-untrusted` SARIF rule, the `--trust` filter,
+`kubectl tlsreport describe`, the summary's Certificate Chain Trust section,
+the `CertificateTrusted` condition, a `CertificateUntrusted` warning event, and
+the `tls_compliance_certificate_chain_trusted` metric (with
+`--metrics-per-endpoint`). Alert on `trusted: "false"` in the report or use
+`kubectl tlsreport get --trust untrusted` in CI.
 
 ## Retry Behavior
 

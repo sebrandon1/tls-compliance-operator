@@ -4050,6 +4050,51 @@ func TestUpdateConditions_CertificateValid(t *testing.T) {
 	}
 }
 
+func TestUpdateConditions_CertificateTrusted(t *testing.T) {
+	trusted, untrusted := true, false
+	tests := []struct {
+		name           string
+		trusted        *bool
+		trustError     string
+		expectedStatus metav1.ConditionStatus
+		expectedReason string
+		wantCondition  bool
+	}{
+		{name: "trusted chain", trusted: &trusted, expectedStatus: metav1.ConditionTrue, expectedReason: "Trusted", wantCondition: true},
+		{name: "untrusted chain", trusted: &untrusted, trustError: "x509: certificate signed by unknown authority",
+			expectedStatus: metav1.ConditionFalse, expectedReason: "Untrusted", wantCondition: true},
+		{name: "verdict not computed", trusted: nil, wantCondition: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &EndpointReconciler{CertExpiryDays: 30}
+			cr := &securityv1alpha1.TLSComplianceReport{}
+			result := &tlscheck.TLSCheckResult{Certificate: &tlscheck.CertificateDetails{
+				DaysUntilExpiry: 365, Trusted: tt.trusted, TrustError: tt.trustError,
+			}}
+
+			r.updateConditions(cr, securityv1alpha1.ComplianceStatusCompliant, result)
+
+			var found bool
+			for _, c := range cr.Status.Conditions {
+				if c.Type == "CertificateTrusted" {
+					found = true
+					if c.Status != tt.expectedStatus {
+						t.Errorf("CertificateTrusted status = %v, want %v", c.Status, tt.expectedStatus)
+					}
+					if c.Reason != tt.expectedReason {
+						t.Errorf("CertificateTrusted reason = %q, want %q", c.Reason, tt.expectedReason)
+					}
+				}
+			}
+			if found != tt.wantCondition {
+				t.Errorf("CertificateTrusted condition found = %v, want %v", found, tt.wantCondition)
+			}
+		})
+	}
+}
+
 func TestUpdateConditions_NoCertificate(t *testing.T) {
 	r := &EndpointReconciler{}
 	cr := &securityv1alpha1.TLSComplianceReport{}

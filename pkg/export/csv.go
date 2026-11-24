@@ -38,6 +38,7 @@ var CSVHeader = []string{
 	"ALPNProtocols",
 	"ScanDuration",
 	"CertSerial", "CertFingerprint", "IPAddresses",
+	"Trusted", "TrustError",
 }
 
 // WriteCSV writes TLSComplianceReport items as CSV to the given writer.
@@ -109,6 +110,7 @@ func reportToCSVRow(r *securityv1alpha1.TLSComplianceReport) []string {
 
 	pubKeyAlg, pubKeyBits, sigAlg, chainLen := "", "", "", ""
 	serial, fingerprint, ipSANs := "", "", ""
+	trusted, trustError := "", ""
 	if r.Status.CertificateInfo != nil {
 		pubKeyAlg = r.Status.CertificateInfo.PublicKeyAlgorithm
 		if r.Status.CertificateInfo.PublicKeyBits > 0 {
@@ -123,6 +125,8 @@ func reportToCSVRow(r *securityv1alpha1.TLSComplianceReport) []string {
 		if len(r.Status.CertificateInfo.IPAddresses) > 0 {
 			ipSANs = strings.Join(r.Status.CertificateInfo.IPAddresses, ",")
 		}
+		trusted = boolPointerString(r.Status.CertificateInfo.Trusted)
+		trustError = r.Status.CertificateInfo.TrustError
 	}
 
 	return []string{
@@ -155,6 +159,8 @@ func reportToCSVRow(r *securityv1alpha1.TLSComplianceReport) []string {
 		serial,
 		fingerprint,
 		ipSANs,
+		trusted,
+		trustError,
 	}
 }
 

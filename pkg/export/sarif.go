@@ -46,11 +46,12 @@ const (
 	sarifRulePlaintextHTTP = "tls-plaintext-http"
 	sarifRuleWarning       = "tls-warning"
 
-	sarifRuleCertificateExpired  = "tls-certificate-expired"
-	sarifRuleCertificateExpiring = "tls-certificate-expiring-soon"
-	sarifRuleWeakCipher          = "tls-weak-cipher"
-	sarifRuleNoForwardSecrecy    = "tls-no-forward-secrecy"
-	sarifRulePQCNotReady         = "tls-pqc-not-ready"
+	sarifRuleCertificateExpired   = "tls-certificate-expired"
+	sarifRuleCertificateExpiring  = "tls-certificate-expiring-soon"
+	sarifRuleCertificateUntrusted = "tls-certificate-untrusted"
+	sarifRuleWeakCipher           = "tls-weak-cipher"
+	sarifRuleNoForwardSecrecy     = "tls-no-forward-secrecy"
+	sarifRulePQCNotReady          = "tls-pqc-not-ready"
 )
 
 // sarifCertExpiryWarningDays mirrors the certificate expiry horizon used for
@@ -159,6 +160,13 @@ var sarifRules = []sarifRule{
 		DefaultConfig:    sarifConfig{Level: "warning"},
 	},
 	{
+		ID:               sarifRuleCertificateUntrusted,
+		ShortDescription: sarifMessage{Text: "Endpoint certificate chain is not trusted"},
+		FullDescription:  sarifMessage{Text: "The certificate chain presented by the endpoint does not verify against the configured --ca-cert roots, including the hostname."},
+		HelpURI:          sarifHelpURI,
+		DefaultConfig:    sarifConfig{Level: "error"},
+	},
+	{
 		ID:               sarifRuleWeakCipher,
 		ShortDescription: sarifMessage{Text: "Endpoint negotiates weak cipher suites"},
 		FullDescription:  sarifMessage{Text: "At least one negotiated cipher suite grades D or F."},
@@ -251,21 +259,30 @@ func sarifTLSProbeSucceeded(status securityv1alpha1.ComplianceStatus) bool {
 	}
 }
 
-// sarifCertificateResults emits the expired and expiring-soon findings.
+// sarifCertificateResults emits the expired, expiring-soon, and untrusted
+// findings.
 func sarifCertificateResults(r *securityv1alpha1.TLSComplianceReport, endpoint string) []sarifResult {
 	cert := r.Status.CertificateInfo
 	if cert == nil {
 		return nil
 	}
-	if cert.IsExpired {
-		return []sarifResult{newSARIFResult(r, endpoint, sarifRuleCertificateExpired, "error",
-			fmt.Sprintf("%s: certificate has expired", endpoint))}
+	var results []sarifResult
+	switch {
+	case cert.IsExpired:
+		results = append(results, newSARIFResult(r, endpoint, sarifRuleCertificateExpired, "error",
+			fmt.Sprintf("%s: certificate has expired", endpoint)))
+	case cert.DaysUntilExpiry <= sarifCertExpiryWarningDays:
+		results = append(results, newSARIFResult(r, endpoint, sarifRuleCertificateExpiring, "warning",
+			fmt.Sprintf("%s: certificate expires in %d day(s)", endpoint, cert.DaysUntilExpiry)))
 	}
-	if cert.DaysUntilExpiry <= sarifCertExpiryWarningDays {
-		return []sarifResult{newSARIFResult(r, endpoint, sarifRuleCertificateExpiring, "warning",
-			fmt.Sprintf("%s: certificate expires in %d day(s)", endpoint, cert.DaysUntilExpiry))}
+	if cert.Trusted != nil && !*cert.Trusted {
+		message := fmt.Sprintf("%s: certificate chain is not trusted", endpoint)
+		if cert.TrustError != "" {
+			message += ": " + cert.TrustError
+		}
+		results = append(results, newSARIFResult(r, endpoint, sarifRuleCertificateUntrusted, "error", message))
 	}
-	return nil
+	return results
 }
 
 // sarifCipherResults emits the weak cipher, missing forward secrecy, and PQC

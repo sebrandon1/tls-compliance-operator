@@ -7,6 +7,7 @@ All metrics use the `tls_compliance_` prefix.
 | `tls_compliance_endpoints_total` | Gauge | `status` | Endpoints by compliance status, counting only reports inside the namespace filter. `LocalhostOnly` is its own `status` value; exclude it from compliance-rate queries if loopback-only listeners should not dilute the denominator: `sum(tls_compliance_endpoints_total{status!="LocalhostOnly"})` |
 | `tls_compliance_check_duration_seconds` | Histogram | - | TLS check duration |
 | `tls_compliance_certificate_expiry_days` | Gauge | `host`, `port` | Days until certificate expiry. Requires `--metrics-per-endpoint`. |
+| `tls_compliance_certificate_chain_trusted` | Gauge | `host`, `port` | 1 when the chain verified against `--ca-cert` roots, 0 when it did not. Absent without `--ca-cert`. Requires `--metrics-per-endpoint`. |
 | `tls_compliance_version_support` | Gauge | `host`, `port`, `version` | TLS version support (1=yes, 0=no). Requires `--metrics-per-endpoint`. |
 | `tls_compliance_forward_secrecy` | Gauge | `host`, `port` | Forward secrecy support (1=all ciphers use ephemeral key exchange, 0=not). Requires `--metrics-per-endpoint`. |
 | `tls_compliance_pqc_readiness` | Gauge | `host`, `port`, `readiness` | Post-quantum cryptography readiness (1=current status). One-hot across: PQCReady, TLS13Capable, LegacyTLS, NoPQC. Requires `--metrics-per-endpoint`. |

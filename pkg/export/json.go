@@ -56,6 +56,8 @@ type JSONReport struct {
 	ChainLength             int               `json:"chainLength,omitempty"`
 	CertSerial              string            `json:"certSerial,omitempty"`
 	CertFingerprint         string            `json:"certFingerprint,omitempty"`
+	Trusted                 *bool             `json:"trusted,omitempty"`
+	TrustError              string            `json:"trustError,omitempty"`
 	IPAddresses             []string          `json:"ipAddresses,omitempty"`
 	ALPNProtocols           map[string]string `json:"alpnProtocols,omitempty"`
 	ScanDuration            string            `json:"scanDuration,omitempty"`
@@ -132,6 +134,8 @@ func reportToJSON(r *securityv1alpha1.TLSComplianceReport) JSONReport {
 		jr.ChainLength = r.Status.CertificateInfo.ChainLength
 		jr.CertSerial = r.Status.CertificateInfo.SerialNumber
 		jr.CertFingerprint = r.Status.CertificateInfo.Fingerprint
+		jr.Trusted = r.Status.CertificateInfo.Trusted
+		jr.TrustError = r.Status.CertificateInfo.TrustError
 		jr.IPAddresses = r.Status.CertificateInfo.IPAddresses
 	}
 

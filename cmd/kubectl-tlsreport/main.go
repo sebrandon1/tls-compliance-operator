@@ -182,6 +182,7 @@ Use --kubeconfig and --context to target a specific cluster.`,
 	rootCmd.PersistentFlags().StringVar(&filterOpts.TLSVersion, "tls-version", "", "Filter by TLS version support (1.0, 1.1, 1.2, 1.3, ssl3.0)")
 	rootCmd.PersistentFlags().StringVar(&filterOpts.Grade, "grade", "", "Filter by exact cipher grade (A, B, C, D, F)")
 	rootCmd.PersistentFlags().StringVar(&filterOpts.MinGrade, "min-grade", "", "Filter by minimum cipher grade (e.g. B shows A and B)")
+	rootCmd.PersistentFlags().StringVar(&filterOpts.Trust, "trust", "", "Filter by certificate chain trust (trusted, untrusted, unknown)")
 	rootCmd.PersistentFlags().StringVar(&sortBy, "sort-by", "", "Sort results by field (host, port, compliance, expiry, grade, pqc)")
 	rootCmd.PersistentFlags().StringVar(&kubeconfig, "kubeconfig", "", "Path to the kubeconfig file to use")
 	rootCmd.PersistentFlags().StringVar(&kubecontext, "context", "", "The kubeconfig context to use")
@@ -277,6 +278,9 @@ func registerFlagCompletions(rootCmd *cobra.Command) {
 	})
 	_ = rootCmd.RegisterFlagCompletionFunc("tls-version", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
 		return []string{"1.0", "1.1", "1.2", "1.3", "ssl3.0"}, cobra.ShellCompDirectiveNoFileComp
+	})
+	_ = rootCmd.RegisterFlagCompletionFunc("trust", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		return []string{"trusted", "untrusted", "unknown"}, cobra.ShellCompDirectiveNoFileComp
 	})
 }
 

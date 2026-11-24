@@ -641,3 +641,46 @@ func TestMeetsMinGrade(t *testing.T) {
 		}
 	}
 }
+
+func TestFilterReports_ByTrust(t *testing.T) {
+	trusted, untrusted := true, false
+	reports := []securityv1alpha1.TLSComplianceReport{
+		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "trusted.example.com"}},
+		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "untrusted.example.com"}},
+		{Spec: securityv1alpha1.TLSComplianceReportSpec{Host: "unknown.example.com"}},
+	}
+	reports[0].Status.CertificateInfo = &securityv1alpha1.CertificateInfo{Trusted: &trusted}
+	reports[1].Status.CertificateInfo = &securityv1alpha1.CertificateInfo{
+		Trusted: &untrusted, TrustError: "x509: certificate signed by unknown authority",
+	}
+
+	tests := []struct {
+		trust string
+		want  []string
+	}{
+		{"trusted", []string{"trusted.example.com"}},
+		{"untrusted", []string{"untrusted.example.com"}},
+		{"unknown", []string{"unknown.example.com"}},
+		{"TRUSTED", []string{"trusted.example.com"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.trust, func(t *testing.T) {
+			got, err := FilterReports(reports, &FilterOptions{Trust: tt.trust})
+			if err != nil {
+				t.Fatalf("FilterReports() error = %v", err)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %d reports, want %d", len(got), len(tt.want))
+			}
+			for i := range got {
+				if got[i].Spec.Host != tt.want[i] {
+					t.Errorf("report[%d].Host = %q, want %q", i, got[i].Spec.Host, tt.want[i])
+				}
+			}
+		})
+	}
+
+	if _, err := FilterReports(reports, &FilterOptions{Trust: "maybe"}); err == nil {
+		t.Error("expected an error for an invalid --trust value")
+	}
+}

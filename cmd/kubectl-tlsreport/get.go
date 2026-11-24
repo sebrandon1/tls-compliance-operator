@@ -22,6 +22,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"text/tabwriter"
 	"time"
 
@@ -490,7 +491,7 @@ func writeWatchTable(w io.Writer, reports []securityv1alpha1.TLSComplianceReport
 }
 
 const reportTableHeader = "NAME\tHOST\tPORT\tSOURCE\tCOMPLIANCE\tGRADE\tFS\tTLS 1.3\tTLS 1.2\tPQC\tMLKEM\tNEXT SCAN"
-const reportTableWideHeader = "NAME\tHOST\tPORT\tSOURCE\tNAMESPACE\tCOMPLIANCE\tGRADE\tFS\tTLS 1.3\tTLS 1.2\tTLS 1.0\tSSL 3.0\tPQC\tMLKEM\tISSUER\tCERT EXPIRY\tNEXT SCAN"
+const reportTableWideHeader = "NAME\tHOST\tPORT\tSOURCE\tNAMESPACE\tCOMPLIANCE\tGRADE\tFS\tTLS 1.3\tTLS 1.2\tTLS 1.0\tSSL 3.0\tPQC\tMLKEM\tTRUST\tISSUER\tCERT EXPIRY\tNEXT SCAN"
 
 func outputReports(reports []securityv1alpha1.TLSComplianceReport, writers ...io.Writer) error {
 	out := writerOrDefault(writers, 0, os.Stdout)
@@ -611,6 +612,7 @@ func formatReportTableRow(r *securityv1alpha1.TLSComplianceReport, wide, deleted
 
 	issuer := "-"
 	expiry := "-"
+	trust := "-"
 	if r.Status.CertificateInfo != nil {
 		if r.Status.CertificateInfo.Issuer != "" {
 			issuer = r.Status.CertificateInfo.Issuer
@@ -618,8 +620,11 @@ func formatReportTableRow(r *securityv1alpha1.TLSComplianceReport, wide, deleted
 		if r.Status.CertificateInfo.NotAfter != nil {
 			expiry = r.Status.CertificateInfo.NotAfter.Format("2006-01-02")
 		}
+		if r.Status.CertificateInfo.Trusted != nil {
+			trust = strconv.FormatBool(*r.Status.CertificateInfo.Trusted)
+		}
 	}
-	return fmt.Sprintf("%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s",
+	return fmt.Sprintf("%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s",
 		r.Name,
 		r.Spec.Host,
 		r.Spec.Port,
@@ -634,6 +639,7 @@ func formatReportTableRow(r *securityv1alpha1.TLSComplianceReport, wide, deleted
 		boolDash(r.Status.TLSVersions.SSL30),
 		string(r.Status.PQCReadiness),
 		boolDash(r.Status.MLKEMSupported),
+		trust,
 		issuer,
 		expiry,
 		formatNextScanAt(r.Status.NextScanAt, time.Now()),
