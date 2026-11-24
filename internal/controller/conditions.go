@@ -96,6 +96,9 @@ func (r *EndpointReconciler) recordCheckMetrics(ctx context.Context, crName, hos
 		metrics.RecordCipherGrade(host, portStr, outcome.overallGrade)
 		if result.Certificate != nil {
 			metrics.RecordCertExpiry(host, portStr, float64(result.Certificate.DaysUntilExpiry))
+			if result.Certificate.Trusted != nil {
+				metrics.RecordCertificateTrust(host, portStr, *result.Certificate.Trusted)
+			}
 		}
 	}
 
@@ -395,6 +398,27 @@ func (r *EndpointReconciler) updateConditions(cr *securityv1alpha1.TLSCompliance
 		}
 
 		apimeta.SetStatusCondition(&cr.Status.Conditions, certCondition)
+
+		if result.Certificate.Trusted != nil {
+			trustCondition := metav1.Condition{
+				Type:               "CertificateTrusted",
+				ObservedGeneration: cr.Generation,
+				LastTransitionTime: now,
+			}
+			if *result.Certificate.Trusted {
+				trustCondition.Status = metav1.ConditionTrue
+				trustCondition.Reason = "Trusted"
+				trustCondition.Message = "Certificate chain verifies against the configured CA roots"
+			} else {
+				trustCondition.Status = metav1.ConditionFalse
+				trustCondition.Reason = "Untrusted"
+				trustCondition.Message = "Certificate chain does not verify against the configured CA roots"
+				if result.Certificate.TrustError != "" {
+					trustCondition.Message += ": " + result.Certificate.TrustError
+				}
+			}
+			apimeta.SetStatusCondition(&cr.Status.Conditions, trustCondition)
+		}
 	}
 
 	pqcCondition := metav1.Condition{
@@ -519,6 +543,14 @@ func (r *EndpointReconciler) emitComplianceEvents(cr *securityv1alpha1.TLSCompli
 		} else if result.Certificate.DaysUntilExpiry <= r.CertExpiryDays {
 			r.Recorder.Eventf(cr, nil, corev1.EventTypeWarning, EventReasonCertificateExpiring, EventActionScan,
 				"TLS certificate for %s expires in %d days", hostPort(cr.Spec.Host, cr.Spec.Port), result.Certificate.DaysUntilExpiry)
+		}
+		if result.Certificate.Trusted != nil && !*result.Certificate.Trusted {
+			detail := ""
+			if result.Certificate.TrustError != "" {
+				detail = ": " + result.Certificate.TrustError
+			}
+			r.Recorder.Eventf(cr, nil, corev1.EventTypeWarning, EventReasonCertificateUntrusted, EventActionScan,
+				"TLS certificate chain for %s is not trusted%s", hostPort(cr.Spec.Host, cr.Spec.Port), detail)
 		}
 	}
 }

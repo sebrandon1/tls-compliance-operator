@@ -1023,7 +1023,7 @@ spec:
 			lines := strings.Split(strings.TrimSpace(output), "\n")
 			Expect(len(lines)).To(BeNumerically(">=", 3), "expected header + separator + at least 1 data row")
 			Expect(lines[0]).To(Equal("| Host | Port | Source | Compliance | Grade | FS | ServerPrefersOwnCiphers | " +
-				"TLS1.3 | TLS1.2 | TLS1.0 | PQC | MLKEM | CertExpiry | Age |"))
+				"TLS1.3 | TLS1.2 | TLS1.0 | PQC | MLKEM | Trust | CertExpiry | Age |"))
 			Expect(lines[1]).To(ContainSubstring("---"))
 
 			for _, line := range lines {

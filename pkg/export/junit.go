@@ -328,6 +328,12 @@ func junitProperties(r *securityv1alpha1.TLSComplianceReport) []JUnitProperty {
 			Value: r.Status.CertificateInfo.NotAfter.UTC().Format(time.RFC3339),
 		})
 	}
+	if cert := r.Status.CertificateInfo; cert != nil && cert.Trusted != nil {
+		props = append(props, JUnitProperty{Name: "certTrusted", Value: strconv.FormatBool(*cert.Trusted)})
+		if cert.TrustError != "" {
+			props = append(props, JUnitProperty{Name: "certTrustError", Value: cert.TrustError})
+		}
+	}
 	return props
 }
 

@@ -143,6 +143,7 @@ table output. Upload with `github/codeql-action/upload-sarif`.
 | `tls-warning` | warning | Modern TLS supported alongside SSL 3.0 / TLS 1.0 / TLS 1.1 |
 | `tls-certificate-expired` | error | Certificate is past its notAfter date |
 | `tls-certificate-expiring-soon` | warning | Certificate expires within 14 days |
+| `tls-certificate-untrusted` | error | Certificate chain does not verify against the `--ca-cert` roots (only when `--ca-cert` is set) |
 | `tls-weak-cipher` | warning | Worst negotiated cipher suite grades D or F |
 | `tls-no-forward-secrecy` | warning | Not every negotiated cipher suite uses ECDHE/DHE |
 | `tls-pqc-not-ready` | note | PQC readiness is `LegacyTLS` or `NoPQC` |

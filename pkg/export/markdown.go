@@ -28,7 +28,7 @@ import (
 
 var markdownHeader = []string{
 	"Host", "Port", "Source", "Compliance", "Grade", "FS", "ServerPrefersOwnCiphers",
-	"TLS1.3", "TLS1.2", "TLS1.0", "PQC", "MLKEM", "CertExpiry", "Age",
+	"TLS1.3", "TLS1.2", "TLS1.0", "PQC", "MLKEM", "Trust", "CertExpiry", "Age",
 }
 
 // WriteMarkdown writes TLSComplianceReport items as a Markdown table to the given writer.
@@ -58,10 +58,11 @@ func WriteMarkdown(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) 
 }
 
 func reportToMarkdownRow(r *securityv1alpha1.TLSComplianceReport, now time.Time) []string {
-	var certExpiry, age string
+	var certExpiry, age, trust string
 
 	if r.Status.CertificateInfo != nil {
 		certExpiry = strconv.Itoa(r.Status.CertificateInfo.DaysUntilExpiry)
+		trust = boolPointerString(r.Status.CertificateInfo.Trusted)
 	}
 
 	if !r.CreationTimestamp.IsZero() {
@@ -81,6 +82,7 @@ func reportToMarkdownRow(r *securityv1alpha1.TLSComplianceReport, now time.Time)
 		strconv.FormatBool(r.Status.TLSVersions.TLS10),
 		string(r.Status.PQCReadiness),
 		strconv.FormatBool(r.Status.MLKEMSupported),
+		trust,
 		certExpiry,
 		age,
 	}

@@ -49,6 +49,8 @@ type FilterOptions struct {
 	Grade string
 	// MinGrade filters to reports with a grade at or above this threshold (e.g. "B" shows A and B).
 	MinGrade string
+	// Trust filters by certificate chain trust verdict: trusted, untrusted, or unknown.
+	Trust string
 }
 
 // knownGrades defines the canonical set and order of cipher grades.
@@ -67,7 +69,29 @@ func (o *FilterOptions) IsEmpty() bool {
 	return o.Namespace == "" && o.Status == "" && o.Source == "" &&
 		o.PQCStatus == "" && o.ExpiresWithin == "" && !o.Expired &&
 		o.Issuer == "" && o.Subject == "" && o.TLSVersion == "" &&
-		o.Grade == "" && o.MinGrade == ""
+		o.Grade == "" && o.MinGrade == "" && o.Trust == ""
+}
+
+// Accepted --trust values.
+const (
+	TrustFilterTrusted   = "trusted"
+	TrustFilterUntrusted = "untrusted"
+	TrustFilterUnknown   = "unknown"
+)
+
+// trustFilterValues lists the accepted --trust values.
+const trustFilterValues = TrustFilterTrusted + ", " + TrustFilterUntrusted + ", " + TrustFilterUnknown
+
+// normalizeTrustFilter validates a --trust value and returns it lower-cased.
+// An empty value means no filter.
+func normalizeTrustFilter(value string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "", TrustFilterTrusted, TrustFilterUntrusted, TrustFilterUnknown:
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("invalid trust %q: must be one of %s", value, trustFilterValues)
+	}
 }
 
 const tlsVersionValues = "1.0, 1.1, 1.2, 1.3, ssl3.0 (aliases: tls1.0, tls1.1, tls1.2, tls1.3, ssl30, 3.0)"
@@ -93,6 +117,9 @@ func FilterReports(reports []securityv1alpha1.TLSComplianceReport, opts *FilterO
 	}
 	if opts.TLSVersion != "" && !isKnownTLSVersion(opts.TLSVersion) {
 		return nil, fmt.Errorf("invalid tls-version %q: must be one of %s", opts.TLSVersion, tlsVersionValues)
+	}
+	if _, err := normalizeTrustFilter(opts.Trust); err != nil {
+		return nil, err
 	}
 
 	var expiresWithin time.Duration
@@ -179,8 +206,27 @@ func matchesFilter(r *securityv1alpha1.TLSComplianceReport, opts *FilterOptions,
 	if opts.MinGrade != "" && !meetsMinGrade(r.Status.OverallCipherGrade, opts.MinGrade) {
 		return false
 	}
+	if opts.Trust != "" && !matchesTrust(r, opts.Trust) {
+		return false
+	}
 
 	return true
+}
+
+// matchesTrust compares the certificate chain verdict. A report without a
+// verdict (--ca-cert not configured) counts as unknown.
+func matchesTrust(r *securityv1alpha1.TLSComplianceReport, want string) bool {
+	cert := r.Status.CertificateInfo
+	switch strings.ToLower(strings.TrimSpace(want)) {
+	case TrustFilterTrusted:
+		return cert != nil && cert.Trusted != nil && *cert.Trusted
+	case TrustFilterUntrusted:
+		return cert != nil && cert.Trusted != nil && !*cert.Trusted
+	case TrustFilterUnknown:
+		return cert == nil || cert.Trusted == nil
+	default:
+		return false
+	}
 }
 
 func meetsMinGrade(actual, minGrade string) bool {

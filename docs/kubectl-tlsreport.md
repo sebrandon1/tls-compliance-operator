@@ -56,6 +56,7 @@ These flags are available on all subcommands:
 | `--tls-version` | | Filter by TLS version support (`1.0`, `1.1`, `1.2`, `1.3`, `ssl3.0`; aliases `tls1.x`, `ssl30`, `3.0`). Invalid values error instead of matching nothing. |
 | `--grade` | | Filter by exact cipher grade (A, B, C, D, F) |
 | `--min-grade` | | Filter by minimum cipher grade (e.g. B shows A and B) |
+| `--trust` | | Filter by certificate chain trust: `trusted`, `untrusted`, or `unknown` (no verdict, i.e. `--ca-cert` unset) |
 | `--sort-by` | | Sort results (host, port, compliance, expiry, grade, pqc) |
 | `--selector` | `-l` | Label selector to filter reports |
 | `--fail-on-non-compliant` | | Exit with code 1 if any non-compliant endpoints are found |
@@ -147,7 +148,7 @@ kubectl tlsreport get [name] [-o format] [--watch]
 # List all reports
 kubectl tlsreport get
 
-# Wide output (adds namespace, TLS 1.0, SSL 3.0, issuer, and cert expiry)
+# Wide output (adds namespace, TLS 1.0, SSL 3.0, trust, issuer, and cert expiry)
 kubectl tlsreport get -o wide
 
 # Get a specific report by name

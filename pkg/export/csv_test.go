@@ -369,3 +369,51 @@ func TestWriteCSV_AllTLSVersionCombinations(t *testing.T) {
 		}
 	}
 }
+
+func TestReportToCSVRow_TrustColumns(t *testing.T) {
+	trusted, untrusted := true, false
+	withTrust := func(value *bool, trustErr string) *securityv1alpha1.TLSComplianceReport {
+		return &securityv1alpha1.TLSComplianceReport{
+			Status: securityv1alpha1.TLSComplianceReportStatus{
+				CertificateInfo: &securityv1alpha1.CertificateInfo{Trusted: value, TrustError: trustErr},
+			},
+		}
+	}
+
+	column := func(t *testing.T, row []string, name string) string {
+		t.Helper()
+		for i, h := range CSVHeader {
+			if h == name {
+				if i >= len(row) {
+					t.Fatalf("row has %d columns, header has %d", len(row), len(CSVHeader))
+				}
+				return row[i]
+			}
+		}
+		t.Fatalf("column %q not in CSVHeader", name)
+		return ""
+	}
+
+	row := reportToCSVRow(withTrust(&trusted, ""))
+	if len(row) != len(CSVHeader) {
+		t.Fatalf("row columns = %d, want %d", len(row), len(CSVHeader))
+	}
+	if got := column(t, row, "Trusted"); got != "true" {
+		t.Errorf("Trusted = %q, want true", got)
+	}
+	if got := column(t, row, "TrustError"); got != "" {
+		t.Errorf("TrustError = %q, want empty", got)
+	}
+
+	row = reportToCSVRow(withTrust(&untrusted, "x509: certificate signed by unknown authority"))
+	if got := column(t, row, "Trusted"); got != "false" {
+		t.Errorf("Trusted = %q, want false", got)
+	}
+	if got := column(t, row, "TrustError"); got != "x509: certificate signed by unknown authority" {
+		t.Errorf("TrustError = %q", got)
+	}
+
+	if got := column(t, reportToCSVRow(withTrust(nil, "")), "Trusted"); got != "" {
+		t.Errorf("unknown Trusted = %q, want empty", got)
+	}
+}

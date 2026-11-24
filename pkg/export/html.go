@@ -61,7 +61,7 @@ th { background: #f0f0f0; }
 <table>
 <thead><tr>
 <th>Host</th><th>Port</th><th>Source</th><th>Compliance</th><th>Grade</th><th>FS</th>
-<th>TLS1.3</th><th>TLS1.2</th><th>TLS1.0</th><th>PQC</th><th>MLKEM</th><th>ServerPrefersOwnCiphers</th><th>CertExpiry</th><th>Age</th>
+<th>TLS1.3</th><th>TLS1.2</th><th>TLS1.0</th><th>PQC</th><th>MLKEM</th><th>Trust</th><th>ServerPrefersOwnCiphers</th><th>CertExpiry</th><th>Age</th>
 </tr></thead>
 <tbody>
 {{range .Rows}}
@@ -70,7 +70,7 @@ th { background: #f0f0f0; }
 <td><span class="pill {{.ComplianceClass}}">{{.Compliance}}</span></td>
 <td><span class="pill {{.GradeClass}}">{{.Grade}}</span></td>
 <td>{{.FS}}</td><td>{{.TLS13}}</td><td>{{.TLS12}}</td><td>{{.TLS10}}</td>
-<td>{{.PQC}}</td><td>{{.MLKEM}}</td><td>{{.ServerPrefersOwnCiphers}}</td><td>{{.CertExpiry}}</td><td>{{.Age}}</td>
+<td>{{.PQC}}</td><td>{{.MLKEM}}</td><td>{{.Trust}}</td><td>{{.ServerPrefersOwnCiphers}}</td><td>{{.CertExpiry}}</td><td>{{.Age}}</td>
 </tr>
 {{end}}
 </tbody>
@@ -104,6 +104,7 @@ type htmlReportRow struct {
 	TLS10                   string
 	PQC                     string
 	MLKEM                   string
+	Trust                   string
 	ServerPrefersOwnCiphers string
 	CertExpiry              string
 	Age                     string
@@ -133,9 +134,10 @@ func WriteHTML(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) erro
 }
 
 func reportToHTMLRow(r *securityv1alpha1.TLSComplianceReport, now time.Time) htmlReportRow {
-	certExpiry, age := "", ""
+	certExpiry, age, trust := "", "", ""
 	if r.Status.CertificateInfo != nil {
 		certExpiry = strconv.Itoa(r.Status.CertificateInfo.DaysUntilExpiry)
+		trust = boolPointerString(r.Status.CertificateInfo.Trusted)
 	}
 	if !r.CreationTimestamp.IsZero() {
 		age = formatAge(now.Sub(r.CreationTimestamp.Time))
@@ -156,6 +158,7 @@ func reportToHTMLRow(r *securityv1alpha1.TLSComplianceReport, now time.Time) htm
 		TLS10:                   strconv.FormatBool(r.Status.TLSVersions.TLS10),
 		PQC:                     string(r.Status.PQCReadiness),
 		MLKEM:                   strconv.FormatBool(r.Status.MLKEMSupported),
+		Trust:                   trust,
 		ServerPrefersOwnCiphers: boolPointerString(r.Status.ServerPrefersOwnCiphers),
 		CertExpiry:              certExpiry,
 		Age:                     age,

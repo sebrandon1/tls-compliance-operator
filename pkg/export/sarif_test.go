@@ -53,8 +53,8 @@ func TestWriteSARIF_Empty(t *testing.T) {
 	if len(log.Runs[0].Results) != 0 {
 		t.Errorf("results = %d, want 0", len(log.Runs[0].Results))
 	}
-	if len(log.Runs[0].Tool.Driver.Rules) != 9 {
-		t.Errorf("rules = %d, want 9", len(log.Runs[0].Tool.Driver.Rules))
+	if len(log.Runs[0].Tool.Driver.Rules) != 10 {
+		t.Errorf("rules = %d, want 10", len(log.Runs[0].Tool.Driver.Rules))
 	}
 }
 
@@ -288,6 +288,23 @@ func TestReportToSARIFResults_CertificateFindings(t *testing.T) {
 		{
 			name: "just outside the horizon",
 			cert: &securityv1alpha1.CertificateInfo{DaysUntilExpiry: sarifCertExpiryWarningDays + 1},
+			want: nil,
+		},
+		{
+			name: "untrusted chain",
+			cert: &securityv1alpha1.CertificateInfo{
+				DaysUntilExpiry: 200, Trusted: boolPtr(false), TrustError: "x509: certificate signed by unknown authority",
+			},
+			want: []string{sarifRuleCertificateUntrusted},
+		},
+		{
+			name: "trusted chain",
+			cert: &securityv1alpha1.CertificateInfo{DaysUntilExpiry: 200, Trusted: boolPtr(true)},
+			want: nil,
+		},
+		{
+			name: "unknown trust is not a finding",
+			cert: &securityv1alpha1.CertificateInfo{DaysUntilExpiry: 200},
 			want: nil,
 		},
 	}

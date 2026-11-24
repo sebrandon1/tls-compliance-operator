@@ -86,6 +86,16 @@ var (
 		[]string{"host", "port"},
 	)
 
+	// CertificateChainTrusted records the chain verdict: 1 trusted, 0 untrusted.
+	CertificateChainTrusted = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: MetricsNamespace,
+			Name:      "certificate_chain_trusted",
+			Help:      "Whether the endpoint certificate chain verified against the configured CA roots (1) or not (0)",
+		},
+		[]string{"host", "port"},
+	)
+
 	// VersionSupport tracks TLS version support per endpoint
 	VersionSupport = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -369,6 +379,7 @@ func init() {
 		EndpointsTotal,
 		CheckDurationSeconds,
 		CertificateExpiryDays,
+		CertificateChainTrusted,
 		VersionSupport,
 		ForwardSecrecy,
 		PQCReadiness,
@@ -413,6 +424,15 @@ func RecordCheckDuration(durationSeconds float64) {
 // RecordCertExpiry records the days until certificate expiry
 func RecordCertExpiry(host, port string, days float64) {
 	CertificateExpiryDays.WithLabelValues(host, port).Set(days)
+}
+
+// RecordCertificateTrust records the certificate chain verdict.
+func RecordCertificateTrust(host, port string, trusted bool) {
+	val := float64(0)
+	if trusted {
+		val = 1
+	}
+	CertificateChainTrusted.WithLabelValues(host, port).Set(val)
 }
 
 // RecordForwardSecrecy records whether all ciphers support forward secrecy
@@ -540,6 +560,7 @@ func RecordCleanupCycleCompleted() {
 // to prevent stale time series from accumulating.
 func DeleteEndpointMetrics(host, port string) {
 	CertificateExpiryDays.DeleteLabelValues(host, port)
+	CertificateChainTrusted.DeleteLabelValues(host, port)
 	ForwardSecrecy.DeleteLabelValues(host, port)
 	for _, version := range []string{"ssl3.0", "1.0", "1.1", "1.2", "1.3"} {
 		VersionSupport.DeleteLabelValues(host, port, version)

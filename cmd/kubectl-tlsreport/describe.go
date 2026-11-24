@@ -119,6 +119,12 @@ func printReportDetail(r *securityv1alpha1.TLSComplianceReport, writers ...io.Wr
 		if cert.HostnameMatch != nil {
 			_, _ = fmt.Fprintf(w, "  Hostname Match:   %v\n", *cert.HostnameMatch)
 		}
+		if cert.Trusted != nil {
+			_, _ = fmt.Fprintf(w, "  Trusted:          %v\n", *cert.Trusted)
+		}
+		if cert.TrustError != "" {
+			_, _ = fmt.Fprintf(w, "  Trust Error:      %s\n", cert.TrustError)
+		}
 		if cert.PublicKeyAlgorithm != "" {
 			_, _ = fmt.Fprintf(w, "  Public Key:       %s (%d bits)\n", cert.PublicKeyAlgorithm, cert.PublicKeyBits)
 		}

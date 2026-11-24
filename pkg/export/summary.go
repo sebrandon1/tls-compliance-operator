@@ -114,6 +114,9 @@ type Summary struct {
 	HostnameMatch         int
 	HostnameMismatch      int
 	HostnameUnknown       int
+	CertTrusted           int
+	CertUntrusted         int
+	CertTrustUnknown      int
 	WorstGrades           []SummaryOffender
 	SoonestExpiry         []SummaryOffender
 }
@@ -187,6 +190,7 @@ func ComputeSummary(reports []securityv1alpha1.TLSComplianceReport, now time.Tim
 				soonest = append(soonest, offenderFromReport(r, r.Status.OverallCipherGrade, &expiry))
 			}
 		}
+		countCertTrust(&s, certTrustVerdict(r.Status.CertificateInfo))
 	}
 
 	s.WorstGrades = topWorstGrades(worst, topOffenderLimit)
@@ -339,6 +343,20 @@ func WriteSummary(w io.Writer, reports []securityv1alpha1.TLSComplianceReport) e
 		}
 	}
 
+	if s.CertTrusted > 0 || s.CertUntrusted > 0 || s.CertTrustUnknown > 0 {
+		ew.printf("\nCertificate Chain Trust\n")
+		ew.printf("----------------------\n")
+		if s.CertTrusted > 0 {
+			ew.printf("  Trusted:\t%d\n", s.CertTrusted)
+		}
+		if s.CertUntrusted > 0 {
+			ew.printf("  Untrusted:\t%d\n", s.CertUntrusted)
+		}
+		if s.CertTrustUnknown > 0 {
+			ew.printf("  Unknown:\t%d\n", s.CertTrustUnknown)
+		}
+	}
+
 	if len(s.WorstGrades) > 0 || len(s.SoonestExpiry) > 0 {
 		ew.printf("\nTop Offenders\n")
 		ew.printf("-------------\n")
@@ -404,6 +422,28 @@ func countHostnameMatch(s *Summary, match *bool) {
 		return
 	}
 	s.HostnameMismatch++
+}
+
+// countCertTrust tallies the certificate chain verdict. A nil verdict means
+// trust verification was not configured, so it is counted as unknown.
+func countCertTrust(s *Summary, trusted *bool) {
+	switch {
+	case trusted == nil:
+		s.CertTrustUnknown++
+	case *trusted:
+		s.CertTrusted++
+	default:
+		s.CertUntrusted++
+	}
+}
+
+// certTrustVerdict returns the chain verdict, or nil when the report carries no
+// certificate or no verdict.
+func certTrustVerdict(cert *securityv1alpha1.CertificateInfo) *bool {
+	if cert == nil {
+		return nil
+	}
+	return cert.Trusted
 }
 
 func offenderFromReport(r *securityv1alpha1.TLSComplianceReport, grade string, notAfter *time.Time) SummaryOffender {
