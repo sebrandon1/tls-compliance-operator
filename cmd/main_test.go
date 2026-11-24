@@ -351,6 +351,51 @@ func TestResolveEnvConfig_ExtraTLSPorts(t *testing.T) {
 	}
 }
 
+// TestResolveEnvConfig_STARTTLSPorts guards the TLS_COMPLIANCE_STARTTLS_PORTS
+// mapping: the flag was documented as env-settable but the mapping was missing,
+// so the env var silently did nothing.
+func TestResolveEnvConfig_STARTTLSPorts(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("starttls-ports", "", "")
+	_ = fs.Parse([]string{})
+
+	env := map[string]string{
+		"TLS_COMPLIANCE_STARTTLS_PORTS": "smtp=2525,imap=1143",
+	}
+	lookup := func(key string) (string, bool) {
+		v, ok := env[key]
+		return v, ok
+	}
+
+	_ = resolveEnvConfig(fs, lookup)
+
+	val := fs.Lookup("starttls-ports").Value.String()
+	if val != "smtp=2525,imap=1143" {
+		t.Errorf("expected starttls-ports=smtp=2525,imap=1143, got %s", val)
+	}
+}
+
+func TestResolveEnvConfig_FailOnGroupMismatch(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.Bool("fail-on-group-mismatch", false, "")
+	_ = fs.Parse([]string{})
+
+	env := map[string]string{
+		"TLS_COMPLIANCE_FAIL_ON_GROUP_MISMATCH": "true",
+	}
+	lookup := func(key string) (string, bool) {
+		v, ok := env[key]
+		return v, ok
+	}
+
+	_ = resolveEnvConfig(fs, lookup)
+
+	val := fs.Lookup("fail-on-group-mismatch").Value.String()
+	if val != "true" {
+		t.Errorf("expected fail-on-group-mismatch=true, got %s", val)
+	}
+}
+
 func TestResolveEnvConfig_ScanAllPorts(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	fs.Bool("scan-all-ports", false, "")

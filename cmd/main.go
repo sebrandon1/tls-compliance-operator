@@ -158,121 +158,129 @@ func (s *stringList) Set(value string) error {
 	return nil
 }
 
+// registerOperatorFlags registers every operator flag on fs. It is separate from
+// parseFlags so tests can enumerate the operator flags without parsing os.Args.
+// When adding a flag, also add it to envFlagMapping and to docs/configuration.md;
+// cmd/docs_drift_test.go fails otherwise.
+func registerOperatorFlags(fs *flag.FlagSet, cfg *operatorConfig) {
+	fs.StringVar(&cfg.metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
+		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
+	fs.StringVar(&cfg.probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
+	fs.BoolVar(&cfg.enableLeaderElection, "leader-elect", false,
+		"Enable leader election for controller manager. "+
+			"Enabling this will ensure there is only one active controller manager.")
+	fs.BoolVar(&cfg.secureMetrics, "metrics-secure", true,
+		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
+	fs.StringVar(&cfg.webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
+	fs.StringVar(&cfg.webhookCertName, "webhook-cert-name", "tls.crt", "The name of the webhook certificate file.")
+	fs.StringVar(&cfg.webhookCertKey, "webhook-cert-key", "tls.key", "The name of the webhook key file.")
+	fs.StringVar(&cfg.metricsCertPath, "metrics-cert-path", "",
+		"The directory that contains the metrics server certificate.")
+	fs.StringVar(&cfg.metricsCertName, "metrics-cert-name", "tls.crt", "The name of the metrics server certificate file.")
+	fs.StringVar(&cfg.metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
+	fs.BoolVar(&cfg.enableHTTP2, "enable-http2", false,
+		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+
+	fs.DurationVar(&cfg.scanInterval, "scan-interval", 1*time.Hour,
+		"Interval for periodic TLS endpoint rescans")
+	fs.DurationVar(&cfg.cleanupInterval, "cleanup-interval", 5*time.Minute,
+		"Interval for cleaning up stale TLSComplianceReport resources")
+	fs.DurationVar(&cfg.tlsCheckTimeout, "tls-check-timeout", 5*time.Second,
+		"Timeout for individual TLS connection attempts")
+	fs.Float64Var(&cfg.rateLimit, "rate-limit", 10.0,
+		"Rate limit for TLS checks per second")
+	fs.IntVar(&cfg.rateBurst, "rate-burst", 20,
+		"Burst size for TLS check rate limiting")
+	fs.StringVar(&cfg.includeNamespaces, "include-namespaces", "",
+		"Comma-separated list of namespaces to exclusively monitor (overrides exclude-namespaces)")
+	fs.StringVar(&cfg.excludeNamespaces, "exclude-namespaces", "",
+		"Comma-separated list of namespaces to exclude from TLS monitoring")
+	fs.IntVar(&cfg.certExpiryWarningDays, "cert-expiry-warning-days", 30,
+		"Number of days before certificate expiry to emit a warning")
+	fs.DurationVar(&cfg.profileRefreshInterval, "profile-refresh-interval", 5*time.Minute,
+		"Interval for refreshing OpenShift TLS security profile configuration (OpenShift only)")
+	fs.StringVar(&cfg.tlsProfileType, "tls-profile-type", "",
+		"Force a built-in TLS security profile (Old, Intermediate, Modern) and skip reading OpenShift config; for HyperShift")
+	fs.StringVar(&cfg.customProfile, "custom-profile", "",
+		"Name of a TLSSecurityProfile CR to evaluate every endpoint against, in addition to the component profiles")
+	fs.StringVar(&cfg.policyConfigMap, "policy-configmap", "",
+		"ConfigMap (namespace/name) holding a policy.yaml that maps endpoints to component profiles and exemptions")
+	fs.IntVar(&cfg.workers, "workers", 5,
+		"Number of concurrent workers for periodic TLS scans (1-50)")
+	fs.IntVar(&cfg.maxRetries, "max-retries", 3,
+		"Maximum number of retries for transient TLS check failures (0-10)")
+	fs.DurationVar(&cfg.retryBackoff, "retry-backoff", 30*time.Second,
+		"Base backoff duration between retries (exponential: base * 2^attempt)")
+	fs.DurationVar(&cfg.maxBackoff, "max-backoff", 5*time.Minute,
+		"Maximum backoff duration between retries (caps exponential growth)")
+	fs.StringVar(&cfg.extraTLSPortsStr, "extra-tls-ports", "",
+		"Comma-separated list of additional port numbers to treat as TLS endpoints (e.g., 9443,6380,5671)")
+	fs.StringVar(&cfg.starttlsPortsStr, "starttls-ports", "",
+		"Override STARTTLS port mappings as proto=port[:port][,proto=port...] "+
+			"(protocols: smtp, imap, ldap, postgres, mysql, pop3, lmtp, xmpp, xmpp-server, nntp, sieve, ftp)")
+	fs.StringVar(&cfg.scanHostPortsStr, "scan-host-ports", "",
+		"Scan the node's own LISTEN sockets in this range at 127.0.0.1 (start-end, e.g. 2000-30000); requires hostPID")
+	fs.BoolVar(&cfg.scanAllPorts, "scan-all-ports", false,
+		"Scan all declared TCP ports on pods and services, not just known TLS ports")
+	fs.BoolVar(&cfg.discoverListeningPorts, "discover-listening-ports", false,
+		"Exec into pods to discover undeclared listening TLS ports from /proc/net/tcp; requires pods/exec RBAC")
+	fs.StringVar(&cfg.clientCertPath, "client-cert", "",
+		"Path to a PEM-encoded client certificate for mTLS endpoint probing")
+	fs.StringVar(&cfg.clientKeyPath, "client-key", "",
+		"Path to a PEM-encoded client private key for mTLS endpoint probing")
+	fs.StringVar(&cfg.caCertPath, "ca-cert", "",
+		"Path to a PEM-encoded CA bundle. When set, each checked endpoint's certificate chain "+
+			"is also verified against this bundle and the result recorded on the report")
+	fs.Var(&cfg.notifyWebhooks, "notify-webhook",
+		"Webhook URL to POST compliance status changes to (repeatable; comma-separated values on one flag are accepted)")
+	fs.DurationVar(&cfg.notifyTimeout, "notify-timeout", 5*time.Second,
+		"Timeout for a single webhook delivery attempt")
+	fs.IntVar(&cfg.notifyRetries, "notify-retries", 2,
+		"Extra webhook delivery attempts after a failure (0-10)")
+	fs.BoolVar(&cfg.enumerateCiphers, "enumerate-ciphers", true,
+		"Enumerate all supported cipher suites per TLS version (disable for faster scans)")
+	fs.BoolVar(&cfg.detectCipherPreference, "detect-cipher-preference", false,
+		"Detect whether TLS 1.2 endpoints prefer their own cipher order")
+	fs.StringVar(&cfg.namespaceRateLimitsStr, "namespace-rate-limits", "",
+		"Per-namespace TLS check rate limits (e.g., production=2.0,staging=10.0)")
+	fs.BoolVar(&cfg.metricsPerEndpoint, "metrics-per-endpoint", false,
+		"Emit per-endpoint Prometheus metrics (high cardinality; leave off on large clusters)")
+	fs.IntVar(&cfg.reportRetentionDays, "report-retention-days", 0,
+		"Delete TLSComplianceReport CRs with no activity for this many days (0 = disabled)")
+	fs.IntVar(&cfg.maxHistoryEntries, "max-history-entries", 10,
+		"Maximum number of historical scan results to keep per report (1-100)")
+	fs.StringVar(&cfg.logFormat, "log-format", "text",
+		"Log output format: text or json")
+	fs.BoolVar(&cfg.dryRun, "dry-run", false,
+		"Discover endpoints and print them without creating reports, events, or metrics; implies --run-once")
+	fs.BoolVar(&cfg.runOnce, "run-once", false,
+		"Perform a single scan of all endpoints and exit (0=compliant, 1=non-compliant, 2=error)")
+	fs.BoolVar(&cfg.requirePQC, "require-pqc", false,
+		"With --run-once, exit 1 unless every scannable endpoint is PQCReady (TLS 1.3 with ML-KEM); unscannable endpoints are skipped")
+	fs.StringVar(&cfg.expectedGroups, "expected-groups", "",
+		"Comma-separated TLS groups every scannable endpoint must advertise (e.g. X25519MLKEM768,X25519)")
+	fs.StringVar(&cfg.groupsMode, "expected-groups-mode", "contains",
+		"How --expected-groups is compared: contains (subset) or exact (set equality)")
+	fs.BoolVar(&cfg.failOnGroupMismatch, "fail-on-group-mismatch", false,
+		"With --run-once, exit 1 when the advertised groups do not satisfy --expected-groups")
+	fs.StringVar(&cfg.outputFormat, "output-format", "",
+		"Write scan results in this format (csv, json, yaml, junit, markdown, html, sarif); defaults to stdout")
+	fs.StringVar(&cfg.outputFile, "output-file", "",
+		"Path to write scan results (requires --output-format)")
+	fs.DurationVar(&cfg.shutdownDrainTimeout, "shutdown-drain-timeout", 30*time.Second,
+		"How long to wait for in-flight TLS checks to complete on shutdown before forcing exit")
+	fs.StringVar(&cfg.scanWindowStart, "scan-window-start", "",
+		"Start of daily scan window in HH:MM format (empty = no window restriction; requires --scan-window-end)")
+	fs.StringVar(&cfg.scanWindowEnd, "scan-window-end", "",
+		"End of daily scan window in HH:MM format (empty = no window restriction; requires --scan-window-start)")
+	fs.StringVar(&cfg.scanWindowTimezone, "scan-window-timezone", "UTC",
+		"IANA timezone for --scan-window-start/--scan-window-end (e.g. America/New_York)")
+}
+
 func parseFlags() *operatorConfig {
 	cfg := &operatorConfig{}
 
-	flag.StringVar(&cfg.metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
-		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
-	flag.StringVar(&cfg.probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
-	flag.BoolVar(&cfg.enableLeaderElection, "leader-elect", false,
-		"Enable leader election for controller manager. "+
-			"Enabling this will ensure there is only one active controller manager.")
-	flag.BoolVar(&cfg.secureMetrics, "metrics-secure", true,
-		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
-	flag.StringVar(&cfg.webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
-	flag.StringVar(&cfg.webhookCertName, "webhook-cert-name", "tls.crt", "The name of the webhook certificate file.")
-	flag.StringVar(&cfg.webhookCertKey, "webhook-cert-key", "tls.key", "The name of the webhook key file.")
-	flag.StringVar(&cfg.metricsCertPath, "metrics-cert-path", "",
-		"The directory that contains the metrics server certificate.")
-	flag.StringVar(&cfg.metricsCertName, "metrics-cert-name", "tls.crt", "The name of the metrics server certificate file.")
-	flag.StringVar(&cfg.metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
-	flag.BoolVar(&cfg.enableHTTP2, "enable-http2", false,
-		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
-
-	flag.DurationVar(&cfg.scanInterval, "scan-interval", 1*time.Hour,
-		"Interval for periodic TLS endpoint rescans")
-	flag.DurationVar(&cfg.cleanupInterval, "cleanup-interval", 5*time.Minute,
-		"Interval for cleaning up stale TLSComplianceReport resources")
-	flag.DurationVar(&cfg.tlsCheckTimeout, "tls-check-timeout", 5*time.Second,
-		"Timeout for individual TLS connection attempts")
-	flag.Float64Var(&cfg.rateLimit, "rate-limit", 10.0,
-		"Rate limit for TLS checks per second")
-	flag.IntVar(&cfg.rateBurst, "rate-burst", 20,
-		"Burst size for TLS check rate limiting")
-	flag.StringVar(&cfg.includeNamespaces, "include-namespaces", "",
-		"Comma-separated list of namespaces to exclusively monitor (overrides exclude-namespaces)")
-	flag.StringVar(&cfg.excludeNamespaces, "exclude-namespaces", "",
-		"Comma-separated list of namespaces to exclude from TLS monitoring")
-	flag.IntVar(&cfg.certExpiryWarningDays, "cert-expiry-warning-days", 30,
-		"Number of days before certificate expiry to emit a warning")
-	flag.DurationVar(&cfg.profileRefreshInterval, "profile-refresh-interval", 5*time.Minute,
-		"Interval for refreshing OpenShift TLS security profile configuration (OpenShift only)")
-	flag.StringVar(&cfg.tlsProfileType, "tls-profile-type", "",
-		"Force a built-in TLS security profile (Old, Intermediate, Modern) and skip reading OpenShift config; for HyperShift")
-	flag.StringVar(&cfg.customProfile, "custom-profile", "",
-		"Name of a TLSSecurityProfile CR to evaluate every endpoint against, in addition to the component profiles")
-	flag.StringVar(&cfg.policyConfigMap, "policy-configmap", "",
-		"ConfigMap (namespace/name) holding a policy.yaml that maps endpoints to component profiles and exemptions")
-	flag.IntVar(&cfg.workers, "workers", 5,
-		"Number of concurrent workers for periodic TLS scans (1-50)")
-	flag.IntVar(&cfg.maxRetries, "max-retries", 3,
-		"Maximum number of retries for transient TLS check failures (0-10)")
-	flag.DurationVar(&cfg.retryBackoff, "retry-backoff", 30*time.Second,
-		"Base backoff duration between retries (exponential: base * 2^attempt)")
-	flag.DurationVar(&cfg.maxBackoff, "max-backoff", 5*time.Minute,
-		"Maximum backoff duration between retries (caps exponential growth)")
-	flag.StringVar(&cfg.extraTLSPortsStr, "extra-tls-ports", "",
-		"Comma-separated list of additional port numbers to treat as TLS endpoints (e.g., 9443,6380,5671)")
-	flag.StringVar(&cfg.starttlsPortsStr, "starttls-ports", "",
-		"Override STARTTLS port mappings as proto=port[:port][,proto=port...] "+
-			"(protocols: smtp, imap, ldap, postgres, mysql, pop3, lmtp, xmpp, xmpp-server, nntp, sieve, ftp)")
-	flag.StringVar(&cfg.scanHostPortsStr, "scan-host-ports", "",
-		"Scan the node's own LISTEN sockets in this range at 127.0.0.1 (start-end, e.g. 2000-30000); requires hostPID")
-	flag.BoolVar(&cfg.scanAllPorts, "scan-all-ports", false,
-		"Scan all declared TCP ports on pods and services, not just known TLS ports")
-	flag.BoolVar(&cfg.discoverListeningPorts, "discover-listening-ports", false,
-		"Exec into pods to discover undeclared listening TLS ports from /proc/net/tcp; requires pods/exec RBAC")
-	flag.StringVar(&cfg.clientCertPath, "client-cert", "",
-		"Path to a PEM-encoded client certificate for mTLS endpoint probing")
-	flag.StringVar(&cfg.clientKeyPath, "client-key", "",
-		"Path to a PEM-encoded client private key for mTLS endpoint probing")
-	flag.StringVar(&cfg.caCertPath, "ca-cert", "",
-		"Path to a PEM-encoded CA bundle. When set, each checked endpoint's certificate chain "+
-			"is also verified against this bundle and the result recorded on the report")
-	flag.Var(&cfg.notifyWebhooks, "notify-webhook",
-		"Webhook URL to POST compliance status changes to (repeatable; comma-separated values on one flag are accepted)")
-	flag.DurationVar(&cfg.notifyTimeout, "notify-timeout", 5*time.Second,
-		"Timeout for a single webhook delivery attempt")
-	flag.IntVar(&cfg.notifyRetries, "notify-retries", 2,
-		"Extra webhook delivery attempts after a failure (0-10)")
-	flag.BoolVar(&cfg.enumerateCiphers, "enumerate-ciphers", true,
-		"Enumerate all supported cipher suites per TLS version (disable for faster scans)")
-	flag.BoolVar(&cfg.detectCipherPreference, "detect-cipher-preference", false,
-		"Detect whether TLS 1.2 endpoints prefer their own cipher order")
-	flag.StringVar(&cfg.namespaceRateLimitsStr, "namespace-rate-limits", "",
-		"Per-namespace TLS check rate limits (e.g., production=2.0,staging=10.0)")
-	flag.BoolVar(&cfg.metricsPerEndpoint, "metrics-per-endpoint", false,
-		"Emit per-endpoint Prometheus metrics (high cardinality; leave off on large clusters)")
-	flag.IntVar(&cfg.reportRetentionDays, "report-retention-days", 0,
-		"Delete TLSComplianceReport CRs with no activity for this many days (0 = disabled)")
-	flag.IntVar(&cfg.maxHistoryEntries, "max-history-entries", 10,
-		"Maximum number of historical scan results to keep per report (1-100)")
-	flag.StringVar(&cfg.logFormat, "log-format", "text",
-		"Log output format: text or json")
-	flag.BoolVar(&cfg.dryRun, "dry-run", false,
-		"Discover endpoints and print them without creating reports, events, or metrics; implies --run-once")
-	flag.BoolVar(&cfg.runOnce, "run-once", false,
-		"Perform a single scan of all endpoints and exit (0=compliant, 1=non-compliant, 2=error)")
-	flag.BoolVar(&cfg.requirePQC, "require-pqc", false,
-		"With --run-once, exit 1 unless every scannable endpoint is PQCReady (TLS 1.3 with ML-KEM); unscannable endpoints are skipped")
-	flag.StringVar(&cfg.expectedGroups, "expected-groups", "",
-		"Comma-separated TLS groups every scannable endpoint must advertise (e.g. X25519MLKEM768,X25519)")
-	flag.StringVar(&cfg.groupsMode, "expected-groups-mode", "contains",
-		"How --expected-groups is compared: contains (subset) or exact (set equality)")
-	flag.BoolVar(&cfg.failOnGroupMismatch, "fail-on-group-mismatch", false,
-		"With --run-once, exit 1 when the advertised groups do not satisfy --expected-groups")
-	flag.StringVar(&cfg.outputFormat, "output-format", "",
-		"Write scan results in this format (csv, json, yaml, junit, markdown, html, sarif); defaults to stdout")
-	flag.StringVar(&cfg.outputFile, "output-file", "",
-		"Path to write scan results (requires --output-format)")
-	flag.DurationVar(&cfg.shutdownDrainTimeout, "shutdown-drain-timeout", 30*time.Second,
-		"How long to wait for in-flight TLS checks to complete on shutdown before forcing exit")
-	flag.StringVar(&cfg.scanWindowStart, "scan-window-start", "",
-		"Start of daily scan window in HH:MM format (empty = no window restriction; requires --scan-window-end)")
-	flag.StringVar(&cfg.scanWindowEnd, "scan-window-end", "",
-		"End of daily scan window in HH:MM format (empty = no window restriction; requires --scan-window-start)")
-	flag.StringVar(&cfg.scanWindowTimezone, "scan-window-timezone", "UTC",
-		"IANA timezone for --scan-window-start/--scan-window-end (e.g. America/New_York)")
+	registerOperatorFlags(flag.CommandLine, cfg)
 
 	cfg.zapOpts = zap.Options{Development: true}
 	cfg.zapOpts.BindFlags(flag.CommandLine)
@@ -1024,6 +1032,7 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_RETRY_BACKOFF", "retry-backoff"},
 	{"TLS_COMPLIANCE_MAX_BACKOFF", "max-backoff"},
 	{"TLS_COMPLIANCE_EXTRA_TLS_PORTS", "extra-tls-ports"},
+	{"TLS_COMPLIANCE_STARTTLS_PORTS", "starttls-ports"},
 	{"TLS_COMPLIANCE_SCAN_ALL_PORTS", "scan-all-ports"},
 	{"TLS_COMPLIANCE_DISCOVER_LISTENING_PORTS", "discover-listening-ports"},
 	{"TLS_COMPLIANCE_SCAN_HOST_PORTS", "scan-host-ports"},
@@ -1045,6 +1054,7 @@ var envFlagMapping = []struct {
 	{"TLS_COMPLIANCE_REQUIRE_PQC", "require-pqc"},
 	{"TLS_COMPLIANCE_EXPECTED_GROUPS", "expected-groups"},
 	{"TLS_COMPLIANCE_EXPECTED_GROUPS_MODE", "expected-groups-mode"},
+	{"TLS_COMPLIANCE_FAIL_ON_GROUP_MISMATCH", "fail-on-group-mismatch"},
 	{"TLS_COMPLIANCE_OUTPUT_FORMAT", "output-format"},
 	{"TLS_COMPLIANCE_OUTPUT_FILE", "output-file"},
 	{"TLS_COMPLIANCE_SHUTDOWN_DRAIN_TIMEOUT", "shutdown-drain-timeout"},
